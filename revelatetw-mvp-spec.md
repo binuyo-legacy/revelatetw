@@ -1,4 +1,4 @@
-# RhemaFlow MVP Product Specification
+# RevelateTW MVP Product Specification
 
 Live verse detection for church production on Windows.
 
@@ -6,7 +6,7 @@ Version 1.0 (draft for review). October 2026.
 
 ## 1. Brand
 
-**Product name:** RhemaFlow. "Rhema" is the spoken word of God as it is heard and applied in the moment. "Flow" describes the continuous live listening the product performs. The founder reports that the name was checked online and is not claimed. A formal trademark search is still required before public launch.
+**Product name:** RevelateTW. "Rhema" is the spoken word of God as it is heard and applied in the moment. "Flow" describes the continuous live listening the product performs. The founder reports that the name was checked online and is not claimed. A formal trademark search is still required before public launch.
 
 **Tagline (recommended):** AI that hears the word.
 **Alternate tagline:** The word, as it is spoken.
@@ -32,7 +32,7 @@ Professional tools are expensive for many churches. Verified list prices include
 
 ## 3. Product Overview
 
-RhemaFlow is a Windows desktop application that listens to a live audio feed, transcribes speech locally, detects Bible references (exact citations and paraphrases), queues candidates for human approval, and renders approved verses through a configurable theme to one or more outputs.
+RevelateTW is a Windows desktop application that listens to a live audio feed, transcribes speech locally, detects Bible references (exact citations and paraphrases), queues candidates for human approval, and renders approved verses through a configurable theme to one or more outputs.
 
 **Processing pipeline:**
 
@@ -177,7 +177,7 @@ Audio input, then speech-to-text (faster-whisper, local), then verse detection (
 
 **Requirements:**
 
-- Translations are distributed as signed pack files (SQLite) downloaded from the RhemaFlow catalog and stored in the app data folder. The app does not bundle translation text except the starter translation.
+- Translations are distributed as signed pack files (SQLite) downloaded from the RevelateTW catalog and stored in the app data folder. The app does not bundle translation text except the starter translation.
 - An in-app store lists available packs with license terms, language, and size.
 - Each pack is checked on install against its entitlement: the license key is tied to the church's subscription.
 - Launch free packs: KJV (bundled as the starter), WEB, and public-domain and open-license translations, including African-language Scripture (Yoruba, Hausa, Igbo, Swahili) from ebible.org. Each pack's license is verified individually before inclusion, because licenses differ across translations on that site.
@@ -217,7 +217,7 @@ These features are specified for planning. They are not part of the v1 release.
 | Pewbeam | $14 to $30 per month | Yes | Not verified | Not verified | Not verified | Verse detection rival |
 | RhemaCast | $12 to $25 per month | Yes | Not verified | Not verified | Not verified | Verse detection rival |
 
-"Not verified" means the feature was not confirmed in the research brief and must be checked before launch marketing relies on it. The gap RhemaFlow targets is the combination of verse detection, audio device routing, NDI, and themes at a low price. No product in the research set combined all four.
+"Not verified" means the feature was not confirmed in the research brief and must be checked before launch marketing relies on it. The gap RevelateTW targets is the combination of verse detection, audio device routing, NDI, and themes at a low price. No product in the research set combined all four.
 
 ## 6. Pricing
 
@@ -277,7 +277,7 @@ Pricing rationale:
 - verses table: book, chapter, verse, and text.
 - FTS5 index over verse text.
 
-**Signing:** Each pack's manifest is signed with an Ed25519 key held by RhemaFlow. The application holds only the public key. The signature and checksum are verified on install and on each load.
+**Signing:** Each pack's manifest is signed with an Ed25519 key held by RevelateTW. The application holds only the public key. The signature and checksum are verified on install and on each load.
 
 **Install flow:**
 
