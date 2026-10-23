@@ -62,6 +62,8 @@ def main(argv=None) -> int:
                     help="show the Dev feed (typed text instead of the mic). Off by default.")
     ap.add_argument("--settings", default="data/settings.json",
                     help="JSON settings file (created on first save).")
+    ap.add_argument("--no-splash", action="store_true",
+                    help="skip the startup splash screen (GUI only)")
     ap.add_argument("--paraphrase-threshold", type=int, default=60,
                     help="0-100. Lower finds more paraphrases (default 60).")
     args = ap.parse_args(argv)
@@ -76,6 +78,12 @@ def main(argv=None) -> int:
         return 0
     if args.gui:
         from .ui import run_app
+        splash = None
+        if not args.no_splash:
+            from .splash import start_splash
+            from PyQt6.QtWidgets import QApplication
+            QApplication.instance() or QApplication([])
+            splash = start_splash()          # shown before the heavy startup below
         _, queue, pipeline = build(args.verses, args.log, args.paraphrase_threshold)
         live = None
         if args.transcriber_model:
@@ -88,7 +96,7 @@ def main(argv=None) -> int:
             settings.paraphrase_threshold = args.paraphrase_threshold
         return run_app(queue, Theme(), pipeline=pipeline, live=live, songs_dir=args.songs_dir,
                        projection_screen=args.output_screen, settings=settings,
-                       settings_path=args.settings, dev=args.dev)
+                       settings_path=args.settings, dev=args.dev, splash=splash)
     ap.print_help()
     return 0
 

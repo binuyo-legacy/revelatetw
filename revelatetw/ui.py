@@ -2307,19 +2307,29 @@ class OperatorWindow(QMainWindow):
 
 def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen: int = 0,
             live=None, songs_dir: str = "data/songs", settings: Optional[AppSettings] = None,
-            settings_path: Optional[str] = None, dev: bool = False):
+            settings_path: Optional[str] = None, dev: bool = False, splash=None):
     """Start the Qt event loop. pipeline receives dev-feed text; live (optional) runs the mic loop.
 
     projection_screen picks the starting monitor for the live output (the display box can change it).
+    splash (optional) is closed as soon as the operator window is shown.
     """
     app = QApplication.instance() or QApplication([])
+    icon_path = _LOGO_PATH if _LOGO_PATH.is_file() else None
+    if icon_path is not None:
+        from PyQt6.QtGui import QIcon
+        app.setWindowIcon(QIcon(str(icon_path)))
     projection = ProjectionWindow()
     projection.show_theme(theme)
     op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live, songs_dir=songs_dir,
                         settings=settings, settings_path=settings_path, dev=dev)
+    if icon_path is not None:
+        op.setWindowIcon(app.windowIcon())
     op.display_box.setCurrentIndex(projection_screen)
     op.resize(1280, 800)
     op.show()
+    if splash is not None:
+        from .splash import finish_splash
+        finish_splash(splash)
     if op.output.on:
         projection.present()
     return app.exec()

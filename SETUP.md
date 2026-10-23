@@ -80,6 +80,11 @@ Manual GUI test steps (not automated; PyQt6 needs a display)
 5. Set Source to "Live microphone" and pick a device. The meter must move when someone speaks. Set it back to "Dev text feed" to confirm the loop stops cleanly.
 6. Optional: choose a WASAPI loopback entry ("(loopback)") to capture the mixing desk output.
 
+Startup splash
+- The GUI shows the designed card (revelatetw/assets/splash.png) while it starts. If that file is missing it uses assets/logo.png, and if neither is there it starts with no splash.
+- Turn it off with: python -m revelatetw --gui --no-splash
+- The splash closes as soon as the operator window appears.
+
 Automated checks (headless, no GUI, no audio hardware): python -m unittest discover -s tests -v
 
 Not implemented yet (see spec)
