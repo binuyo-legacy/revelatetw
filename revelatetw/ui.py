@@ -171,6 +171,16 @@ QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 6px 14px; border-to
 QTabBar::tab:selected { background: #facc15; color: #0b0f19; font-weight: 800; }
 QLabel#liveNote { color: #f59e0b; font-size: 11px; }
 QPushButton#ghost { background: transparent; border: 1px solid #2f3a52; color: #cbd5e1; }
+QPushButton#primary { background: #facc15; color: #0b0f19; border: 1px solid #facc15; font-weight: 800; padding: 8px 14px; }
+QPushButton#primary:hover { background: #fde047; }
+QPushButton#subtle { background: #161d2c; color: #cbd5e1; border: 1px solid #2f3a52; }
+QPushButton#subtle:disabled { color: #475569; border-color: #232d40; }
+QPushButton#danger { background: transparent; color: #8a4a55; border: 1px solid #3a2228; font-weight: 600; }
+QPushButton#danger:disabled { color: #3f2a31; border-color: #251a1e; }
+QPushButton#small { padding: 3px 10px; font-size: 12px; }
+QLabel#emptyIcon { color: #8a7224; font-size: 46px; }
+QLabel#emptyHint { color: #94a3b8; font-size: 13px; }
+QLabel#emptyIconBook { color: #5b6478; font-size: 40px; }
 QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 6px 8px; }
 QLineEdit:focus, QComboBox:focus { border-color: #facc15; }
 QComboBox QAbstractItemView { background: #0f1522; color: #e5e7eb; selection-background-color: #facc15; selection-color: #0b0f19; }
@@ -544,15 +554,20 @@ class OperatorWindow(QMainWindow):
 
         # library
         left, ll = self._panel("Song Library", "")
+        self.song_badge = _label("0 songs", "badge")
+        ll.itemAt(0).layout().insertWidget(1, self.song_badge)
         self.song_hint = _label("", "sub", wrap=True)
         ll.addWidget(self.song_hint)
+        self.song_empty = self._empty_state("\u266a", "No songs yet \u2014 click New song to add your first", "emptyIcon")
+        ll.addWidget(self.song_empty, 1)
         self.song_search = QLineEdit()
-        self.song_search.setPlaceholderText("Search title, artist or a lyric word")
+        self.song_search.setPlaceholderText("Search songs...")
         ll.addWidget(self.song_search)
         self.song_list = QListWidget()
         ll.addWidget(self.song_list, 1)
         row = QHBoxLayout()
         self.btn_new_song = QPushButton("New song")
+        self.btn_new_song.setObjectName("primary")
         self.btn_import_song = QPushButton("Import file")
         row.addWidget(self.btn_new_song)
         row.addWidget(self.btn_import_song)
@@ -562,18 +577,22 @@ class OperatorWindow(QMainWindow):
         root.addWidget(left, 3)
 
         # editor
-        mid, ml = self._panel("Song Editor", "")
+        mid, ml = self._panel("Edit Song", "")
+        self.btn_new_small = QPushButton("New")
+        self.btn_new_small.setObjectName("small")
+        self.btn_new_small.clicked.connect(self._new_song)
+        ml.itemAt(0).layout().addWidget(self.btn_new_small)
         self.song_title = QLineEdit()
-        self.song_title.setPlaceholderText("Song title")
+        self.song_title.setPlaceholderText("Title")
         self.song_artist = QLineEdit()
-        self.song_artist.setPlaceholderText("Artist (optional)")
+        self.song_artist.setPlaceholderText("Artist")
         ml.addWidget(self.song_title)
         ml.addWidget(self.song_artist)
         self.song_lyrics = QPlainTextEdit()
-        self.song_lyrics.setPlaceholderText(
-            "Paste lyrics. A blank line starts a new slide.\n"
-            "Headers such as [Verse 1], Chorus: or Bridge start a labelled slide.")
+        self.song_lyrics.setPlaceholderText("Paste lyrics here...")
         ml.addWidget(self.song_lyrics, 1)
+        ml.addWidget(_label("A blank line starts a new slide. Headers such as [Verse 1] or Chorus: start a labelled slide.",
+                            "sub", wrap=True))
         self.song_title.textChanged.connect(self._update_dirty)
         self.song_artist.textChanged.connect(self._update_dirty)
         self.song_lyrics.textChanged.connect(self._update_dirty)
@@ -591,10 +610,11 @@ class OperatorWindow(QMainWindow):
         ml.addWidget(self.slide_pick)
         save_row = QHBoxLayout()
         self.btn_save_song = QPushButton("Save song")
-        self.btn_save_song.setObjectName("approve")
+        self.btn_save_song.setObjectName("subtle")
         self.btn_save_as_new = QPushButton("Save as new")
+        self.btn_save_as_new.setObjectName("subtle")
         self.btn_delete_song = QPushButton("Delete song")
-        self.btn_delete_song.setObjectName("reject")
+        self.btn_delete_song.setObjectName("danger")
         save_row.addWidget(self.btn_save_song, 2)
         save_row.addWidget(self.btn_save_as_new, 1)
         save_row.addWidget(self.btn_delete_song, 1)
@@ -603,6 +623,8 @@ class OperatorWindow(QMainWindow):
         ml.addWidget(self.song_dirty)
         self.editor_status = _label("", "footer", wrap=True)
         ml.addWidget(self.editor_status)
+        self.editor_footer = _label("Nothing selected", "footer")
+        ml.addWidget(self.editor_footer)
         self._editor_slides: list[Slide] = []
         root.addWidget(mid, 3)
 
@@ -610,9 +632,19 @@ class OperatorWindow(QMainWindow):
         right, rl = self._panel("Song Projection", "")
         self.song_now = _label("Pick a song in the library, then choose a slide.", "verse", wrap=True)
         rl.addWidget(self.song_now)
+        slides_head = QHBoxLayout()
+        slides_head.addWidget(_label("Slides", "panelTitle"))
+        slides_head.addStretch(1)
+        self.slide_badge = _label("0 slides", "badge")
+        slides_head.addWidget(self.slide_badge)
+        rl.addLayout(slides_head)
+        self.slides_empty = self._empty_state("\U0001F4D6", "Split a song into slides to see them here", "emptyIconBook")
+        rl.addWidget(self.slides_empty)
         self.slide_now_list = QListWidget()
         self.slide_now_list.setMaximumHeight(160)
         rl.addWidget(self.slide_now_list)
+        self.slides_footer = _label("No slides", "footer")
+        rl.addWidget(self.slides_footer)
         self.song_direct = QCheckBox("Direct (project now, no approval)")
         self.song_direct.setChecked(False)
         rl.addWidget(self.song_direct)
@@ -1030,6 +1062,49 @@ class OperatorWindow(QMainWindow):
             self.projection.present()
 
     # --- songs library ------------------------------------------------------------------------
+    def _empty_state(self, icon: str, hint: str, icon_obj: str) -> QFrame:
+        f = QFrame()
+        v = QVBoxLayout(f)
+        v.setContentsMargins(8, 18, 8, 18)
+        v.setSpacing(6)
+        ic = _label(icon, icon_obj)
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        h = _label(hint, "emptyHint", wrap=True)
+        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addStretch(1)
+        v.addWidget(ic)
+        v.addWidget(h)
+        v.addStretch(1)
+        f.icon = ic
+        f.hint = h
+        return f
+
+    def _refresh_song_chrome(self) -> None:
+        """Badges, empty states, button enablement and footers for the songs tab."""
+        if not hasattr(self, "slides_empty") or not hasattr(self, "btn_save_song"):
+            return
+        total = getattr(self, "_library_total", 0)
+        has_song = getattr(self, "_song_sel", None) is not None
+        has_text = bool(self.song_title.text().strip() or self.song_lyrics.toPlainText().strip())
+        active = has_song or has_text
+        self.btn_save_song.setEnabled(active)
+        self.btn_save_as_new.setEnabled(active)
+        self.btn_delete_song.setEnabled(has_song)
+        dirty = self._editor_dirty()
+        if dirty:
+            self.editor_footer.setText("Unsaved changes")
+        elif has_song:
+            self.editor_footer.setText("Saved as JSON")
+        elif has_text:
+            self.editor_footer.setText("New song, not saved yet")
+        else:
+            self.editor_footer.setText("Nothing selected")
+        n = self.slide_now_list.count()
+        self.slide_badge.setText(f"{n} slide" + ("" if n == 1 else "s"))
+        self.slides_empty.setVisible(n == 0)
+        self.slide_now_list.setVisible(n > 0)
+        self.slides_footer.setText("No slides" if n == 0 else f"{n} slide" + ("" if n == 1 else "s") + " ready")
+
     def _fill_song_list(self) -> None:
         self._songs = self.library.search(self.song_search.text())
         self.song_list.blockSignals(True)
@@ -1040,14 +1115,21 @@ class OperatorWindow(QMainWindow):
         self.song_list.blockSignals(False)
         self._select_loaded_row()
         total = len(self.library.load_all())
-        self.song_count.setText(f"{len(self._songs)} shown  \u00b7  {total} in library")
+        self._library_total = total
+        self.song_badge.setText(f"{total} song" + ("" if total == 1 else "s"))
+        self.song_empty.setVisible(total == 0)
+        self.song_list.setVisible(total > 0)
+        self.song_hint.setVisible(total > 0)
         if total == 0:
-            self.song_hint.setText("Your library is empty. Click New song, paste lyrics, "
-                                   "Split into slides, then Save song.")
-        elif self._song_sel is None:
-            self.song_hint.setText("Pick a song to edit it, or click New song to add one.")
+            self.song_count.setText("Library empty")
+            self.song_hint.setText("")
         else:
-            self.song_hint.setText("Edit below, then Save song. Save as new keeps the original.")
+            self.song_count.setText(f"Saved as JSON  \u00b7  {len(self._songs)} shown  \u00b7  {total} in library")
+            if self._song_sel is None:
+                self.song_hint.setText("Pick a song to edit it, or click New song to add one.")
+            else:
+                self.song_hint.setText("Edit below, then Save song. Save as new keeps the original.")
+        self._refresh_song_chrome()
 
     def _editor_snapshot(self) -> tuple:
         return (self.song_title.text().strip(), self.song_artist.text().strip(),
@@ -1058,6 +1140,7 @@ class OperatorWindow(QMainWindow):
         return self._saved_snapshot is not None and self._editor_snapshot() != self._saved_snapshot
 
     def _update_dirty(self, *_args) -> None:
+        self._refresh_song_chrome()
         if self._loading_editor or self._saved_snapshot is None:
             return
         dirty = self._editor_dirty()
@@ -1147,6 +1230,8 @@ class OperatorWindow(QMainWindow):
         if slides:
             widget.setCurrentRow(0)
         widget.blockSignals(False)
+        if hasattr(self, "slides_empty"):
+            self._refresh_song_chrome()
 
     def _new_song(self) -> None:
         if not self._confirm_discard():
