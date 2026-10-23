@@ -1,0 +1,10 @@
+# Build outputs and local data
+__pycache__/
+*.pyc
+.venv/
+venv/
+session_log.jsonl
+*.sqlite
+*.pack
+build/
+dist/
