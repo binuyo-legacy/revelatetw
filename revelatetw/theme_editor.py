@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDialog, QDoubl
                              QListWidget, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
                              QWidget)
 
-from .theme import (BACKGROUND_KINDS, FRAMES, LAYOUTS, TRANSITIONS, Background, Theme,
-                    is_hex_color, ready_made_themes)
+from .theme import (BACKGROUND_KINDS, BACKGROUNDS_DIR, FRAMES, IMAGE_EXTS, LAYOUTS, TRANSITIONS,
+                    Background, Theme, import_background_image, is_hex_color, ready_made_themes)
 
 
 class ColorButton(QPushButton):
@@ -64,9 +64,17 @@ class ThemeEditor(QDialog):
         form = QFormLayout(form_host)
         self.name = QLineEdit()
         self.bg_kind = QComboBox(); self.bg_kind.addItems(BACKGROUND_KINDS)
+        self.bg_kind.currentTextChanged.connect(lambda _t: self._check())
         self.bg_color1 = ColorButton("#0F0B2E")
         self.bg_color2 = ColorButton("#4C1D95")
-        self.bg_image = QLineEdit(); self.bg_image.setPlaceholderText("image path (kind = image)")
+        self.bg_image = QLineEdit(); self.bg_image.setReadOnly(True)
+        self.bg_image.setPlaceholderText("no image picked (kind = image)")
+        self.bg_image_pick = QPushButton("Pick image...")
+        self.bg_image_pick.clicked.connect(self._pick_image)
+        self.accent_color = ColorButton("#D4A017")
+        self.dim_color = ColorButton("#A9A4C8")
+        self.church_line = QLineEdit(); self.church_line.setPlaceholderText("e.g. Grace Chapel International")
+        self.image_scrim = QDoubleSpinBox(); self.image_scrim.setRange(0.0, 0.9); self.image_scrim.setSingleStep(0.05)
         self.bg_video = QLineEdit(); self.bg_video.setPlaceholderText("video path (kind = video)")
         self.text_color = ColorButton("#F5F3FF")
         self.ref_color = ColorButton("#D4A017")
@@ -88,9 +96,14 @@ class ThemeEditor(QDialog):
         form.addRow("Colour 1 / top", self.bg_color1)
         form.addRow("Colour 2 / bottom", self.bg_color2)
         form.addRow("Image file", self.bg_image)
+        form.addRow("", self.bg_image_pick)
+        form.addRow("Image darkening", self.image_scrim)
         form.addRow("Video file", self.bg_video)
         form.addRow("Text colour", self.text_color)
         form.addRow("Reference colour", self.ref_color)
+        form.addRow("Accent (gold chips, frame)", self.accent_color)
+        form.addRow("Dim text (footer)", self.dim_color)
+        form.addRow("Church line (sermon slide)", self.church_line)
         form.addRow("Font", self.font_family)
         form.addRow("Font size", self.font_size)
         form.addRow("Font weight", self.font_weight)
@@ -123,6 +136,10 @@ class ThemeEditor(QDialog):
         self.bg_color2.set_color(cols[1] if len(t.background.colors) > 1 else cols[0])
         self.bg_image.setText(t.background.image_path or "")
         self.bg_video.setText(t.background.video_path or "")
+        self.accent_color.set_color(t.accent_color)
+        self.dim_color.set_color(t.dim_color)
+        self.church_line.setText(t.church_line)
+        self.image_scrim.setValue(float(t.image_scrim))
         self.text_color.set_color(t.text_color)
         self.ref_color.set_color(t.reference_color)
         self.font_family.setText(t.font_family)
@@ -148,6 +165,9 @@ class ThemeEditor(QDialog):
                         image_path=self.bg_image.text() or None,
                         video_path=self.bg_video.text() or None)
         return Theme(name=self.name.text().strip() or "Untitled", background=bg,
+                     accent_color=self.accent_color.color(), dim_color=self.dim_color.color(),
+                     church_line=self.church_line.text().strip(),
+                     image_scrim=float(self.image_scrim.value()),
                      text_color=self.text_color.color(), reference_color=self.ref_color.color(),
                      font_family=self.font_family.text() or "Georgia",
                      font_size_px=self.font_size.value(), font_weight=self.font_weight.value(),
@@ -156,6 +176,21 @@ class ThemeEditor(QDialog):
                      frame_inset_px=self.frame_inset.value(), layout=self.layout_box.currentText(),
                      transition=self.transition.currentText(), transition_ms=self.transition_ms.value(),
                      translation_accents=dict(self.theme.translation_accents))
+
+    def _pick_image(self) -> None:
+        """Copy the picked image into data/backgrounds; the theme stores only its file name."""
+        exts = " ".join(f"*{e}" for e in IMAGE_EXTS)
+        path, _ = QFileDialog.getOpenFileName(self, "Pick background image", "", f"Images ({exts})")
+        if not path:
+            return
+        try:
+            name = import_background_image(path, BACKGROUNDS_DIR)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Image not used", str(exc))
+            return
+        self.bg_kind.setCurrentText("image")
+        self.bg_image.setText(name)
+        self._check()
 
     def _check(self) -> None:
         errs = self.read().problems()

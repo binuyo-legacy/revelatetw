@@ -32,6 +32,17 @@ What changed in this round
 - Live mic loop: revelatetw/live.py connects AudioCapture to the transcriber (window, overlap, transcribe on a worker thread). The operator window has a Source box (Dev text feed or Live microphone) and an Audio input picker that lists mics, interfaces, soundcards and WASAPI loopback. A failed device falls back to the text feed and says so. Start with: python -m revelatetw --gui --transcriber-model small
 - Paraphrase matching: revelatetw/paraphrase.py replaces the word-overlap stub. Default is IDF-weighted token similarity with light stemming and fuzzy spelling repair (shepard -> shepherd). It is pure Python and works fully offline. If sentence-transformers is installed AND its model is already cached, detection can use embeddings (EmbeddingMatcher). It never downloads at church time, and any failure falls back to token matching. Threshold: python -m revelatetw --gui --paraphrase-threshold 60 (0-100, lower finds more, default 60).
 - Theme editor: "Theme editor..." button in the operator window. Edits background kind and colours, image/video paths, text and reference colours, font, size, weight, line height, shadow, outline, frame, layout and transition. Open/Save theme JSON. The six ready-made themes load as starting points. Files are the same JSON as theme.py, and invalid themes are refused on save and load.
+- Projection slide look (mockups A and B): song slides show centred lyrics (shrunk to fit inside safe margins, never below 24 px), an optional section label above, a footer "Song Title · Artist" bottom-left, and a gold chip "Chorus · 2/8" bottom-right. Sermon info slides show the church line, a large serif title, the speaker, and a gold scripture chip. Generic labels such as "Slide 3" get no chip.
+- Theme schema v2 (theme JSON, schema_version 2). New fields:
+  - background.kind: "linear" (vertical gradient, default), "solid", "radial", "image", or "video" (saved, not painted yet).
+  - background.colors: one colour for solid, two or more for gradients. Default is the navy+gold gradient ["#1E1B4B", "#0F0B2E"].
+  - background.image_path: a file name only, no folder path. It lives in data/backgrounds next to the app (BACKGROUNDS_DIR). Use "Pick image..." in the theme editor to copy a file there. Supported: png, jpg, jpeg, webp, bmp. Path separators and ".." are refused.
+  - background.image_scrim: 0 to 1 dark overlay on image backgrounds so lyrics stay readable (default 0.4).
+  - accent_color: gold for chips and frame (default "#D4A017").
+  - dim_color: small footer and speaker text (default "#A9A4C8").
+  - church_line: small line above the sermon title (optional).
+  - Missing image or unreadable image: the slide falls back to the first background colour. It never goes black.
+- Legacy themes (schema v1, no schema_version): they still load. accent_color takes the old reference_color so the look does not change, and the new fields get defaults. Saving from the editor writes schema_version 2.
 - Output: the projection window is borderless and titled "RevelateTW output". Optional virtual camera via pyvirtualcam (see OBS below). NDI stays disabled (spec section 10 licence review). No paid SDKs were added.
 
 Feeding OBS (no extra software, recommended)
@@ -63,7 +74,7 @@ Automated checks (headless, no GUI, no audio hardware): python -m unittest disco
 Not implemented yet (see spec)
 - Ed25519 pack signature checks, entitlement and licence server, pack store (F6).
 - NDI sender (licence review). Spout is not used; OBS window capture covers the same case.
-- Theme transitions, image and video background rendering (the editor stores the choice; the projection window still paints the first colour only).
+- Video background rendering (the schema accepts kind "video"; the projection window does not paint it yet, it falls back to the first colour).
 - Keyboard remapping, Approve and Edit persistence (Edit currently only sets edited_text in the queue).
 - Polyphase resampler (capture still uses linear interpolation).
 - Packaging (PyInstaller or Nuitka) and installer.

@@ -26,6 +26,8 @@ from .store import APP_VERSION, AppSettings, save_settings
 from .sermon import SermonInfo
 from .songs import Slide, Song, SongLibrary, split_lyrics
 from .theme import Theme
+from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_song, paint_sermon,
+                      paint_verse)
 
 # Brand palette (spec section 1)
 INDIGO, PURPLE, GOLD, MIDNIGHT, PARCHMENT, EMBER = (
@@ -43,56 +45,28 @@ def render_verse_html(c: Candidate | None, theme: Theme) -> str:
             f'{c.reference} ({c.translation})</span></div>')
 
 
-def render_song_html(slide: Slide | None, theme: Theme) -> str:
-    """One lyric slide: its lines, centred, in the theme's text colour. The label is hidden on
-    the output (operators see it in the slide list); the reference colour is not used."""
-    if slide is None:
-        return ""
-    size = max(12, int(theme.font_size_px * 0.8))
-    body = "<br>".join(line.replace("&", "&amp;").replace("<", "&lt;") for line in slide.lines)
-    return (f'<div style="font-family:{theme.font_family};font-weight:{theme.font_weight};'
-            f'font-size:{size}px;line-height:{theme.line_height};color:{theme.text_color};">{body}</div>')
-
-
-def render_sermon_html(info: SermonInfo | None, theme: Theme) -> str:
-    """Sermon info slide: title big, speaker and scripture reference smaller in the accent colour."""
-    if info is None or not info.lines():
-        return ""
-    esc = lambda s: s.replace("&", "&amp;").replace("<", "&lt;")  # noqa: E731
-    head = (f'<div style="font-family:{theme.font_family};font-weight:{theme.font_weight};'
-            f'font-size:{theme.font_size_px}px;line-height:{theme.line_height};color:{theme.text_color};">'
-            f'{esc(info.title)}</div>' if info.title else "")
-    rest = [esc(x) for x in (info.speaker, info.reference) if x]
-    tail = ""
-    if rest:
-        tail = (f'<div style="font-family:{theme.font_family};font-size:{int(theme.font_size_px*0.6)}px;'
-                f'color:{theme.reference_color};margin-top:12px;">' + "<br>".join(rest) + "</div>")
-    return head + tail
-
-
 class ProjectionWindow(QWidget):
     """Borderless live output. Standalone: fullscreen on a chosen display, no OBS needed.
 
     Hiding it (live output OFF) lets another app take the projector. Any capture tool
     (OBS window capture, virtual camera, other studio software) can read this window.
+    Everything is painted by outputs.py (mockups A and B: gold chips, footer, sermon slide).
     """
 
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
-        self.setWindowTitle("RevelateTW output")
-        self.label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self.label.setWordWrap(True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(80, 80, 80, 80)
-        lay.addWidget(self.label)
+        self.setWindowTitle(PROJECTION_WINDOW_TITLE)
+        self._theme = Theme()
+        self._image_cache: dict = {}
+        self._frame = None          # callable(painter, rect) set by show_* methods
+        self.setMinimumSize(320, 180)
         self.show_theme(Theme())
         self.show_blank()
 
     def show_theme(self, theme: Theme) -> None:
         self._theme = theme
-        bg = theme.background.colors[0]
-        self.setStyleSheet(f"background:{bg};")
+        self.update()
 
     def move_to_display(self, geometry) -> None:
         """Cover a whole display (QRect). Borderless and sized to the monitor, so it reads as fullscreen."""
@@ -108,16 +82,47 @@ class ProjectionWindow(QWidget):
         self.raise_()
 
     def show_verse(self, c: Candidate | None) -> None:
-        self.label.setText(render_verse_html(c, self._theme))
+        if c is None:
+            self._frame = None
+        else:
+            self._frame = lambda p, r: paint_verse(p, r, self._theme, c)
+        self.update()
 
-    def show_song_slide(self, slide: Slide | None) -> None:
-        self.label.setText(render_song_html(slide, self._theme))
+    def show_song_slide(self, slide: Slide | None, song=None, index: int = 0, total: int = 0) -> None:
+        if slide is None:
+            self._frame = None
+        else:
+            title = getattr(song, "title", "")
+            artist = getattr(song, "artist", "")
+            self._frame = lambda p, r: paint_song(
+                p, r, self._theme, title=title, artist=artist, section=slide.label,
+                index=index, total=total, lines=list(slide.lines), image_cache=self._image_cache)
+        self.update()
 
-    def show_sermon(self, info: SermonInfo | None) -> None:
-        self.label.setText(render_sermon_html(info, self._theme))
+    def show_sermon(self, info: SermonInfo | None, church: str = "") -> None:
+        if info is None or not info.lines() and not church:
+            self._frame = None
+        else:
+            self._frame = lambda p, r: paint_sermon(
+                p, r, self._theme, church=church or self._theme.church_line, title=info.title,
+                speaker=info.speaker, reference=info.reference, image_cache=self._image_cache)
+        self.update()
 
     def show_blank(self) -> None:
-        self.label.setText("")
+        self._frame = None
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        from PyQt6.QtGui import QPainter
+        painter = QPainter(self)
+        try:
+            rect = self.rect()
+            if self._frame is None:
+                paint_background(painter, rect, self._theme, self._image_cache)
+            else:
+                self._frame(painter, rect)
+        finally:
+            painter.end()
 
 
 QSS = """
@@ -801,7 +806,7 @@ class OperatorWindow(QMainWindow):
             self.projection.show_blank()
         elif self._kind == "song" and self._song_live:
             song, i = self._song_live
-            self.projection.show_song_slide(song.slides[i])
+            self.projection.show_song_slide(song.slides[i], song, i, len(song.slides))
         elif self._kind == "sermon" and self._sermon_live:
             self.projection.show_sermon(self._sermon_live)
         elif self.queue.live:
@@ -1103,7 +1108,7 @@ class OperatorWindow(QMainWindow):
         self.song_pending_label.setText("")
         self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[row].label}")
         if self.output.on and not self.queue.blank:
-            self.projection.show_song_slide(song.slides[row])
+            self.projection.show_song_slide(song.slides[row], song, row, len(song.slides))
         self.slide_now_list.setCurrentRow(row)
         self.refresh()
 
