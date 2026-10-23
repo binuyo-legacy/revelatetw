@@ -78,6 +78,26 @@ def split_lyrics(text: str, max_lines: int = 4) -> list["Slide"]:
     return slides
 
 
+_GENERIC_LABEL = re.compile(r"Slide \d+$")
+
+
+def lyrics_text(slides: Iterable["Slide"]) -> str:
+    """Render slides back to editor text so split_lyrics(lyrics_text(x)) keeps the labels.
+
+    Generic 'Slide N' names are written without a header; continuation slides repeat the
+    base section header.
+    """
+    blocks: list[str] = []
+    for s in slides:
+        label = s.label or ""
+        if label and not _GENERIC_LABEL.fullmatch(label):
+            base = label.split(" (cont.)")[0]
+            blocks.append(f"[{base}]\n" + "\n".join(s.lines))
+        else:
+            blocks.append("\n".join(s.lines))
+    return "\n\n".join(blocks)
+
+
 @dataclass
 class Slide:
     label: str
@@ -107,6 +127,11 @@ class Song:
             self.id = uuid.uuid4().hex[:12]
         if not _SAFE_ID.fullmatch(self.id):
             raise ValueError(f"song id {self.id!r} must be letters, digits, _ or - (max 64)")
+
+    def copy(self, title: str | None = None) -> "Song":
+        """A duplicate with a new id (Save As New)."""
+        return Song(title=self.title if title is None else title, artist=self.artist,
+                    slides=[Slide(s.label, list(s.lines)) for s in self.slides])
 
     def search_text(self) -> str:
         lines = [line for s in self.slides for line in s.lines]
@@ -141,6 +166,27 @@ class SongLibrary:
         tmp.write_text(json.dumps(song.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
         return path
+
+    def delete(self, song_id: str) -> bool:
+        """Remove the song's file. Returns False when there was no such song."""
+        if not _SAFE_ID.fullmatch(song_id or ""):
+            return False
+        path = self.root / f"{song_id}.json"
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
+    def get(self, song_id: str) -> Optional[Song]:
+        if not _SAFE_ID.fullmatch(song_id or ""):
+            return None
+        path = self.root / f"{song_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return Song.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            return None
 
     def load_all(self) -> list[Song]:
         songs: list[Song] = []

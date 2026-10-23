@@ -13,6 +13,7 @@ from typing import Optional
 from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
+                             QInputDialog,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                              QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
                              QSpinBox, QTabWidget, QVBoxLayout, QWidget, QMessageBox)
@@ -24,7 +25,8 @@ from .output_state import LiveOutputState, pill_state
 from .settings_page import SettingsPage
 from .store import APP_VERSION, AppSettings, save_settings
 from .sermon import SermonInfo
-from .songs import Slide, Song, SongLibrary, split_lyrics
+from .songs import Slide, Song, SongLibrary, lyrics_text, split_lyrics
+from .sermon_presets import SermonPreset, SermonPresetLibrary
 from .theme import Theme
 from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_song, paint_sermon,
                       paint_verse)
@@ -103,8 +105,9 @@ class ProjectionWindow(QWidget):
         if info is None or not info.lines() and not church:
             self._frame = None
         else:
+            line = church or info.church or self._theme.church_line
             self._frame = lambda p, r: paint_sermon(
-                p, r, self._theme, church=church or self._theme.church_line, title=info.title,
+                p, r, self._theme, church=line, title=info.title,
                 speaker=info.speaker, reference=info.reference, image_cache=self._image_cache)
         self.update()
 
@@ -206,7 +209,7 @@ class OperatorWindow(QMainWindow):
     def __init__(self, queue: ApprovalQueue, theme: Theme, projection: ProjectionWindow,
                  audio_meter=None, pipeline=None, live=None, songs_dir: str = "data/songs",
                  settings: Optional[AppSettings] = None, settings_path: Optional[str] = None,
-                 dev: bool = False):
+                 dev: bool = False, sermons_dir: str = "data/sermons"):
         super().__init__()
         self.settings = settings or AppSettings()
         self._settings_path = settings_path
@@ -229,7 +232,11 @@ class OperatorWindow(QMainWindow):
         self._sermon_live: Optional[SermonInfo] = None
         self._song_sel: Optional[Song] = None
         self._editing_id: str = ""
+        self._saved_snapshot = None          # editor contents as last loaded/saved (None before build)
+        self._loading_editor = False         # True while the editor is filled programmatically
+        self._songs_page: Optional[QWidget] = None
         self.library = SongLibrary(songs_dir)
+        self.sermon_presets = SermonPresetLibrary(sermons_dir)
         self._songs: list[Song] = []
 
         self.setStyleSheet(QSS)
@@ -302,12 +309,19 @@ class OperatorWindow(QMainWindow):
         self.btn_song_next.clicked.connect(lambda: self.step_song(+1))
         self.btn_sermon_show.clicked.connect(self.show_sermon_slide)
         self.btn_sermon_clear.clicked.connect(self.clear_sermon_slide)
+        self.btn_save_as_new.clicked.connect(self._save_as_new)
+        self.btn_delete_song.clicked.connect(self._delete_song)
+        self.btn_preset_save.clicked.connect(self.save_sermon_preset)
+        self.btn_preset_delete.clicked.connect(self.delete_sermon_preset)
+        self.sermon_preset_pick.currentIndexChanged.connect(self._on_preset_pick)
 
         self._timer = QTimer(self, interval=150, timeout=self.refresh)
         self._timer.start()
         self._fill_testaments()
         self._populate_displays()
         self._fill_song_list()
+        self._new_song()
+        self._fill_presets()
         self._apply_output_state()
         self.refresh()
 
@@ -523,12 +537,15 @@ class OperatorWindow(QMainWindow):
 
     def _build_songs_tab(self) -> QWidget:
         page = QWidget()
+        self._songs_page = page
         root = QHBoxLayout(page)
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(12)
 
         # library
         left, ll = self._panel("Song Library", "")
+        self.song_hint = _label("", "sub", wrap=True)
+        ll.addWidget(self.song_hint)
         self.song_search = QLineEdit()
         self.song_search.setPlaceholderText("Search title, artist or a lyric word")
         ll.addWidget(self.song_search)
@@ -557,6 +574,9 @@ class OperatorWindow(QMainWindow):
             "Paste lyrics. A blank line starts a new slide.\n"
             "Headers such as [Verse 1], Chorus: or Bridge start a labelled slide.")
         ml.addWidget(self.song_lyrics, 1)
+        self.song_title.textChanged.connect(self._update_dirty)
+        self.song_artist.textChanged.connect(self._update_dirty)
+        self.song_lyrics.textChanged.connect(self._update_dirty)
         split_row = QHBoxLayout()
         split_row.addWidget(_label("Lines per slide", "sub"))
         self.max_lines = QSpinBox()
@@ -569,9 +589,18 @@ class OperatorWindow(QMainWindow):
         self.slide_pick = QListWidget()
         self.slide_pick.setMaximumHeight(150)
         ml.addWidget(self.slide_pick)
+        save_row = QHBoxLayout()
         self.btn_save_song = QPushButton("Save song")
         self.btn_save_song.setObjectName("approve")
-        ml.addWidget(self.btn_save_song)
+        self.btn_save_as_new = QPushButton("Save as new")
+        self.btn_delete_song = QPushButton("Delete song")
+        self.btn_delete_song.setObjectName("reject")
+        save_row.addWidget(self.btn_save_song, 2)
+        save_row.addWidget(self.btn_save_as_new, 1)
+        save_row.addWidget(self.btn_delete_song, 1)
+        ml.addLayout(save_row)
+        self.song_dirty = _label("", "footerOk")
+        ml.addWidget(self.song_dirty)
         self.editor_status = _label("", "footer", wrap=True)
         ml.addWidget(self.editor_status)
         self._editor_slides: list[Slide] = []
@@ -613,8 +642,11 @@ class OperatorWindow(QMainWindow):
         self.sermon_title.setPlaceholderText("Sermon title")
         self.sermon_speaker = QLineEdit()
         self.sermon_speaker.setPlaceholderText("Speaker (optional)")
+        self.sermon_church = QLineEdit()
+        self.sermon_church.setPlaceholderText("Church line (optional, blank uses the theme's)")
         rl.addWidget(self.sermon_title)
         rl.addWidget(self.sermon_speaker)
+        rl.addWidget(self.sermon_church)
         srow = QHBoxLayout()
         self.btn_sermon_show = QPushButton("Show sermon info")
         self.btn_sermon_show.setObjectName("approve")
@@ -625,10 +657,25 @@ class OperatorWindow(QMainWindow):
         rl.addLayout(srow)
         self.sermon_note = _label("Shows the title, speaker and the last projected verse reference.", "sub", wrap=True)
         rl.addWidget(self.sermon_note)
+
+        # sermon presets (data/sermons, one JSON per preset)
+        rl.addWidget(_label("Sermon presets", "panelTitle"))
+        self.sermon_preset_pick = QComboBox()
+        rl.addWidget(self.sermon_preset_pick)
+        prow = QHBoxLayout()
+        self.btn_preset_save = QPushButton("Save as preset")
+        self.btn_preset_save.setObjectName("approve")
+        self.btn_preset_delete = QPushButton("Delete preset")
+        self.btn_preset_delete.setObjectName("reject")
+        prow.addWidget(self.btn_preset_save, 1)
+        prow.addWidget(self.btn_preset_delete)
+        rl.addLayout(prow)
+        self.preset_note = _label("Pick a saved sermon to fill the fields, edit them, then Save as preset "
+                                  "(same name overwrites).", "sub", wrap=True)
+        rl.addWidget(self.preset_note)
         rl.addStretch(1)
         root.addWidget(right, 3)
         return page
-
     def _build_statusbar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("statusbar")
@@ -988,24 +1035,109 @@ class OperatorWindow(QMainWindow):
         self.song_list.blockSignals(True)
         self.song_list.clear()
         for s in self._songs:
-            label = s.title + (f"  \u2014 {s.artist}" if s.artist else "")
+            label = s.title + (f"  \u00b7  {s.artist}" if s.artist else "")
             self.song_list.addItem(f"{label}  ({len(s.slides)} slides)")
         self.song_list.blockSignals(False)
+        self._select_loaded_row()
         total = len(self.library.load_all())
         self.song_count.setText(f"{len(self._songs)} shown  \u00b7  {total} in library")
+        if total == 0:
+            self.song_hint.setText("Your library is empty. Click New song, paste lyrics, "
+                                   "Split into slides, then Save song.")
+        elif self._song_sel is None:
+            self.song_hint.setText("Pick a song to edit it, or click New song to add one.")
+        else:
+            self.song_hint.setText("Edit below, then Save song. Save as new keeps the original.")
+
+    def _editor_snapshot(self) -> tuple:
+        return (self.song_title.text().strip(), self.song_artist.text().strip(),
+                self.song_lyrics.toPlainText(),
+                tuple((s.label, tuple(s.lines)) for s in self._editor_slides))
+
+    def _editor_dirty(self) -> bool:
+        return self._saved_snapshot is not None and self._editor_snapshot() != self._saved_snapshot
+
+    def _update_dirty(self, *_args) -> None:
+        if self._loading_editor or self._saved_snapshot is None:
+            return
+        dirty = self._editor_dirty()
+        self.song_dirty.setText("\u25cf Unsaved changes" if dirty else "")
+        self.btn_save_song.setText("Save song *" if dirty else "Save song")
+        if self._songs_page is not None:
+            idx = self._tabs.indexOf(self._songs_page)
+            if idx >= 0:
+                self._tabs.setTabText(idx, "Songs & sermon \u25cf" if dirty else "Songs & sermon")
+
+    # Confirmation prompts are isolated here so tests can stub them.
+    def _ask_discard(self) -> bool:
+        box = QMessageBox(self)
+        box.setWindowTitle("Discard changes?")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("This song has unsaved changes. Discard them?")
+        box.setInformativeText("Click Save song first if you want to keep them.")
+        keep = box.addButton("Keep editing", QMessageBox.ButtonRole.RejectRole)
+        drop = box.addButton("Discard changes", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return box.clickedButton() is drop
+
+    def _ask_yes_no(self, title: str, text: str) -> bool:
+        answer = QMessageBox.question(self, title, text,
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                      QMessageBox.StandardButton.No)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _ask_text(self, title: str, label: str, default: str = "") -> str:
+        text, ok = QInputDialog.getText(self, title, label, text=default)
+        return text if ok else ""
+
+    def _confirm_discard(self) -> bool:
+        """True when it is safe to leave the editor (no unsaved edits, or the operator says discard)."""
+        return (not self._editor_dirty()) or self._ask_discard()
+
+    def _select_loaded_row(self) -> None:
+        """Keep the library highlight on the song that is loaded in the editor."""
+        self.song_list.blockSignals(True)
+        row = next((i for i, s in enumerate(self._songs)
+                    if self._song_sel is not None and s.id == self._song_sel.id), -1)
+        if row >= 0:
+            self.song_list.setCurrentRow(row)
+        else:
+            self.song_list.clearSelection()
+        self.song_list.blockSignals(False)
 
     def _on_song_row(self, row: int) -> None:
         if row < 0 or row >= len(self._songs):
             return
-        self._song_sel = self._songs[row]
-        self._editing_id = self._song_sel.id
-        self.song_title.setText(self._song_sel.title)
-        self.song_artist.setText(self._song_sel.artist)
-        self._editor_slides = list(self._song_sel.slides)
-        self.song_lyrics.setPlainText("\n\n".join("\n".join(s.lines) for s in self._editor_slides))
-        self._show_slide_list(self._editor_slides, self.slide_pick)
-        self._show_slide_list(self._editor_slides, self.slide_now_list)
-        self.song_now.setText(f"{self._song_sel.title}" + (f"  \u00b7  {self._song_sel.artist}" if self._song_sel.artist else ""))
+        target = self._songs[row]
+        if self._song_sel is not None and target.id == self._song_sel.id:
+            return
+        if not self._confirm_discard():
+            self._select_loaded_row()
+            return
+        self._load_into_editor(target)
+        self.editor_status.setText(f"Editing {target.title}. Change it, then Save song.")
+
+    def _load_into_editor(self, song: Optional[Song]) -> None:
+        """Fill the editor from a saved song (or clear it for None) and mark it clean."""
+        self._loading_editor = True
+        try:
+            self._song_sel = song
+            self._editing_id = song.id if song else ""
+            self.song_title.setText(song.title if song else "")
+            self.song_artist.setText(song.artist if song else "")
+            self._editor_slides = [Slide(s.label, list(s.lines)) for s in song.slides] if song else []
+            self.song_lyrics.setPlainText(lyrics_text(self._editor_slides) if song else "")
+            self._show_slide_list(self._editor_slides, self.slide_pick)
+            if song is not None:
+                self._show_slide_list(self._editor_slides, self.slide_now_list)
+            else:
+                self.slide_pick.clear()
+                self.slide_now_list.clear()
+        finally:
+            self._loading_editor = False
+        self._saved_snapshot = self._editor_snapshot()
+        self._update_dirty()
 
     def _show_slide_list(self, slides: list[Slide], widget: QListWidget) -> None:
         widget.blockSignals(True)
@@ -1017,17 +1149,16 @@ class OperatorWindow(QMainWindow):
         widget.blockSignals(False)
 
     def _new_song(self) -> None:
-        self._song_sel = None
-        self._editing_id = ""
-        self.song_title.clear()
-        self.song_artist.clear()
-        self.song_lyrics.clear()
-        self._editor_slides = []
-        self.slide_pick.clear()
-        self.song_list.clearSelection()
-        self.editor_status.setText("New song. Paste lyrics, then Split into slides.")
+        if not self._confirm_discard():
+            return
+        self._load_into_editor(None)
+        self._select_loaded_row()
+        self.editor_status.setText("New song. Paste lyrics, then Split into slides and Save song.")
+        self.song_title.setFocus()
 
     def _import_song(self) -> None:
+        if not self._confirm_discard():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Import lyrics", "", "Text or song JSON (*.txt *.json)")
         if not path:
             return
@@ -1037,14 +1168,14 @@ class OperatorWindow(QMainWindow):
             if path.lower().endswith(".json"):
                 import json as _json
                 song = Song.from_dict(_json.loads(raw))
-                self.song_title.setText(song.title)
-                self.song_artist.setText(song.artist)
-                self._editor_slides = song.slides
-                self._editing_id = song.id
-                self.song_lyrics.setPlainText("\n\n".join("\n".join(s.lines) for s in song.slides))
-                self._show_slide_list(self._editor_slides, self.slide_pick)
-                self.editor_status.setText(f"Imported {song.title}: {len(song.slides)} slides. Save to keep it.")
+                # an import is a new song until saved: it keeps its id so Save overwrites the same file
+                self._load_into_editor(song)
+                self._song_sel = None
+                self._select_loaded_row()
+                self._update_dirty()
+                self.editor_status.setText(f"Imported {song.title}: {len(song.slides)} slides. Save song to keep it.")
             else:
+                self._load_into_editor(None)
                 self.song_lyrics.setPlainText(raw)
                 self.song_title.setText(self.song_title.text() or _P(path).stem)
                 self._split_editor()
@@ -1055,29 +1186,182 @@ class OperatorWindow(QMainWindow):
         text = self.song_lyrics.toPlainText()
         self._editor_slides = split_lyrics(text, max_lines=self.max_lines.value())
         self._show_slide_list(self._editor_slides, self.slide_pick)
+        self._update_dirty()
         self.editor_status.setText(f"{len(self._editor_slides)} slides. Check them, then Save song.")
 
-    def _save_song(self) -> None:
-        if not self._editor_slides:
+    def _sync_slides_with_text(self) -> None:
+        """Lyrics edited since the last split are re-split before a save, so the saved slides match the text."""
+        text = self.song_lyrics.toPlainText()
+        if text.strip() and text != lyrics_text(self._editor_slides):
             self._split_editor()
+
+    def _editor_song(self, song_id: str) -> Song:
+        """A Song built from the editor fields (raises ValueError when it cannot be saved)."""
+        title = self.song_title.text().strip()
+        if not title:
+            raise ValueError("Give the song a title first.")
+        if not self._editor_slides:
+            raise ValueError("No lyrics to save. Paste lyrics and split them.")
+        return Song(title=title, artist=self.song_artist.text().strip(),
+                    slides=[Slide(s.label, list(s.lines)) for s in self._editor_slides], id=song_id)
+
+    def _write_song(self, song: Song) -> bool:
+        try:
+            path = self.library.save(song)
+        except Exception as exc:
+            self.editor_status.setText(f"Save failed: {exc}")
+            return False
+        self._refresh_projected_song(song)
+        self._song_sel = song
+        self._editing_id = song.id
+        self._saved_snapshot = self._editor_snapshot()
+        self._update_dirty()
+        self.song_search.clear()              # triggers the list refresh
+        self._fill_song_list()
+        self.editor_status.setText(f"Saved {song.title} to {path.name}")
+        return True
+
+    def _save_song(self) -> None:
+        """Save the editor. An existing song keeps its file (same id, same filename)."""
+        self._sync_slides_with_text()
+        try:
+            song = self._editor_song(self._editing_id)
+        except ValueError as exc:
+            self.editor_status.setText(str(exc))
+            return
+        self._write_song(song)
+
+    def _save_as_new(self) -> None:
+        """Save the editor contents as a new song file. The original is not touched."""
+        self._sync_slides_with_text()
         title = self.song_title.text().strip()
         if not title:
             self.editor_status.setText("Give the song a title first.")
             return
-        try:
-            song = Song(title=title, artist=self.song_artist.text().strip(),
-                        slides=list(self._editor_slides), id=self._editing_id)
-            if not song.slides:
-                self.editor_status.setText("No lyrics to save. Paste lyrics and split them.")
-                return
-            path = self.library.save(song)
-        except Exception as exc:
-            self.editor_status.setText(f"Save failed: {exc}")
+        new_title = self._ask_text("Save as new song", "Title for the new song:", f"{title} (copy)").strip()
+        if not new_title:
             return
-        self._editing_id = song.id
-        self.editor_status.setText(f"Saved {song.title} to {path.name}")
+        try:
+            song = self._editor_song("")
+        except ValueError as exc:
+            self.editor_status.setText(str(exc))
+            return
+        song.title = new_title
+        if self._write_song(song):
+            self._load_into_editor(song)
+            self._select_loaded_row()
+            self.editor_status.setText(f"Saved as new song {song.title}. The original is unchanged.")
+
+    def _delete_song(self) -> None:
+        song = self._song_sel
+        if song is None or self.library.get(song.id) is None:
+            self.editor_status.setText("Nothing saved to delete. Pick a song in the library first.")
+            return
+        text = f'Delete "{song.title}" from the library? Its file is removed and this cannot be undone.'
+        if self._editor_dirty():
+            text += " Your unsaved edits will be lost too."
+        if not self._ask_yes_no("Delete song", text):
+            return
+        if not self.library.delete(song.id):
+            self.editor_status.setText("Delete failed: the song file was not found.")
+            return
+        self._forget_song(song.id)
+        self._load_into_editor(None)
         self.song_search.clear()
         self._fill_song_list()
+        self.editor_status.setText(f"Deleted {song.title}.")
+
+    def _refresh_projected_song(self, song: Song) -> None:
+        """A saved edit or rename reaches the queue/preview: the projected or pending slide is
+        re-pointed at the saved copy. The projector is only repainted if the song is on screen."""
+        if self._song_live is not None and self._song_live[0].id == song.id:
+            i = min(self._song_live[1], max(0, len(song.slides) - 1))
+            self._song_live = (song, i)
+            if self._kind == "song" and self.output.on and not self.queue.blank:
+                self.projection.show_song_slide(song.slides[i], song, i, len(song.slides))
+            self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[i].label}")
+            self._show_slide_list(song.slides, self.slide_now_list)
+            self.slide_now_list.setCurrentRow(i)
+        if self._song_pending is not None and self._song_pending[0].id == song.id:
+            i = min(self._song_pending[1], max(0, len(song.slides) - 1))
+            self._song_pending = (song, i)
+            self.song_pending_label.setText(f"Waiting: {song.title}, {song.slides[i].label}. Approve to project.")
+
+    def _forget_song(self, song_id: str) -> None:
+        """A song file was deleted. A pending slide from it is cancelled. The slide already on the
+        projector stays until the operator changes it, but nothing more is sent from the deleted song."""
+        if self._song_pending is not None and self._song_pending[0].id == song_id:
+            self._song_pending = None
+            self.song_pending_label.setText("Waiting slide cancelled: its song was deleted.")
+        if self._song_sel is not None and self._song_sel.id == song_id:
+            self._song_sel = None
+        if self._song_live is not None and self._song_live[0].id == song_id:
+            self.song_now.setText("The projected song was deleted from the library.")
+            self._song_live = None
+            self.slide_now_list.clear()
+
+    # --- sermon presets (data/sermons) -------------------------------------------------------
+    def _fill_presets(self, select: str = "") -> None:
+        self._presets = self.sermon_presets.load_all()
+        self.sermon_preset_pick.blockSignals(True)
+        self.sermon_preset_pick.clear()
+        self.sermon_preset_pick.addItem("(none, type a sermon below)", "")
+        for p in self._presets:
+            self.sermon_preset_pick.addItem(f"{p.name}: {p.title}", p.id)
+        idx = self.sermon_preset_pick.findData(select) if select else 0
+        self.sermon_preset_pick.setCurrentIndex(max(idx, 0))
+        self.sermon_preset_pick.blockSignals(False)
+        self.btn_preset_delete.setEnabled(bool(self._presets))
+        if not self._presets:
+            self.preset_note.setText("No sermon presets yet. Type a title and speaker, then Save as preset.")
+
+    def _on_preset_pick(self, _index: int) -> None:
+        pid = self.sermon_preset_pick.currentData()
+        if not pid:
+            return
+        preset = self.sermon_presets.get(pid)
+        if preset is None:
+            self._fill_presets()
+            return
+        self.sermon_title.setText(preset.title)
+        self.sermon_speaker.setText(preset.speaker)
+        self.sermon_church.setText(preset.church)
+        self.preset_note.setText(f"Loaded preset {preset.name}. Show sermon info puts it on the slide.")
+
+    def save_sermon_preset(self) -> None:
+        title = self.sermon_title.text().strip()
+        if not title:
+            self.preset_note.setText("Type a sermon title first, then save it as a preset.")
+            return
+        default = self.sermon_preset_pick.currentText().split(":")[0] if self.sermon_preset_pick.currentData() else title
+        name = self._ask_text("Save sermon preset", "Preset name (saving under an existing name overwrites it):",
+                              default).strip()
+        if not name:
+            return
+        try:
+            preset = SermonPreset(name=name, title=title, speaker=self.sermon_speaker.text(),
+                                  church=self.sermon_church.text())
+            saved = self.sermon_presets.save(preset)
+        except (ValueError, OSError) as exc:
+            self.preset_note.setText(f"Could not save preset: {exc}")
+            return
+        self._fill_presets(select=saved.id)
+        self.preset_note.setText(f"Saved preset {saved.name}.")
+
+    def delete_sermon_preset(self) -> None:
+        pid = self.sermon_preset_pick.currentData()
+        preset = self.sermon_presets.get(pid) if pid else None
+        if preset is None:
+            self.preset_note.setText("Pick a saved preset to delete it.")
+            return
+        if not self._ask_yes_no("Delete sermon preset",
+                                f'Delete the preset "{preset.name}"? This cannot be undone.'):
+            return
+        if not self.sermon_presets.delete(preset.id):
+            self.preset_note.setText("Delete failed: the preset file was not found.")
+            return
+        self._fill_presets()
+        self.preset_note.setText(f"Deleted preset {preset.name}.")
 
     def _on_slide_pick(self, row: int) -> None:
         if row >= 0:

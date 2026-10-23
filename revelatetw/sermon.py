@@ -13,6 +13,7 @@ class SermonInfo:
     title: str = ""
     speaker: str = ""
     reference: str = ""   # e.g. "John 3:16 (KJV)"; empty when no verse has been projected
+    church: str = ""      # church line from a preset; empty means the theme's church line
 
     def lines(self) -> list[str]:
         return [x for x in (self.title, self.speaker, self.reference) if x]
