@@ -8,6 +8,7 @@ The operator window is never shown on the projector (spec F5 acceptance 1).
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
@@ -486,6 +487,32 @@ def _set_prop(w, name, value) -> None:
     w.style().polish(w)
 
 
+_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.jpg"
+
+
+def _logo_pixmap(height: int = 30):
+    """Brand logo scaled to `height` px (aspect kept), or None if the asset is missing or unreadable."""
+    from PyQt6.QtGui import QPixmap
+    if not _LOGO_PATH.is_file():
+        return None
+    pix = QPixmap(str(_LOGO_PATH))
+    if pix.isNull():
+        return None
+    return pix.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+
+
+def _brand_mark(height: int = 30) -> QLabel:
+    """Logo image for the toolbar; falls back to the gold 'R' badge if the asset is missing."""
+    pix = _logo_pixmap(height)
+    if pix is None:
+        return _label("R", "brand")
+    lab = QLabel()
+    lab.setObjectName("brandLogo")
+    lab.setPixmap(pix)
+    lab.setFixedSize(pix.size())
+    return lab
+
+
 def _label(text: str, obj: str = "", wrap: bool = False) -> QLabel:
     lab = QLabel(text)
     if obj:
@@ -628,7 +655,7 @@ class OperatorWindow(QMainWindow):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
-        lay.addWidget(_label("R", "brand"))
+        lay.addWidget(_brand_mark(30))
         t = QVBoxLayout()
         t.setSpacing(0)
         t.addWidget(_label("RevelateTW \u2014 Operator", "title"))
@@ -1477,7 +1504,13 @@ class OperatorWindow(QMainWindow):
                                 "The setup guide is the README.md in the RevelateTW project folder.")
 
     def _show_about(self) -> None:
-        QMessageBox.about(self, "About RevelateTW", f"RevelateTW version {APP_VERSION}.")
+        box = QMessageBox(self)
+        box.setWindowTitle("About RevelateTW")
+        box.setText(f"RevelateTW version {APP_VERSION}.")
+        logo = _logo_pixmap(96)
+        if logo is not None:
+            box.setIconPixmap(logo)
+        box.exec()
 
     # --- live output ON/OFF (LIVE pill, key O) --------------------------------------------
     def toggle_output(self) -> None:
