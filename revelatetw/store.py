@@ -90,7 +90,7 @@ class VerseStore:
 import dataclasses as _dc
 import logging as _logging
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 _log = _logging.getLogger(__name__)
 
 
@@ -99,7 +99,9 @@ class AppSettings:
     """Operator settings, saved as JSON. Unknown keys are ignored; bad values fall back to defaults."""
     # General
     startup_live_on: bool = True          # open with live output ON
-    check_updates: bool = True
+    check_updates: bool = False           # privacy: the check only runs when you ask (About)
+    check_updates_on_startup: bool = False  # optional: check GitHub Releases once at startup
+    bible_translation: str = "KJV"        # translation id shown on the Verses tab
     language: str = "en"
     # Output
     output_display: int = 0               # index into the display list
@@ -128,6 +130,8 @@ class AppSettings:
         d = AppSettings()
         self.startup_live_on = bool(self.startup_live_on)
         self.check_updates = bool(self.check_updates)
+        self.check_updates_on_startup = bool(self.check_updates_on_startup)
+        self.bible_translation = str(self.bible_translation or d.bible_translation).strip() or d.bible_translation
         self.language = str(self.language or d.language)
         self.output_display = max(0, int(self.output_display or 0))
         res = str(self.default_resolution or "auto")

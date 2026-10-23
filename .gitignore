@@ -11,3 +11,6 @@ dist/
 
 # Bundled ffmpeg binaries (fetched by scripts/fetch_ffmpeg.py, never committed)
 revelatetw/assets/bin/
+
+# Bundled public-domain Bible packs ship in the repo (see SETUP.md)
+!data/bible/*.sqlite

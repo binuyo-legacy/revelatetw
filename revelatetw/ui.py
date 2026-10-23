@@ -8,6 +8,7 @@ The operator window is never shown on the projector (spec F5 acceptance 1).
 from __future__ import annotations
 
 import time
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -598,6 +599,8 @@ class OperatorWindow(QMainWindow):
         self._settings_index = self._tabs.count() - 1
         outer.addWidget(self._tabs, 1)
         outer.addWidget(self._build_statusbar())
+        if self.settings.check_updates_on_startup:
+            QTimer.singleShot(3000, lambda: self._check_updates(self._on_startup_update))
 
         self._build_shortcuts()
         self.source_box.currentIndexChanged.connect(self._apply_source)
@@ -724,6 +727,16 @@ class OperatorWindow(QMainWindow):
         frame, lay = self._panel("Approval Queue", "")
         self.queue_badge = _label("0 pending", "badge")
         frame.layout().itemAt(0).layout().insertWidget(2, self.queue_badge)
+
+        # translation picker: applies to detected + manual verses, remembered in settings
+        self.translation_box = QComboBox()
+        self.translation_box.setToolTip("Translation for detected and manual verses. Remembered in settings.")
+        self._fill_translation_box()
+        self.translation_box.currentIndexChanged.connect(self._on_translation_pick)
+        tr_row = QHBoxLayout()
+        tr_row.addWidget(_label("Translation", "badge"))
+        tr_row.addWidget(self.translation_box, 1)
+        lay.addLayout(tr_row)
 
         # search with autosuggest + manual verse mode (collapsible)
         self.search = QLineEdit()
@@ -1191,9 +1204,84 @@ class OperatorWindow(QMainWindow):
         self.queue.approve(c.id)
         self._show_on_output(c)
 
+    # --- Bible translations ------------------------------------------------------------
+    def _bible_library(self):
+        if getattr(self, "_bible", None) is None:
+            from .bible import BibleLibrary
+            self._bible = BibleLibrary()
+        return self._bible
+
+    def _fill_translation_box(self) -> None:
+        lib = self._bible_library()
+        wanted = self.settings.bible_translation
+        self.translation_box.blockSignals(True)
+        self.translation_box.clear()
+        for t in lib.installed():
+            self.translation_box.addItem(t.label, t.id)
+        idx = self.translation_box.findData(lib.resolve(wanted))
+        self.translation_box.setCurrentIndex(max(idx, 0))
+        self.translation_box.blockSignals(False)
+
+    def _on_translation_pick(self, idx: int) -> None:
+        tid = self.translation_box.itemData(idx)
+        if not tid or tid == self.settings.bible_translation:
+            return
+        self.settings.bible_translation = tid
+        self.settings.clean()
+        self.refresh()
+
+    def _in_selected_translation(self, c: Candidate) -> Candidate:
+        """Same verse, text in the operator's chosen translation (falls back to the candidate's own text)."""
+        tid = self.settings.bible_translation
+        if not tid or c.translation == tid:
+            return c
+        text, used = self._bible_library().get_or_default(tid, c.book_id, c.chapter, c.verse)
+        if used and text:
+            c.translation = used
+            c.text = text
+            c.edited_text = None
+        return c
+
+    def _record_media_history(self, item) -> None:
+        """Media projection: name + kind (image, video, audio, ...)."""
+        kind = str(getattr(item, "kind", "") or getattr(item, "media_type", "") or "media")
+        self._record_history("media", ref=kind, title=str(getattr(item, "name", "") or getattr(item, "title", "") or ""))
+
+    def _record_sermon_history(self, info, church: str = "") -> None:
+        """Sermon projection: title + speaker."""
+        if info is None:
+            return
+        self._record_history("sermon", title=str(getattr(info, "title", "") or ""),
+                             ref=str(getattr(info, "speaker", "") or church or ""))
+
+    def _record_song_history(self, title: str, section: str = "") -> None:
+        """Song slide projection: title + slide section (e.g. Verse 2, Chorus)."""
+        self._record_history("song", title=str(title or ""), ref=str(section or ""))
+
+    def _record_history(self, kind: str, ref: str = "", title: str = "", text: str = "") -> None:
+        try:
+            if getattr(self, "_history", None) is None:
+                from .history import ServiceHistory
+                self._history = ServiceHistory()
+            self._history.record(kind, ref=ref, title=title, text=text)
+        except OSError:
+            pass   # history is best-effort; never block a projection
+
+    # --- update check (background thread, offline-safe) ------------------------------------
+    def _check_updates(self, done) -> None:
+        from .updates import start_background_check
+        start_background_check(done)
+
+    def _on_startup_update(self, result) -> None:
+        # only surface it when there is something to say; offline at startup stays silent
+        if result.kind == "update" and getattr(self, "settings_page", None) is not None:
+            self.settings_page._update_result.emit(result)
+
     def _show_on_output(self, c: Candidate) -> None:
         self._cursor = (c.book_id, c.chapter, c.verse)
         self._kind = "verse"
+        c = self._in_selected_translation(c)
+        self._record_history("verse", ref=f"{c.reference} ({c.translation})", text=c.display_text)
         self._media_live = None
         self._song_pending = None
         self.projection.show_theme(self.theme)
@@ -1381,6 +1469,7 @@ class OperatorWindow(QMainWindow):
         self.media_status.setText(f"Projected: {it.name} ({it.type_label.lower()})")
         if self.output.on and not self.queue.blank:
             self.projection.show_media(it, loop=self.media_loop.isChecked())
+            self._record_media_history(it)
         self._update_media_controls()
         self.refresh()
 
@@ -1476,9 +1565,6 @@ class OperatorWindow(QMainWindow):
             except OSError as exc:
                 self.source_status.setText(f"Could not save settings: {exc}")
 
-    def _check_updates(self) -> str:
-        return ("Couldn't reach the update server. Check your internet connection and try again. "
-                f"You are on {APP_VERSION}.")
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -1491,6 +1577,7 @@ class OperatorWindow(QMainWindow):
         o.addMenu("Choose display").aboutToShow.connect(self._fill_display_menu)
         o.addAction("Display settings...", self._open_settings_output)
         h = bar.addMenu("Help")
+        h.addAction("Service history...", self._show_history)
         h.addAction("Setup docs (see README.md in the project folder)", self._show_setup_docs)
         h.addAction("About RevelateTW", self._show_about)
 
@@ -1514,6 +1601,51 @@ class OperatorWindow(QMainWindow):
     def _open_settings_output(self) -> None:
         self._tabs.setCurrentIndex(self._settings_index)
         self.settings_page.select_section("Output")
+
+    def _show_history(self) -> None:
+        """Today's service and past days, with copy/export to text. Read-only."""
+        from .history import ServiceHistory
+        hist = getattr(self, "_history", None) or ServiceHistory()
+        self._history = hist
+        box = QDialog(self)
+        box.setWindowTitle("Service history")
+        box.resize(640, 460)
+        lay = QVBoxLayout(box)
+        day_box = QComboBox()
+        days = hist.days()
+        today = date.today().isoformat()
+        if today not in days:
+            days.insert(0, today)
+        day_box.addItems(days)
+        lay.addWidget(day_box)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        lay.addWidget(view, 1)
+        row = QHBoxLayout()
+        btn_copy = QPushButton("Copy to clipboard")
+        btn_export = QPushButton("Export to text file...")
+        btn_close = QPushButton("Close")
+        for b in (btn_copy, btn_export, btn_close):
+            row.addWidget(b)
+        lay.addLayout(row)
+
+        def refresh(_idx=None):
+            view.setPlainText(hist.to_text(day_box.currentText()))
+        def copy():
+            QApplication.clipboard().setText(view.toPlainText())
+        def export():
+            path, _ = QFileDialog.getSaveFileName(box, "Export service history", f"service-{day_box.currentText()}.txt", "Text (*.txt)")
+            if path:
+                try:
+                    hist.export_text(path, day_box.currentText())
+                except OSError as exc:
+                    QMessageBox.warning(box, "Not exported", str(exc))
+        day_box.currentIndexChanged.connect(refresh)
+        btn_copy.clicked.connect(copy)
+        btn_export.clicked.connect(export)
+        btn_close.clicked.connect(box.accept)
+        refresh()
+        box.exec()
 
     def _show_setup_docs(self) -> None:
         QMessageBox.information(self, "Setup docs",
@@ -1874,6 +2006,7 @@ class OperatorWindow(QMainWindow):
             self._song_live = (song, i)
             if self._kind == "song" and self.output.on and not self.queue.blank:
                 self.projection.show_song_slide(song.slides[i], song, i, len(song.slides))
+                self._record_song_history(song.title, song.slides[i].label)
             self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[i].label}")
             self._show_slide_list(song.slides, self.slide_now_list)
             self.slide_now_list.setCurrentRow(i)
@@ -1989,6 +2122,7 @@ class OperatorWindow(QMainWindow):
         self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[row].label}")
         if self.output.on and not self.queue.blank:
             self.projection.show_song_slide(song.slides[row], song, row, len(song.slides))
+            self._record_song_history(song.title, song.slides[row].label)
         self.slide_now_list.setCurrentRow(row)
         self.refresh()
 
@@ -2031,6 +2165,7 @@ class OperatorWindow(QMainWindow):
         self._song_pending = None
         if self.output.on and not self.queue.blank:
             self.projection.show_sermon(info)
+            self._record_sermon_history(info)
         self.sermon_note.setText("Sermon info on screen." if not info.reference else
                                  f"Sermon info on screen. Reference: {info.reference}")
 

@@ -120,6 +120,7 @@ class ThemeEditor(QDialog):
 
         bar = QVBoxLayout()
         for text, fn in [("Open theme file...", self._open), ("Save theme file...", self._save),
+                         ("Export theme...", self._export), ("Import theme...", self._import),
                          ("Apply to output", self.accept), ("Cancel", self.reject)]:
             b = QPushButton(text); b.clicked.connect(fn); bar.addWidget(b)
         bar.addStretch(1)
@@ -224,6 +225,32 @@ class ThemeEditor(QDialog):
         if path:
             t.save(path)
             self.path = path
+
+    def _export(self) -> None:
+        """Share this design as a .json file (same schema the editor saves and loads)."""
+        from .theme_io import export_theme
+        t = self.read()
+        path, _ = QFileDialog.getSaveFileName(self, "Export theme", f"{t.name}.json", "Theme JSON (*.json)")
+        if not path:
+            return
+        try:
+            export_theme(t, path)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Theme not exported", str(exc))
+
+    def _import(self) -> None:
+        """Import a theme someone shared with you, validated the same way as opening a file."""
+        from .theme_io import import_theme
+        path, _ = QFileDialog.getOpenFileName(self, "Import theme", "", "Theme JSON (*.json)")
+        if not path:
+            return
+        try:
+            t = import_theme(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Theme not imported", str(exc))
+            return
+        self.path = path
+        self._fill(t)
 
     def accept(self) -> None:  # noqa: D401 - Qt override
         errs = self.read().problems()

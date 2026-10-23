@@ -120,3 +120,32 @@ Recommended model per RAM tier:
 Thumbnails are cached at 160px and generated only on Rescan or Import (ffmpeg runs on demand, never during a service). Projection images use a bounded cache of 8 decoded images.
 
 Measured numbers: run `QT_QPA_PLATFORM=offscreen python scripts/bench.py 50` for paint events per slide change and offscreen transition frame cost on your machine. Figures from a Windows church PC are not yet measured.
+
+## Bible translations (v0.2.0)
+
+Bundled public-domain packs live in data/bible/ (ships in the repo):
+- KJV.sqlite: King James Version, 66 books, 31,102 verses (public domain).
+- ASV.sqlite: American Standard Version 1901, 66 books, 31,102 verses (public domain).
+- WEB.sqlite: World English Bible, 66 books, 31,098 verses (public domain, dedicated to the public domain).
+If the full bundle is missing, the app falls back to data/sample_kjv.json (offline dev sample).
+
+Pick a translation on the Verses tab (translation dropdown). Detected and manual verses use it; the choice is remembered in settings.
+
+Add a translation you are licensed to use (nothing copyrighted is bundled):
+Settings > Bible > Add translation, then pick a JSON file in this format:
+  {"id": "MYTR", "name": "My Translation", "language": "en",
+   "license": "Licensed to <church>, 2026 (text owner: ...)",
+   "verses": [{"book": "John", "chapter": 3, "verse": 16, "text": "..."}]}
+"book" may be a book name or a 1-66 number. The id must be 2-16 letters, digits, _ or -, and KJV/ASV cannot be replaced. Remove a user translation from the same page.
+
+## Updates (GitHub Releases)
+
+About > Check for updates asks https://api.github.com/repos/binuyo-legacy/revelatetw/releases/latest once and compares the tag with the app version. If a newer release exists it offers to open the release page. No internet means a friendly message, never a crash. The check is off at startup by default; turn on "Check for updates when the app starts" in About if you want it. Nothing is sent otherwise.
+
+## Service history
+
+Every live projection (verse, song slide, sermon, media) is logged to data/history/YYYY-MM-DD.json with time and type. Open Help > Service history to read today or a past day, copy it, or export to a text file. Logs stay on this computer.
+
+## Theme sharing
+
+In the theme editor: Export theme... saves the design as a .json file; Import theme... loads one a friend shared. Import checks the file with the same validation as Open theme file, so a broken file is refused with a plain message.

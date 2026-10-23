@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, 
 from . import fftools
 from .store import APP_VERSION, AppSettings
 
-SECTIONS = ["General", "Output", "Audio", "Transcription", "Detection", "About"]
+SECTIONS = ["General", "Output", "Audio", "Transcription", "Detection", "Bible", "About"]
 MODEL_SIZES = ["small", "medium", "large"]
 WHISPER_LANGS = [("en", "English"), ("fr", "French"), ("yo", "Yoruba"), ("ha", "Hausa"), ("sw", "Swahili")]
 RESOLUTIONS = ["auto", "1920x1080", "1280x720", "3840x2160"]
@@ -27,13 +27,21 @@ def _note(text: str) -> QLabel:
     return lab
 
 
+class _NoUpdater:
+    kind = "error"
+    url = ""
+    message = "Updates are not set up in this build yet. You are on " + APP_VERSION + "."
+
+
 class SettingsPage(QWidget):
     changed = pyqtSignal(str)   # settings key that changed
+    _update_result = pyqtSignal(object)
+    _update_btn_enable = pyqtSignal(bool)
 
     def __init__(self, settings: AppSettings, check_updates_cb=None, parent=None):
         super().__init__(parent)
         self.s = settings
-        self._check_updates_cb = check_updates_cb or (lambda: "Updates are not set up in this build yet. You are on " + APP_VERSION + ".")
+        self._check_updates_cb = check_updates_cb or (lambda done: done(_NoUpdater()))
         self._loading = True
         root = QHBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 10)
@@ -42,7 +50,8 @@ class SettingsPage(QWidget):
         self.stack = QStackedWidget()
         for name, page in [("General", self._general()), ("Output", self._output()),
                            ("Audio", self._audio()), ("Transcription", self._transcription()),
-                           ("Detection", self._detection()), ("About", self._about())]:
+                           ("Detection", self._detection()), ("Bible", self._bible()),
+                           ("About", self._about())]:
             self.nav.addItem(name)
             self.stack.addWidget(page)
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
@@ -50,6 +59,7 @@ class SettingsPage(QWidget):
         root.addWidget(self.nav)
         root.addWidget(self.stack, 1)
         self._loading = False
+        self._refresh_bible_list()
 
     def select_section(self, name: str) -> None:
         if name in SECTIONS:
@@ -84,7 +94,6 @@ class SettingsPage(QWidget):
         w, lay = self._page()
         lay.addRow(self._check("Start with live output ON", "startup_live_on", self.s.startup_live_on,
                                "When the app opens, the projection window is shown."))
-        lay.addRow(self._check("Check for updates on startup", "check_updates", self.s.check_updates))
         self.language = QComboBox()
         self.language.addItem("English", "en")
         self.language.setToolTip("Interface language. English only in this build.")
@@ -336,6 +345,117 @@ class SettingsPage(QWidget):
         self._set("auto_approve", bool(on))
 
     # --- About ------------------------------------------------------------------------------
+    # --- Bible --------------------------------------------------------------------------
+    def _refresh_bible_list(self) -> None:
+        from .bible import BibleLibrary
+        self.bible_list.clear()
+        for t in BibleLibrary().installed():
+            self.bible_list.addItem(f"{t.label}" + ("  (bundled)" if t.bundled else "  (your import)"))
+            self.bible_list.item(self.bible_list.count() - 1).setData(Qt.ItemDataRole.UserRole, t.id)
+
+    def _add_translation(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        from .bible import BibleImportError, import_translation
+        path, _ = QFileDialog.getOpenFileName(self, "Add translation", "", "Translation JSON (*.json)")
+        if not path:
+            return
+        try:
+            t = import_translation(path)
+        except (BibleImportError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Translation not added", str(exc))
+            return
+        QMessageBox.information(self, "Translation added", f"{t.name} ({t.id}) is installed. Pick it on the Verses tab.")
+        self._refresh_bible_list()
+
+    def _remove_translation(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        from .bible import remove_user_translation
+        item = self.bible_list.currentItem()
+        if item is None:
+            return
+        tid = item.data(Qt.ItemDataRole.UserRole)
+        if "(your import)" not in item.text():
+            QMessageBox.information(self, "Not removable", "Bundled public-domain translations stay installed.")
+            return
+        if remove_user_translation(tid):
+            self._refresh_bible_list()
+    def _bible(self) -> QWidget:
+        w, lay = self._page()
+        self.bible_list = QListWidget()
+        self.bible_list.setMaximumHeight(120)
+        lay.addRow(_note("Installed translations. Bundled public-domain versions ship with the app."), self.bible_list)
+        btn_add = QPushButton("Add translation...")
+        btn_add.setToolTip("Import a JSON file of a translation you are licensed to use (format in SETUP.md)")
+        btn_add.clicked.connect(self._add_translation)
+        btn_remove = QPushButton("Remove selected user translation")
+        btn_remove.clicked.connect(self._remove_translation)
+        row = QHBoxLayout()
+        row.addWidget(btn_add)
+        row.addWidget(btn_remove)
+        row.addStretch(1)
+        lay.addRow(row)
+        self.bible_msg = _note("")
+        lay.addRow(self.bible_msg)
+        self.refresh_bible_list()
+        return w
+
+    def refresh_bible_list(self) -> None:
+        from .bible import BibleLibrary
+        self.bible_list.clear()
+        for t in BibleLibrary().installed():
+            self.bible_list.addItem(f"{t.label}  ({t.id})" + ("  [bundled]" if t.bundled else ""))
+
+    def _add_translation(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        from .bible import BibleLibrary, BibleImportError, import_translation
+        path, _ = QFileDialog.getOpenFileName(self, "Add translation", "", "Translation JSON (*.json)")
+        if not path:
+            return
+        try:
+            t = import_translation(path)
+        except (BibleImportError, OSError) as exc:
+            self.bible_msg.setText(f"Not imported: {exc}")
+            return
+        BibleLibrary().close()
+        self.refresh_bible_list()
+        self.bible_msg.setText(f"Added {t.label} ({t.id}). It is now in the Verses tab dropdown.")
+        self.changed.emit("bible_translation")
+
+    def _remove_translation(self) -> None:
+        from .bible import remove_user_translation
+        row = self.bible_list.currentRow()
+        if row < 0:
+            self.bible_msg.setText("Pick a user translation in the list first.")
+            return
+        tid = self.bible_list.item(row).text().rsplit("(", 1)[-1].rstrip(")").split()[0]
+        if remove_user_translation(tid):
+            self.refresh_bible_list()
+            self.bible_msg.setText(f"Removed {tid}.")
+            self.changed.emit("bible_translation")
+        else:
+            self.bible_msg.setText(f"{tid} is bundled or not a user translation, so it was kept.")
+
+    def _start_update_check(self, btn) -> None:
+        self.update_msg.setText("Checking for updates...")
+        btn.setEnabled(False)
+
+        def done(result):
+            # runs on the worker thread; hop to the GUI thread via queued signals
+            self._update_result.emit(result)
+            self._update_btn_enable.emit(True)
+        self._check_updates_cb(done)
+
+    def _on_update_result(self, result) -> None:
+        msg = result.message
+        if result.kind == "update":
+            msg += " Opening the release page..."
+            import webbrowser
+            try:
+                webbrowser.open(result.url)
+            except Exception:
+                msg += f" If it did not open, go to {result.url}"
+        self.update_msg.setText(msg)
+
     def _about(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -343,8 +463,14 @@ class SettingsPage(QWidget):
         lay.addWidget(_note("Verse detection and live output for church services."))
         btn = QPushButton("Check for updates")
         self.update_msg = _note("")
-        btn.clicked.connect(lambda: self.update_msg.setText(self._check_updates_cb()))
+        self._update_btn = btn
+        self._update_result.connect(self._on_update_result)
+        self._update_btn_enable.connect(btn.setEnabled)
+        btn.clicked.connect(lambda: self._start_update_check(btn))
         lay.addWidget(btn)
         lay.addWidget(self.update_msg)
+        lay.addWidget(self._check("Check for updates when the app starts (off by default)", "check_updates_on_startup",
+                                  self.s.check_updates_on_startup,
+                                  "Sends one request to GitHub at startup. Off means the app makes no update requests."))
         lay.addStretch(1)
         return w
