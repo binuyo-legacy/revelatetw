@@ -6,8 +6,8 @@ The operator window decides what to apply (see OperatorWindow._apply_settings) a
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
-                             QLabel, QListWidget, QMessageBox, QPushButton, QSlider, QStackedWidget,
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout,
+                             QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QStackedWidget,
                              QVBoxLayout, QWidget)
 
 from .store import APP_VERSION, AppSettings
@@ -111,7 +111,27 @@ class SettingsPage(QWidget):
         lay.addRow(vc)
         lay.addRow(_note("Virtual camera: the setting is saved, but no virtual camera driver is built yet. "
                          "For now, capture the output window in OBS."))
+        self.media_folder_edit = QLineEdit(self.s.media_folder or "")
+        self.media_folder_edit.setPlaceholderText("data/media (default)")
+        self.media_folder_edit.setToolTip("Folder the Media tab scans for images and videos")
+        self.media_folder_edit.editingFinished.connect(
+            lambda: self._set("media_folder", self.media_folder_edit.text().strip()))
+        browse = QPushButton("Browse...")
+        browse.clicked.connect(self._pick_media_folder)
+        row = QHBoxLayout()
+        row.addWidget(self.media_folder_edit, 1)
+        row.addWidget(browse)
+        box = QWidget()
+        box.setLayout(row)
+        lay.addRow("Media folder", box)
         return w
+
+    def _pick_media_folder(self) -> None:
+        start = self.s.media_folder or ""
+        folder = QFileDialog.getExistingDirectory(self, "Choose the media folder", start)
+        if folder:
+            self.media_folder_edit.setText(folder)
+            self._set("media_folder", folder)
 
     def set_displays(self, labels: list[str], current: int) -> None:
         self._loading = True

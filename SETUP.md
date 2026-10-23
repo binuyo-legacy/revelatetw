@@ -61,6 +61,17 @@ Live output: ON/OFF, standalone output, and songs (this round)
 - Sermon info slide: type a title and optional speaker, then Show sermon info. The reference is the verse currently on the live output. Clear removes it. It uses the same theme as verses.
 - Tests: python -m unittest discover -s tests -v (the GUI smoke tests run offscreen and skip if PyQt6 is missing).
 
+Media tab: images and videos (this round)
+- Media folder: data/media next to the app by default. Change it in Settings > Output > Media folder (Browse picks any folder). The choice is saved.
+- Supported formats: images png, jpg, jpeg, webp, gif. Videos mp4, mkv, webm, mov. Other files in the folder are ignored.
+- Import: the Import button copies the files you choose into the media folder (never overwrites; a name clash becomes "name (2).ext"). Rescan rebuilds the list after you drop files in by hand.
+- The grid shows each item with its type badge and duration. Search filters by name, and All / Images / Videos narrows the type. Double-click an item, or select it and press Project, to project it.
+- Media projects straight away with no approval step. It still respects LIVE: with the output off, the selection is held and shows when you turn LIVE back on. It stays on screen until you project something else or turn the output off. Images are scaled to fill the screen with the aspect kept. Videos play full-frame with a black letterbox and sound is muted (route audio through your audio mixer). Tick Loop video to replay when it ends.
+- Fades: images and the video's first frame fade in and out with the theme transition. Video playback itself is not warped.
+- If a video will not play, the slide shows "Cannot play this video format" instead of crashing. This needs the Qt multimedia backend: PyQt6 ships it, but Windows needs the codecs for the format (mp4 with H.264 is the safe choice).
+- Optional ffprobe and ffmpeg: with ffprobe on PATH, video durations show on the cards (otherwise "length unknown"). With ffmpeg on PATH, videos get a first-frame thumbnail (otherwise a placeholder). Install from https://ffmpeg.org/download.html and add the bin folder to PATH. Neither is required. No paid SDK is used.
+- The index cache is saved as .revelatetw-media-index.json in the media folder, with thumbnails in .thumbs. Delete both to start fresh.
+
 Manual GUI test steps (not automated; PyQt6 needs a display)
 1. python -m revelatetw --gui. Type "John 3:16" in the Dev feed and press Enter. The candidate must appear in the queue, and the projector must stay blank until you press Enter (Approve).
 2. Press B to blank. Press Enter again on another candidate to project it.

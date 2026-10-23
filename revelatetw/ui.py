@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QRect, Qt, QTimer
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
                              QInputDialog,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubl
                              QSpinBox, QTabWidget, QVBoxLayout, QWidget, QMessageBox)
 
 from .approval import ApprovalQueue
+from .media import DEFAULT_MEDIA_FOLDER, MediaItem, MediaLibrary, filter_items, format_duration
 from .detection import Candidate
 from .displays import DisplayInfo, list_displays
 from .output_state import LiveOutputState, pill_state
@@ -28,7 +29,8 @@ from .sermon import SermonInfo
 from .songs import Slide, Song, SongLibrary, lyrics_text, split_lyrics
 from .sermon_presets import SermonPreset, SermonPresetLibrary
 from .theme import Theme
-from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_song, paint_sermon,
+from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_media_image, paint_media_message,
+                      paint_song, paint_sermon,
                       paint_verse)
 from .transitions import (FRAME_MS, compose_layout, direction_for, effective_style,
                           interrupt_duration, is_cut, progress)
@@ -130,6 +132,90 @@ class ProjectionWindow(QWidget):
         key = ("sermon", line, info.title, info.speaker, info.reference)
         self._set_content(fn, key, ("sermon",), 0, "")
 
+    def show_media(self, item, loop: bool = False) -> None:
+        """Project a media item. Images paint full-frame; videos play in a QVideoWidget.
+
+        Images and the video's first frame go through the transitions pipeline (fade on in and
+        out). Video playback itself is not warped.
+        """
+        if item is None:
+            self.show_blank()
+            return
+        path = item.path
+        if item.kind == "image":
+            self._stop_video()
+            fn = lambda p, r: paint_media_image(p, r, path, self._image_cache)  # noqa: E731
+            key = ("media-image", path)
+            self._set_content(fn, key, ("media",), 0, "")
+            return
+        # video: the frame becomes the settled content so the fade-out still has something to show
+        key = ("media-video", path, bool(loop))
+        self._set_content(None, key, ("media",), 0, "")
+        self._play_video(path, loop)
+
+    def _ensure_video(self) -> None:
+        if getattr(self, "_video_widget", None) is not None:
+            return
+        from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+        from PyQt6.QtMultimediaWidgets import QVideoWidget
+        self._video_widget = QVideoWidget(self)
+        self._video_widget.setGeometry(self.rect())
+        self._video_widget.hide()
+        self._player = QMediaPlayer(self)
+        self._audio = QAudioOutput(self)
+        self._audio.setMuted(True)            # projection is video-only; sound goes through the audio mixer
+        self._player.setAudioOutput(self._audio)
+        self._player.setVideoOutput(self._video_widget)
+        self._player.errorOccurred.connect(self._on_video_error)
+        self._player.mediaStatusChanged.connect(self._on_video_status)
+        self._video_error = ""
+        self._video_loop = False
+
+    def _play_video(self, path: str, loop: bool) -> None:
+        try:
+            self._ensure_video()
+        except ImportError:
+            self._video_error = "video backend not available"
+            self.update()
+            return
+        from PyQt6.QtCore import QUrl
+        self._video_error = ""
+        self._video_loop = bool(loop)
+        self._video_widget.setGeometry(self.rect())
+        self._video_widget.show()
+        self._player.setSource(QUrl.fromLocalFile(path))
+        self._player.play()
+        self.update()
+
+    def _stop_video(self) -> None:
+        if getattr(self, "_player", None) is not None:
+            self._player.stop()
+            self._player.setSource(self._empty_url())
+        if getattr(self, "_video_widget", None) is not None:
+            self._video_widget.hide()
+        self._video_error = ""
+        self._video_loop = False
+
+    @staticmethod
+    def _empty_url():
+        from PyQt6.QtCore import QUrl
+        return QUrl()
+
+    def _on_video_error(self, *_args) -> None:
+        self._video_error = "Cannot play this video format"
+        if getattr(self, "_video_widget", None) is not None:
+            self._video_widget.hide()
+        self.update()
+
+    def _on_video_status(self, status) -> None:
+        from PyQt6.QtMultimedia import QMediaPlayer
+        if status == QMediaPlayer.MediaStatus.EndOfMedia and self._video_loop and self._player is not None:
+            self._player.setPosition(0)
+            self._player.play()
+
+    def set_video_loop(self, loop: bool) -> None:
+        self._video_loop = bool(loop)
+
     def show_blank(self) -> None:
         self._set_content(None, ("blank",), "blank", 0, "")
 
@@ -177,8 +263,9 @@ class ProjectionWindow(QWidget):
         self._anim = None
 
     def reset_animation(self) -> None:
-        """Drop any running transition (output toggled off, or the window hidden)."""
+        """Drop any running transition and stop video (output toggled off, or the window hidden)."""
         self._stop_anim()
+        self._stop_video()
         self._live = False
         self.update()
 
@@ -245,6 +332,11 @@ class ProjectionWindow(QWidget):
         painter.drawPixmap(0, 0, pix)
         painter.restore()
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if getattr(self, "_video_widget", None) is not None:
+            self._video_widget.setGeometry(self.rect())
+        super().resizeEvent(event)
+
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
         self.reset_animation()
         super().hideEvent(event)
@@ -258,6 +350,8 @@ class ProjectionWindow(QWidget):
                 self._paint_anim(painter, rect, self._anim_progress())
             else:
                 self._paint_content(painter, rect, self._frame)
+            if getattr(self, "_video_error", ""):
+                paint_media_message(painter, rect, self._video_error)
         finally:
             painter.end()
 
@@ -380,6 +474,9 @@ class OperatorWindow(QMainWindow):
         self._loading_editor = False         # True while the editor is filled programmatically
         self._songs_page: Optional[QWidget] = None
         self.library = SongLibrary(songs_dir)
+        self.media = MediaLibrary(self.settings.media_folder or DEFAULT_MEDIA_FOLDER)
+        self._media_live: Optional[object] = None   # MediaItem on the output, or None
+        self._media_items: list = []
         self.sermon_presets = SermonPresetLibrary(sermons_dir)
         self._songs: list[Song] = []
 
@@ -403,11 +500,7 @@ class OperatorWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.addTab(live_page, "Live (verses)")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
-        media_placeholder = QLabel("Media is coming soon.")
-        media_placeholder.setObjectName("sub")
-        self._tabs.addTab(media_placeholder, "Media")
-        self._tabs.setTabEnabled(self._tabs.count() - 1, False)
-        self._tabs.setTabToolTip(self._tabs.count() - 1, "soon")
+        self._tabs.addTab(self._build_media_tab(), "Media")
         self.settings_page = SettingsPage(self.settings, check_updates_cb=self._check_updates)
         self.settings_page.changed.connect(self._on_setting_changed)
         self._tabs.addTab(self.settings_page, "Settings")
@@ -1008,6 +1101,7 @@ class OperatorWindow(QMainWindow):
     def _show_on_output(self, c: Candidate) -> None:
         self._cursor = (c.book_id, c.chapter, c.verse)
         self._kind = "verse"
+        self._media_live = None
         self._song_pending = None
         self.projection.show_theme(self.theme)
         self.projection.show_verse(c)
@@ -1022,6 +1116,8 @@ class OperatorWindow(QMainWindow):
             self.projection.show_song_slide(song.slides[i], song, i, len(song.slides))
         elif self._kind == "sermon" and self._sermon_live:
             self.projection.show_sermon(self._sermon_live)
+        elif self._kind == "media" and self._media_live is not None:
+            self.projection.show_media(self._media_live, loop=self.media_loop.isChecked())
         elif self.queue.live:
             self.projection.show_verse(self.queue.live)
 
@@ -1054,6 +1150,142 @@ class OperatorWindow(QMainWindow):
         if c:
             self.preview.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
             self.preview.setFocus()
+
+    # --- Media tab ----------------------------------------------------------------------------
+    def _build_media_tab(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(12, 10, 12, 10)
+        bar = QHBoxLayout()
+        self.media_search = QLineEdit()
+        self.media_search.setPlaceholderText("Search media by name")
+        self.media_search.textChanged.connect(self._refresh_media_grid)
+        self.media_filter = QComboBox()
+        self.media_filter.addItem("All", "all")
+        self.media_filter.addItem("Images", "images")
+        self.media_filter.addItem("Videos", "videos")
+        self.media_filter.currentIndexChanged.connect(self._refresh_media_grid)
+        self.media_loop = QCheckBox("Loop video")
+        self.media_loop.setToolTip("Replay a projected video from the start when it ends")
+        self.media_loop.toggled.connect(self._on_media_loop)
+        rescan = QPushButton("Rescan")
+        rescan.clicked.connect(self.rescan_media)
+        import_btn = QPushButton("Import")
+        import_btn.clicked.connect(self.import_media)
+        proj_btn = QPushButton("Project")
+        proj_btn.clicked.connect(self.project_selected_media)
+        for w in (self.media_search, self.media_filter, self.media_loop, rescan, import_btn, proj_btn):
+            bar.addWidget(w)
+        bar.setStretch(0, 3)
+        lay.addLayout(bar)
+        self.media_list = QListWidget()
+        self.media_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.media_list.setIconSize(QSize(180, 102))
+        self.media_list.setGridSize(QSize(200, 150))
+        self.media_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.media_list.setMovement(QListWidget.Movement.Static)
+        self.media_list.setWordWrap(True)
+        self.media_list.itemDoubleClicked.connect(lambda _it: self.project_selected_media())
+        self.media_empty = self._empty_state("\U0001F5BC", "No media yet \u2014 click Import to add images or videos",
+                                             "emptyIconBook")
+        lay.addWidget(self.media_empty, 1)
+        lay.addWidget(self.media_list, 1)
+        self.media_status = QLabel("")
+        self.media_status.setObjectName("sub")
+        lay.addWidget(self.media_status)
+        self.media_list.hide()
+        self._media_page = page
+        return page
+
+    def _set_media_folder(self, folder: str) -> None:
+        self.media = MediaLibrary(folder)
+        self.media.load_cached()
+        self.rescan_media()
+
+    def _media_folder_str(self) -> str:
+        return str(self.media.folder)
+
+    def load_media_cache(self) -> None:
+        """Show the last scan at startup without rescanning (fast)."""
+        self.media.load_cached()
+        self._refresh_media_grid()
+
+    def rescan_media(self) -> None:
+        self.media.rescan()
+        self._refresh_media_grid()
+        self.media_status.setText(f"Scanned {self._media_folder_str()}: {len(self.media.items)} item(s).")
+
+    def import_media(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Import images or videos", "",
+            "Media (*.png *.jpg *.jpeg *.webp *.gif *.mp4 *.mkv *.webm *.mov);;All files (*)")
+        if not paths:
+            return
+        copied, skipped = self.media.import_files(paths)
+        self.media.rescan()
+        self._refresh_media_grid()
+        msg = f"Imported {len(copied)} file(s)."
+        if skipped:
+            msg += f" Skipped (not images or videos): {', '.join(skipped)}."
+        self.media_status.setText(msg)
+
+    def _refresh_media_grid(self) -> None:
+        kind = self.media_filter.currentData() if hasattr(self, "media_filter") else "all"
+        text = self.media_search.text() if hasattr(self, "media_search") else ""
+        shown = filter_items(self.media.items, text, kind)
+        self._media_items = shown
+        self.media_list.clear()
+        from PyQt6.QtGui import QIcon, QPixmap
+        for it in shown:
+            label = f"{it.name}\n{it.type_label}"
+            if it.is_video:
+                label += f" \u00b7 {it.duration_label()}"
+            row = QListWidgetItem(label)
+            row.setData(Qt.ItemDataRole.UserRole, it.path)
+            pix = QPixmap(it.thumb) if it.thumb else QPixmap()
+            if not pix.isNull():
+                row.setIcon(QIcon(pix))
+            self.media_list.addItem(row)
+        empty = not self.media.items
+        self.media_empty.setVisible(empty or not shown)
+        if not self.media.items:
+            self.media_empty.hint.setText("No media yet \u2014 click Import to add images or videos")
+        elif not shown:
+            self.media_empty.hint.setText("No media matches this search or filter")
+        self.media_list.setVisible(bool(shown))
+
+    def _selected_media_item(self):
+        row = self.media_list.currentItem()
+        if row is None:
+            return None
+        path = row.data(Qt.ItemDataRole.UserRole)
+        for it in self._media_items:
+            if it.path == path:
+                return it
+        return None
+
+    def project_selected_media(self) -> None:
+        """Project straight away (no approval for media). Respects LIVE: while the output is off,
+        it is remembered and shown when the output turns on."""
+        it = self._selected_media_item()
+        if it is None:
+            self.media_status.setText("Select a media item first.")
+            return
+        self._project_media(it)
+
+    def _project_media(self, it) -> None:
+        self._media_live = it
+        self._kind = "media"
+        self._song_pending = None
+        self._song_live = None
+        self._sermon_live = None
+        self.media_status.setText(f"Projected: {it.name} ({it.type_label.lower()})")
+        if self.output.on and not self.queue.blank:
+            self.projection.show_media(it, loop=self.media_loop.isChecked())
+        self.refresh()
+
+    def _on_media_loop(self, on: bool) -> None:
+        self.projection.set_video_loop(on)
 
     def toggle_blank(self) -> None:
         self.queue.set_blank(not self.queue.blank)
@@ -1092,6 +1324,8 @@ class OperatorWindow(QMainWindow):
             self.live.capture.set_gate_threshold(s.noise_gate_db)
         elif key == "input_device_name":
             self._select_device_by_name(s.input_device_name)
+        elif key == "media_folder":
+            self._set_media_folder(s.media_folder or DEFAULT_MEDIA_FOLDER)
         self._save_settings()
 
     def _select_device_by_name(self, name: str) -> None:
@@ -1171,7 +1405,7 @@ class OperatorWindow(QMainWindow):
             self._render_output()
             self.projection.present()
         else:
-            self.projection.hide()
+            self.projection.hide()                     # media stays selected in _media_live; re-shown on ON
         self.tile_feed.value.setText("On" if on else "Off (hidden)")
 
     # --- display picker -----------------------------------------------------------------------
@@ -1608,6 +1842,7 @@ class OperatorWindow(QMainWindow):
         self._kind = "song"
         self._song_pending = None
         self._sermon_live = None
+        self._media_live = None
         self.song_pending_label.setText("")
         self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[row].label}")
         if self.output.on and not self.queue.blank:
@@ -1650,6 +1885,7 @@ class OperatorWindow(QMainWindow):
             return
         self._sermon_live = info
         self._kind = "sermon"
+        self._media_live = None
         self._song_pending = None
         if self.output.on and not self.queue.blank:
             self.projection.show_sermon(info)

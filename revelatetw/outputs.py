@@ -452,3 +452,34 @@ def paint_verse(painter, rect, theme, candidate) -> None:
     painter.setPen(_qcolor(theme.reference_color))
     painter.drawText(QRectF(rect.x() + mx, rect.y() + H - my - ref_px * 2.2, box_w, ref_px * 2.2),
                      centre, ref)
+
+
+def paint_media_image(painter, rect, path: str, image_cache: dict | None = None) -> None:
+    """Full-frame media image: scaled to fill the frame, aspect kept (cropped to fit), on black.
+
+    A missing or unreadable file paints black with the on-slide message handled by the window.
+    """
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QPixmap
+    painter.fillRect(rect, _qcolor(MIDNIGHT))
+    cache = image_cache if image_cache is not None else {}
+    if path not in cache:
+        cache[path] = QPixmap(path)
+    pix = cache[path]
+    if pix.isNull():
+        return
+    scaled = pix.scaled(int(rect.width()), int(rect.height()), _keep_aspect_crop(), _smooth())
+    x = rect.x() + (rect.width() - scaled.width()) / 2
+    y = rect.y() + (rect.height() - scaled.height()) / 2
+    painter.drawPixmap(QRectF(x, y, scaled.width(), scaled.height()).toRect(), scaled)
+
+
+def paint_media_message(painter, rect, text: str) -> None:
+    """Friendly on-slide message for media that cannot play (black letterbox, gold text)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QFont
+    font = QFont()
+    font.setPixelSize(max(20, int(rect.height() / 22)))
+    painter.setFont(font)
+    painter.setPen(_qcolor("#D4A017"))
+    painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), text)
