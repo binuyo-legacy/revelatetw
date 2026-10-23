@@ -479,6 +479,8 @@ class SettingsPage(QWidget):
         lay = QVBoxLayout(w)
         lay.addWidget(QLabel(f"RevelateTW version {APP_VERSION}"))
         lay.addWidget(_note("Verse detection and live output for church services."))
+        lay.addWidget(_note("Bible credits: KJV, ASV and WEB are public domain. Yoruba Contemporary \u00a9 Biblica, CC BY-SA 4.0 "
+                            "(attribution and license notes in data/bible/LICENSES.md)."))
         btn = QPushButton("Check for updates")
         self.update_msg = _note("")
         self._update_btn = btn

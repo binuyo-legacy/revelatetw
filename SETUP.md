@@ -132,6 +132,7 @@ Bundled public-domain packs live in data/bible/ (ships in the repo):
 - KJV.sqlite: King James Version, 66 books, 31,102 verses (public domain).
 - ASV.sqlite: American Standard Version 1901, 66 books, 31,102 verses (public domain).
 - WEB.sqlite: World English Bible, 66 books, 31,098 verses (public domain, dedicated to the public domain).
+- Yoruba.sqlite: Yoruba Contemporary Bible, 66 books, 1,189 chapters, 31,102 verses. Licensed CC BY-SA 4.0 (c) Biblica, Inc. This is NOT public domain: it must keep the credit "Yoruba Contemporary (c) Biblica, CC BY-SA 4.0" (shown on the About screen), and any modified or redistributed copy must stay under CC BY-SA 4.0 with the changes stated. Biblica(R) trademark rules apply to derivatives. Full notes: data/bible/LICENSES.md. Built from tayoraph/yoruba-Bible-in-json with scripts/build_bible_bundle.py.
 If the full bundle is missing, the app falls back to data/sample_kjv.json (offline dev sample).
 
 Pick a translation on the Verses tab (translation dropdown). Detected and manual verses use it; the choice is remembered in settings.
@@ -154,3 +155,6 @@ Every live projection (verse, song slide, sermon, media) is logged to data/histo
 ## Theme sharing
 
 In the theme editor: Export theme... saves the design as a .json file; Import theme... loads one a friend shared. Import checks the file with the same validation as Open theme file, so a broken file is refused with a plain message.
+
+## Large Whisper models (v0.3)
+Settings > Transcription > Model size lists tiny, base, small, medium, large and large-v3. Large and large-v3 need a powerful PC: 16GB RAM or more is recommended. Choosing a large model shows a warning. OK keeps it (saved); Cancel keeps your previous model. If your PC struggles, switch back to a smaller model. large-v3 is the recommended model for Yoruba live detection.

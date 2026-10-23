@@ -26,8 +26,8 @@ SAMPLE_JSON = REPO_ROOT / "data" / "sample_kjv.json"
 PACK_SUFFIX = ".sqlite"
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,15}$")
 REQUIRED_IMPORT_KEYS = ("id", "name", "language", "license", "verses")
-# Bundled ids cannot be replaced by an import (keeps KJV/ASV meaning what the bundle says).
-RESERVED_IDS = {"KJV", "ASV"}
+# Bundled ids cannot be replaced by an import (keeps KJV/ASV/WEB/Yoruba meaning what the bundle says).
+RESERVED_IDS = {"KJV", "ASV", "WEB", "YORUBA"}
 PREFERRED_ORDER = ("KJV", "ASV")
 
 
@@ -70,7 +70,7 @@ class BibleLibrary:
                     continue
                 tid = str(meta.get("id") or p.stem)
                 out.append(Translation(tid, str(meta.get("name") or tid), str(meta.get("license", "")),
-                                       str(p), bundled=tid in RESERVED_IDS))
+                                       str(p), bundled=tid.upper() in RESERVED_IDS))
         if not any(t.id == "KJV" for t in out) and self.sample_json.is_file():
             out.append(Translation("KJV", "King James Version (sample)", "Public domain",
                                    str(self.sample_json), bundled=True, fallback=True))

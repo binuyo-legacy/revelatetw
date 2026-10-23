@@ -21,10 +21,25 @@ CHAPTER_COUNTS = [50, 40, 27, 36, 34, 24, 21, 4, 31, 24, 22, 25, 29, 36, 10, 13,
                   13, 6, 6, 4, 4, 5, 3, 6, 4, 3, 1, 13, 5, 5, 3, 5, 1, 1, 1, 22]
 
 
+def _group_chapters(details):
+    out = {}
+    for v in details:
+        out.setdefault(int(v["chapter"]), []).append(v)
+    return sorted(out.items())
+
+
 def main(argv):
     src, tid, name, license_text, attribution = argv[1:6]
     normalize_punct = len(argv) > 6 and argv[6] == "--fix-punct"
     data = json.loads(Path(src).read_text(encoding="utf-8-sig"))
+    if isinstance(data, list) and data and "details" in data[0]:
+        # tayoraph/yoruba-Bible-in-json layout: flat verse rows per book, SWORD-style book_number
+        # (10, 20, ... 730). Sort by book_number and use the canonical order from there.
+        data = {"books": [{"name": b["bookName"], "chapters": [
+            {"chapter": c, "verses": [{"verse": v["verse"], "text": v["text"]}
+                                      for v in sorted(vs, key=lambda x: x["verse"])]}
+            for c, vs in _group_chapters(b["details"])]}
+            for b in sorted(data, key=lambda b: b["details"][0]["book_number"])]}
     books = data["books"] if isinstance(data, dict) else data
     # thiagobodruk layout: chapters are lists of verse strings; normalise to the scrollmapper shape
     books = [{"name": b["name"], "chapters": [
