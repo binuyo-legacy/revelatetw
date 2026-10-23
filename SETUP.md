@@ -40,6 +40,16 @@ Feeding OBS (no extra software, recommended)
 3. Keep the projection window at 1920x1080 so the capture is not scaled.
 Optional virtual camera: pip install pyvirtualcam, install OBS 26 or later, start its Virtual Camera once. RevelateTW's VirtualCameraSink then sends frames to "OBS Virtual Camera" in apps like Zoom or Teams.
 
+Live output: ON/OFF, standalone output, and songs (this round)
+- LIVE pill (toolbar, key O): click to switch the live projection output OFF. OFF hides the projection window, so another app can take a single projector. The pill shows OFF and dims. Click or press O again to bring it back.
+- Display picker (Output display, preview panel): lists every monitor with its resolution and marks the primary one. Rescan re-reads the list after you plug in a projector. The live output goes borderless and fullscreen on the chosen monitor. Start-up choice: --output-screen N (index from the list, default 0).
+- Route 1, direct fullscreen output: set the display picker to the projector. The window is the output. No OBS.
+- Route 2, capture it with any software: OBS Window Capture of "RevelateTW output" (see Feeding OBS above), or the virtual camera route, or any studio or streaming software that can capture a window or a screen. The output is the same either way.
+- Songs tab: Songs & sermon. Search the library, New song, or Import file (.txt pasted lyrics are split on import; .json is a saved song). Paste lyrics, Split into slides (a blank line or a header such as [Verse 1], Chorus:, Bridge starts a slide; --songs-dir sets the folder, default data/songs), then Save song. Each song is one JSON file.
+- Song projection: pick a slide and Send (Enter approves, Esc rejects). Tick Direct to project at once. Prev and Next slide (Left/Right arrows, or Space to step on the Live tab too) move through the same song only. Live detection is untouched.
+- Sermon info slide: type a title and optional speaker, then Show sermon info. The reference is the verse currently on the live output. Clear removes it. It uses the same theme as verses.
+- Tests: python -m unittest discover -s tests -v (the GUI smoke tests run offscreen and skip if PyQt6 is missing).
+
 Manual GUI test steps (not automated; PyQt6 needs a display)
 1. python -m revelatetw --gui. Type "John 3:16" in the Dev feed and press Enter. The candidate must appear in the queue, and the projector must stay blank until you press Enter (Approve).
 2. Press B to blank. Press Enter again on another candidate to project it.

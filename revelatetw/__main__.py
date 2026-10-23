@@ -54,6 +54,10 @@ def main(argv=None) -> int:
     ap.add_argument("--log", default="session_log.jsonl")
     ap.add_argument("--transcriber-model", default=None,
                     help="faster-whisper model size (tiny, base, small). Enables live mic in --gui.")
+    ap.add_argument("--songs-dir", default="data/songs",
+                    help="folder for saved songs (one JSON file per song)")
+    ap.add_argument("--output-screen", type=int, default=0,
+                    help="index of the monitor for the live output (see the display picker)")
     ap.add_argument("--paraphrase-threshold", type=int, default=60,
                     help="0-100. Lower finds more paraphrases (default 60).")
     args = ap.parse_args(argv)
@@ -74,7 +78,8 @@ def main(argv=None) -> int:
             from .live import LiveTranscriptionLoop
             from .transcription import LazyWhisperTranscriber
             live = LiveTranscriptionLoop(pipeline, LazyWhisperTranscriber(args.transcriber_model))
-        return run_app(queue, Theme(), pipeline=pipeline, live=live)
+        return run_app(queue, Theme(), pipeline=pipeline, live=live, songs_dir=args.songs_dir,
+                       projection_screen=args.output_screen)
     ap.print_help()
     return 0
 

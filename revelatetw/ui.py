@@ -10,15 +10,19 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
-from PyQt6.QtWidgets import (QApplication, QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
-                             QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                             QMainWindow, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
+                             QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                             QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
+                             QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 
 from .approval import ApprovalQueue
 from .detection import Candidate
+from .displays import DisplayInfo, list_displays
+from .output_state import LiveOutputState
+from .sermon import SermonInfo
+from .songs import Slide, Song, SongLibrary, split_lyrics
 from .theme import Theme
 
 # Brand palette (spec section 1)
@@ -37,8 +41,39 @@ def render_verse_html(c: Candidate | None, theme: Theme) -> str:
             f'{c.reference} ({c.translation})</span></div>')
 
 
+def render_song_html(slide: Slide | None, theme: Theme) -> str:
+    """One lyric slide: its lines, centred, in the theme's text colour. The label is hidden on
+    the output (operators see it in the slide list); the reference colour is not used."""
+    if slide is None:
+        return ""
+    size = max(12, int(theme.font_size_px * 0.8))
+    body = "<br>".join(line.replace("&", "&amp;").replace("<", "&lt;") for line in slide.lines)
+    return (f'<div style="font-family:{theme.font_family};font-weight:{theme.font_weight};'
+            f'font-size:{size}px;line-height:{theme.line_height};color:{theme.text_color};">{body}</div>')
+
+
+def render_sermon_html(info: SermonInfo | None, theme: Theme) -> str:
+    """Sermon info slide: title big, speaker and scripture reference smaller in the accent colour."""
+    if info is None or not info.lines():
+        return ""
+    esc = lambda s: s.replace("&", "&amp;").replace("<", "&lt;")  # noqa: E731
+    head = (f'<div style="font-family:{theme.font_family};font-weight:{theme.font_weight};'
+            f'font-size:{theme.font_size_px}px;line-height:{theme.line_height};color:{theme.text_color};">'
+            f'{esc(info.title)}</div>' if info.title else "")
+    rest = [esc(x) for x in (info.speaker, info.reference) if x]
+    tail = ""
+    if rest:
+        tail = (f'<div style="font-family:{theme.font_family};font-size:{int(theme.font_size_px*0.6)}px;'
+                f'color:{theme.reference_color};margin-top:12px;">' + "<br>".join(rest) + "</div>")
+    return head + tail
+
+
 class ProjectionWindow(QWidget):
-    """Borderless output. The scaffold shows the live verse on a solid background."""
+    """Borderless live output. Standalone: fullscreen on a chosen display, no OBS needed.
+
+    Hiding it (live output OFF) lets another app take the projector. Any capture tool
+    (OBS window capture, virtual camera, other studio software) can read this window.
+    """
 
     def __init__(self):
         super().__init__()
@@ -57,8 +92,27 @@ class ProjectionWindow(QWidget):
         bg = theme.background.colors[0]
         self.setStyleSheet(f"background:{bg};")
 
+    def move_to_display(self, geometry) -> None:
+        """Cover a whole display (QRect). Borderless and sized to the monitor, so it reads as fullscreen."""
+        self._display_rect = geometry
+        self.setGeometry(geometry)
+
+    def present(self) -> None:
+        """Show full-screen on the chosen display (no OBS needed; the window itself is the output)."""
+        rect = getattr(self, "_display_rect", None)
+        if rect is not None:
+            self.setGeometry(rect)
+        self.showFullScreen()
+        self.raise_()
+
     def show_verse(self, c: Candidate | None) -> None:
         self.label.setText(render_verse_html(c, self._theme))
+
+    def show_song_slide(self, slide: Slide | None) -> None:
+        self.label.setText(render_song_html(slide, self._theme))
+
+    def show_sermon(self, info: SermonInfo | None) -> None:
+        self.label.setText(render_sermon_html(info, self._theme))
 
     def show_blank(self) -> None:
         self.label.setText("")
@@ -100,6 +154,12 @@ QPushButton#seg { background: #1d2535; color: #94a3b8; border: 1px solid #2f3a52
 QPushButton#seg[active="true"] { background: #facc15; color: #0b0f19; border-color: #facc15; font-weight: 800; }
 QPushButton#nav { background: #1d2535; color: #facc15; border: 1px solid #facc15; font-weight: 800; padding: 6px 14px; }
 QPushButton#nav:disabled { color: #475569; border-color: #2f3a52; }
+QPushButton#live { background: #3a1418; color: #f87171; border: 1px solid #b42f3d; border-radius: 12px; padding: 3px 12px; font-weight: 800; }
+QPushButton#live[on="false"] { background: #161c2a; color: #64748b; border: 1px dashed #475569; }
+QTabWidget::pane { border: none; }
+QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 6px 14px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+QTabBar::tab:selected { background: #facc15; color: #0b0f19; font-weight: 800; }
+QLabel#liveNote { color: #f59e0b; font-size: 11px; }
 QPushButton#ghost { background: transparent; border: 1px solid #2f3a52; color: #cbd5e1; }
 QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 6px 8px; }
 QLineEdit:focus, QComboBox:focus { border-color: #facc15; }
@@ -137,7 +197,7 @@ def _seg(text: str) -> QPushButton:
 
 class OperatorWindow(QMainWindow):
     def __init__(self, queue: ApprovalQueue, theme: Theme, projection: ProjectionWindow,
-                 audio_meter=None, pipeline=None, live=None):
+                 audio_meter=None, pipeline=None, live=None, songs_dir: str = "data/songs"):
         super().__init__()
         self.setWindowTitle("RevelateTW \u2014 Operator")
         self.queue = queue
@@ -150,6 +210,15 @@ class OperatorWindow(QMainWindow):
         self._started = time.time()
         self._cursor: Optional[tuple[int, int, int]] = None  # (book, chapter, verse) last projected
         self._store = getattr(pipeline, "detector", None) and pipeline.detector.store
+        self.output = LiveOutputState(on=True)     # LIVE pill: projection window shown or hidden
+        self._kind: Optional[str] = None           # what the output shows: verse | song | sermon
+        self._song_live: Optional[tuple[Song, int]] = None
+        self._song_pending: Optional[tuple[Song, int]] = None
+        self._sermon_live: Optional[SermonInfo] = None
+        self._song_sel: Optional[Song] = None
+        self._editing_id: str = ""
+        self.library = SongLibrary(songs_dir)
+        self._songs: list[Song] = []
 
         self.setStyleSheet(QSS)
         central = QWidget()
@@ -166,7 +235,12 @@ class OperatorWindow(QMainWindow):
         body.addWidget(self._build_transcript_panel(), 3)
         body.addWidget(self._build_queue_panel(), 3)
         body.addWidget(self._build_preview_panel(), 3)
-        outer.addLayout(body, 1)
+        live_page = QWidget()
+        live_page.setLayout(body)
+        self._tabs = QTabWidget()
+        self._tabs.addTab(live_page, "Live (verses)")
+        self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
+        outer.addWidget(self._tabs, 1)
         outer.addWidget(self._build_statusbar())
 
         self._build_shortcuts()
@@ -191,10 +265,29 @@ class OperatorWindow(QMainWindow):
         self.man_chapter.currentIndexChanged.connect(self._fill_verses)
         self.btn_project_manual.clicked.connect(self._project_manual)
         self.feed.returnPressed.connect(self._on_feed)
+        self.display_box.currentIndexChanged.connect(self._on_display_chosen)
+        self.btn_rescan.clicked.connect(lambda: self._populate_displays(self.display_box.currentIndex()))
+        self.song_search.textChanged.connect(self._fill_song_list)
+        self.song_list.currentRowChanged.connect(self._on_song_row)
+        self.btn_new_song.clicked.connect(self._new_song)
+        self.btn_import_song.clicked.connect(self._import_song)
+        self.btn_split.clicked.connect(self._split_editor)
+        self.btn_save_song.clicked.connect(self._save_song)
+        self.slide_pick.currentRowChanged.connect(self._on_slide_pick)
+        self.btn_song_send.clicked.connect(self._send_slide)
+        self.btn_song_approve.clicked.connect(self.approve_pending_song)
+        self.btn_song_reject.clicked.connect(self.reject_pending_song)
+        self.btn_song_prev.clicked.connect(lambda: self.step_song(-1))
+        self.btn_song_next.clicked.connect(lambda: self.step_song(+1))
+        self.btn_sermon_show.clicked.connect(self.show_sermon_slide)
+        self.btn_sermon_clear.clicked.connect(self.clear_sermon_slide)
 
         self._timer = QTimer(self, interval=150, timeout=self.refresh)
         self._timer.start()
         self._fill_testaments()
+        self._populate_displays()
+        self._fill_song_list()
+        self._apply_output_state()
         self.refresh()
 
     # --- layout builders -----------------------------------------------------------------
@@ -226,7 +319,12 @@ class OperatorWindow(QMainWindow):
         lay.addWidget(self.session_label)
         self.timer_label = _label("00:00:00", "timer")
         lay.addWidget(self.timer_label)
-        self.live_pill = _label("\u25cf LIVE", "live")
+        self.live_pill = QPushButton("\u25cf LIVE")
+        self.live_pill.setObjectName("live")
+        self.live_pill.setProperty("on", "true")
+        self.live_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.live_pill.setToolTip("Click to switch the live output OFF (hides the projection window) or ON")
+        self.live_pill.clicked.connect(self.toggle_output)
         lay.addWidget(self.live_pill)
         return bar
 
@@ -351,12 +449,21 @@ class OperatorWindow(QMainWindow):
         grid.setSpacing(8)
         self.tile_theme = self._tile("Theme", self.theme.name)
         self.tile_transition = self._tile("Transition", f"{self.theme.transition.title()} \u00b7 {self.theme.transition_ms}ms")
-        self.tile_feed = self._tile("Feed OBS/NDI", "off")
+        self.tile_feed = self._tile("Live output", "On")
         self.tile_audio = self._tile("Audio route", "Dev feed")
         for i, t in enumerate([self.tile_theme, self.tile_transition, self.tile_feed, self.tile_audio]):
             grid.addWidget(t, i // 2, i % 2)
         lay.addLayout(grid)
 
+        disp = QHBoxLayout()
+        self.display_box = QComboBox()
+        self.display_box.setToolTip("Monitor for the live output. Fullscreen borderless on that display.")
+        self.btn_rescan = QPushButton("Rescan")
+        self.btn_rescan.setObjectName("ghost")
+        disp.addWidget(self.display_box, 1)
+        disp.addWidget(self.btn_rescan)
+        lay.addWidget(_label("Output display (fullscreen, any capture software can read it)", "sub"))
+        lay.addLayout(disp)
         self.btn_theme = QPushButton("Theme editor...")
         self.btn_theme.clicked.connect(self.open_theme_editor)
         lay.addWidget(self.btn_theme)
@@ -389,6 +496,114 @@ class OperatorWindow(QMainWindow):
         status.addWidget(self.footer_sync)
         lay.addLayout(status)
         return frame
+
+    def _build_songs_tab(self) -> QWidget:
+        page = QWidget()
+        root = QHBoxLayout(page)
+        root.setContentsMargins(14, 12, 14, 10)
+        root.setSpacing(12)
+
+        # library
+        left, ll = self._panel("Song Library", "")
+        self.song_search = QLineEdit()
+        self.song_search.setPlaceholderText("Search title, artist or a lyric word")
+        ll.addWidget(self.song_search)
+        self.song_list = QListWidget()
+        ll.addWidget(self.song_list, 1)
+        row = QHBoxLayout()
+        self.btn_new_song = QPushButton("New song")
+        self.btn_import_song = QPushButton("Import file")
+        row.addWidget(self.btn_new_song)
+        row.addWidget(self.btn_import_song)
+        ll.addLayout(row)
+        self.song_count = _label("", "footer")
+        ll.addWidget(self.song_count)
+        root.addWidget(left, 3)
+
+        # editor
+        mid, ml = self._panel("Song Editor", "")
+        self.song_title = QLineEdit()
+        self.song_title.setPlaceholderText("Song title")
+        self.song_artist = QLineEdit()
+        self.song_artist.setPlaceholderText("Artist (optional)")
+        ml.addWidget(self.song_title)
+        ml.addWidget(self.song_artist)
+        self.song_lyrics = QPlainTextEdit()
+        self.song_lyrics.setPlaceholderText(
+            "Paste lyrics. A blank line starts a new slide.\n"
+            "Headers such as [Verse 1], Chorus: or Bridge start a labelled slide.")
+        ml.addWidget(self.song_lyrics, 1)
+        split_row = QHBoxLayout()
+        split_row.addWidget(_label("Lines per slide", "sub"))
+        self.max_lines = QSpinBox()
+        self.max_lines.setRange(1, 12)
+        self.max_lines.setValue(4)
+        split_row.addWidget(self.max_lines)
+        self.btn_split = QPushButton("Split into slides")
+        split_row.addWidget(self.btn_split, 1)
+        ml.addLayout(split_row)
+        self.slide_pick = QListWidget()
+        self.slide_pick.setMaximumHeight(150)
+        ml.addWidget(self.slide_pick)
+        self.btn_save_song = QPushButton("Save song")
+        self.btn_save_song.setObjectName("approve")
+        ml.addWidget(self.btn_save_song)
+        self.editor_status = _label("", "footer", wrap=True)
+        ml.addWidget(self.editor_status)
+        self._editor_slides: list[Slide] = []
+        root.addWidget(mid, 3)
+
+        # live: slide navigation, approval, sermon info
+        right, rl = self._panel("Song Projection", "")
+        self.song_now = _label("Pick a song in the library, then choose a slide.", "verse", wrap=True)
+        rl.addWidget(self.song_now)
+        self.slide_now_list = QListWidget()
+        self.slide_now_list.setMaximumHeight(160)
+        rl.addWidget(self.slide_now_list)
+        self.song_direct = QCheckBox("Direct (project now, no approval)")
+        self.song_direct.setChecked(False)
+        rl.addWidget(self.song_direct)
+        self.btn_song_send = QPushButton("Send selected slide (Enter)")
+        self.btn_song_send.setObjectName("approve")
+        rl.addWidget(self.btn_song_send)
+        self.song_pending_label = _label("", "footerOk", wrap=True)
+        rl.addWidget(self.song_pending_label)
+        pend = QHBoxLayout()
+        self.btn_song_approve = QPushButton("Approve (Enter)")
+        self.btn_song_approve.setObjectName("approve")
+        self.btn_song_reject = QPushButton("Reject (Esc)")
+        self.btn_song_reject.setObjectName("reject")
+        pend.addWidget(self.btn_song_approve)
+        pend.addWidget(self.btn_song_reject)
+        rl.addLayout(pend)
+        nav = QHBoxLayout()
+        self.btn_song_prev = QPushButton("\u25c0 Prev slide (\u2190)")
+        self.btn_song_prev.setObjectName("nav")
+        self.btn_song_next = QPushButton("Next slide (\u2192) \u25b6")
+        self.btn_song_next.setObjectName("nav")
+        nav.addWidget(self.btn_song_prev)
+        nav.addWidget(self.btn_song_next)
+        rl.addLayout(nav)
+        rl.addWidget(_label("Sermon info slide", "panelTitle"))
+        self.sermon_title = QLineEdit()
+        self.sermon_title.setPlaceholderText("Sermon title")
+        self.sermon_speaker = QLineEdit()
+        self.sermon_speaker.setPlaceholderText("Speaker (optional)")
+        rl.addWidget(self.sermon_title)
+        rl.addWidget(self.sermon_speaker)
+        srow = QHBoxLayout()
+        self.btn_sermon_show = QPushButton("Show sermon info")
+        self.btn_sermon_show.setObjectName("approve")
+        self.btn_sermon_clear = QPushButton("Clear")
+        self.btn_sermon_clear.setObjectName("ghost")
+        srow.addWidget(self.btn_sermon_show, 1)
+        srow.addWidget(self.btn_sermon_clear)
+        rl.addLayout(srow)
+        self.sermon_note = _label("Shows the title, speaker and the last projected verse reference.", "sub", wrap=True)
+        rl.addWidget(self.sermon_note)
+        rl.addStretch(1)
+        root.addWidget(right, 3)
+        return page
 
     def _build_statusbar(self) -> QFrame:
         bar = QFrame()
@@ -452,6 +667,7 @@ class OperatorWindow(QMainWindow):
                         ("Down", lambda: self._move(1)), ("Up", lambda: self._move(-1)),
                         ("Left", lambda: self.step(-1)), ("Right", lambda: self.step(+1)),
                         ("Space", lambda: self.step(+1)), ("B", self.toggle_blank),
+                        ("O", self.toggle_output),
                         ("/", self.focus_search)]:
             QShortcut(QKeySequence(key), self, activated=guard(fn))
 
@@ -523,8 +739,7 @@ class OperatorWindow(QMainWindow):
             self.projection.show_theme(self.theme)
             self.tile_theme.value.setText(self.theme.name)
             self.tile_transition.value.setText(f"{self.theme.transition.title()} \u00b7 {self.theme.transition_ms}ms")
-            if self.queue.live:
-                self.projection.show_verse(self.queue.live)
+            self._render_output()
 
     # --- actions -----------------------------------------------------------------------
     def _move(self, d: int) -> None:
@@ -552,16 +767,37 @@ class OperatorWindow(QMainWindow):
 
     def _show_on_output(self, c: Candidate) -> None:
         self._cursor = (c.book_id, c.chapter, c.verse)
+        self._kind = "verse"
+        self._song_pending = None
         self.projection.show_theme(self.theme)
         self.projection.show_verse(c)
 
+    def _render_output(self) -> None:
+        """Re-draw whatever the output is showing (after theme change or blank toggle)."""
+        self.projection.show_theme(self.theme)
+        if self.queue.blank:
+            self.projection.show_blank()
+        elif self._kind == "song" and self._song_live:
+            song, i = self._song_live
+            self.projection.show_song_slide(song.slides[i])
+        elif self._kind == "sermon" and self._sermon_live:
+            self.projection.show_sermon(self._sermon_live)
+        elif self.queue.live:
+            self.projection.show_verse(self.queue.live)
+
     def approve_selected(self) -> None:
+        if self._tabs.currentIndex() == 1:
+            self.approve_pending_song()
+            return
         c = self.queue.selected_item()
         if c:
             self._project(c)
         self.refresh()
 
     def reject_selected(self) -> None:
+        if self._tabs.currentIndex() == 1:
+            self.reject_pending_song()
+            return
         c = self.queue.selected_item()
         if c:
             self.queue.reject(c.id)
@@ -581,18 +817,239 @@ class OperatorWindow(QMainWindow):
 
     def toggle_blank(self) -> None:
         self.queue.set_blank(not self.queue.blank)
-        if self.queue.blank:
-            self.projection.show_blank()
-        elif self.queue.live:
-            self.projection.show_verse(self.queue.live)
+        self._render_output()
         self.refresh()
+
+    # --- live output ON/OFF (LIVE pill, key O) --------------------------------------------
+    def toggle_output(self) -> None:
+        self.output.toggle()
+        self._apply_output_state()
+        self.refresh()
+
+    def _apply_output_state(self) -> None:
+        on = self.output.on
+        self.live_pill.setText(self.output.pill_text())
+        self.live_pill.setChecked(on)
+        self.live_pill.setProperty("on", "true" if on else "false")
+        self.live_pill.style().unpolish(self.live_pill)
+        self.live_pill.style().polish(self.live_pill)
+        self.live_pill.setToolTip("Live output ON: click to hide the projection window (O)" if on
+                                  else "Live output OFF: projection window hidden. Click to show (O)")
+        if on:
+            self._render_output()
+            self.projection.present()
+        else:
+            self.projection.hide()
+        self.tile_feed.value.setText("On" if on else "Off (hidden)")
+
+    # --- display picker -----------------------------------------------------------------------
+    def _populate_displays(self, keep: int = 0) -> None:
+        self._displays: list[DisplayInfo] = list_displays()
+        self.display_box.blockSignals(True)
+        self.display_box.clear()
+        for d in self._displays:
+            self.display_box.addItem(d.label)
+        if not self._displays:
+            self.display_box.addItem("No display found")
+        self.display_box.setCurrentIndex(min(max(keep, 0), max(len(self._displays) - 1, 0)))
+        self.display_box.blockSignals(False)
+        self._on_display_chosen(self.display_box.currentIndex())
+
+    def _on_display_chosen(self, idx: int) -> None:
+        if not getattr(self, "_displays", None) or idx < 0 or idx >= len(self._displays):
+            return
+        d = self._displays[idx]
+        self.projection.move_to_display(QRect(d.x, d.y, d.width, d.height))
+        if self.output.on:
+            self.projection.present()
+
+    # --- songs library ------------------------------------------------------------------------
+    def _fill_song_list(self) -> None:
+        self._songs = self.library.search(self.song_search.text())
+        self.song_list.blockSignals(True)
+        self.song_list.clear()
+        for s in self._songs:
+            label = s.title + (f"  \u2014 {s.artist}" if s.artist else "")
+            self.song_list.addItem(f"{label}  ({len(s.slides)} slides)")
+        self.song_list.blockSignals(False)
+        total = len(self.library.load_all())
+        self.song_count.setText(f"{len(self._songs)} shown  \u00b7  {total} in library")
+
+    def _on_song_row(self, row: int) -> None:
+        if row < 0 or row >= len(self._songs):
+            return
+        self._song_sel = self._songs[row]
+        self._editing_id = self._song_sel.id
+        self.song_title.setText(self._song_sel.title)
+        self.song_artist.setText(self._song_sel.artist)
+        self._editor_slides = list(self._song_sel.slides)
+        self.song_lyrics.setPlainText("\n\n".join("\n".join(s.lines) for s in self._editor_slides))
+        self._show_slide_list(self._editor_slides, self.slide_pick)
+        self._show_slide_list(self._editor_slides, self.slide_now_list)
+        self.song_now.setText(f"{self._song_sel.title}" + (f"  \u00b7  {self._song_sel.artist}" if self._song_sel.artist else ""))
+
+    def _show_slide_list(self, slides: list[Slide], widget: QListWidget) -> None:
+        widget.blockSignals(True)
+        widget.clear()
+        for i, s in enumerate(slides):
+            widget.addItem(f"{s.label}: {s.lines[0] if s.lines else ''}")
+        if slides:
+            widget.setCurrentRow(0)
+        widget.blockSignals(False)
+
+    def _new_song(self) -> None:
+        self._song_sel = None
+        self._editing_id = ""
+        self.song_title.clear()
+        self.song_artist.clear()
+        self.song_lyrics.clear()
+        self._editor_slides = []
+        self.slide_pick.clear()
+        self.song_list.clearSelection()
+        self.editor_status.setText("New song. Paste lyrics, then Split into slides.")
+
+    def _import_song(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import lyrics", "", "Text or song JSON (*.txt *.json)")
+        if not path:
+            return
+        try:
+            from pathlib import Path as _P
+            raw = _P(path).read_text(encoding="utf-8")
+            if path.lower().endswith(".json"):
+                import json as _json
+                song = Song.from_dict(_json.loads(raw))
+                self.song_title.setText(song.title)
+                self.song_artist.setText(song.artist)
+                self._editor_slides = song.slides
+                self._editing_id = song.id
+                self.song_lyrics.setPlainText("\n\n".join("\n".join(s.lines) for s in song.slides))
+                self._show_slide_list(self._editor_slides, self.slide_pick)
+                self.editor_status.setText(f"Imported {song.title}: {len(song.slides)} slides. Save to keep it.")
+            else:
+                self.song_lyrics.setPlainText(raw)
+                self.song_title.setText(self.song_title.text() or _P(path).stem)
+                self._split_editor()
+        except Exception as exc:
+            self.editor_status.setText(f"Import failed: {exc}")
+
+    def _split_editor(self) -> None:
+        text = self.song_lyrics.toPlainText()
+        self._editor_slides = split_lyrics(text, max_lines=self.max_lines.value())
+        self._show_slide_list(self._editor_slides, self.slide_pick)
+        self.editor_status.setText(f"{len(self._editor_slides)} slides. Check them, then Save song.")
+
+    def _save_song(self) -> None:
+        if not self._editor_slides:
+            self._split_editor()
+        title = self.song_title.text().strip()
+        if not title:
+            self.editor_status.setText("Give the song a title first.")
+            return
+        try:
+            song = Song(title=title, artist=self.song_artist.text().strip(),
+                        slides=list(self._editor_slides), id=self._editing_id)
+            if not song.slides:
+                self.editor_status.setText("No lyrics to save. Paste lyrics and split them.")
+                return
+            path = self.library.save(song)
+        except Exception as exc:
+            self.editor_status.setText(f"Save failed: {exc}")
+            return
+        self._editing_id = song.id
+        self.editor_status.setText(f"Saved {song.title} to {path.name}")
+        self.song_search.clear()
+        self._fill_song_list()
+
+    def _on_slide_pick(self, row: int) -> None:
+        if row >= 0:
+            self.slide_now_list.setCurrentRow(row)
+
+    def _current_song_and_slide(self) -> tuple[Optional[Song], int]:
+        song = self._song_sel
+        row = self.slide_now_list.currentRow()
+        return song, row
+
+    def _send_slide(self) -> None:
+        """Send selected slide: direct projects now, otherwise it waits for approval (Enter)."""
+        song, row = self._current_song_and_slide()
+        if song is None or not song.slides or row < 0:
+            self.song_pending_label.setText("Pick a song and a slide first.")
+            return
+        if self.song_direct.isChecked():
+            self._project_song(song, row)
+            return
+        self._song_pending = (song, row)
+        self.song_pending_label.setText(f"Waiting: {song.title}, {song.slides[row].label}. Approve to project.")
+
+    def _project_song(self, song: Song, row: int) -> None:
+        self._song_live = (song, row)
+        self._kind = "song"
+        self._song_pending = None
+        self._sermon_live = None
+        self.song_pending_label.setText("")
+        self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[row].label}")
+        if self.output.on and not self.queue.blank:
+            self.projection.show_song_slide(song.slides[row])
+        self.slide_now_list.setCurrentRow(row)
+        self.refresh()
+
+    def approve_pending_song(self) -> None:
+        if self._song_pending is None:
+            return
+        song, row = self._song_pending
+        self._project_song(song, row)
+
+    def reject_pending_song(self) -> None:
+        self._song_pending = None
+        self.song_pending_label.setText("Slide rejected.")
+
+    def step_song(self, delta: int) -> None:
+        """Next/previous slide of the projected song (same song only). Keyboard: arrows, Space."""
+        if self._song_live is None:
+            return
+        song, i = self._song_live
+        j = i + delta
+        if 0 <= j < len(song.slides):
+            self._project_song(song, j)
+
+    # --- sermon info -----------------------------------------------------------------------
+    def _current_reference(self) -> str:
+        live = self.queue.live
+        if live is None or self.queue.blank:
+            return ""
+        return f"{live.reference} ({live.translation})"
+
+    def show_sermon_slide(self) -> None:
+        info = SermonInfo(title=self.sermon_title.text().strip(),
+                          speaker=self.sermon_speaker.text().strip(),
+                          reference=self._current_reference())
+        if not info.lines():
+            self.sermon_note.setText("Type a sermon title first.")
+            return
+        self._sermon_live = info
+        self._kind = "sermon"
+        self._song_pending = None
+        if self.output.on and not self.queue.blank:
+            self.projection.show_sermon(info)
+        self.sermon_note.setText("Sermon info on screen." if not info.reference else
+                                 f"Sermon info on screen. Reference: {info.reference}")
+
+    def clear_sermon_slide(self) -> None:
+        self._sermon_live = None
+        if self._kind == "sermon":
+            self._kind = "verse" if self.queue.live else None
+            self._render_output()
+        self.sermon_note.setText("Sermon slide cleared.")
 
     # --- verse navigation (next/prev in the same chapter) ----------------------------------
     def _live_verse(self):
         return self.queue.live
 
     def step(self, delta: int) -> None:
-        """Move the projected verse forward/backward inside the same chapter; never crosses chapters."""
+        """Songs tab: previous/next slide. Live tab: previous/next verse in the same chapter."""
+        if self._tabs.currentIndex() == 1:
+            self.step_song(delta)
+            return
         live = self.queue.live
         if live is None or self.queue.blank or self._store is None:
             return
@@ -817,8 +1274,8 @@ class OperatorWindow(QMainWindow):
 
         live = self.queue.live
         st = self.queue.state
-        self.live_pill.setText({"live": "\u25cf LIVE", "blank": "\u25cb BLANK", "idle": "\u25cb IDLE"}[st])
-        self.live_pill.setVisible(st == "live")
+        # The pill shows the output switch (ON/OFF), not the queue state; blank/idle shows in the status bar.
+        self.live_pill.setVisible(True)
         if live is not None:
             self.slide_text.setText(live.display_text if not self.queue.blank else "")
             self.slide_ref.setText(live.reference)
@@ -865,16 +1322,18 @@ class OperatorWindow(QMainWindow):
 
 
 def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen: int = 0,
-            live=None):
-    """Start the Qt event loop. pipeline receives dev-feed text; live (optional) runs the mic loop."""
+            live=None, songs_dir: str = "data/songs"):
+    """Start the Qt event loop. pipeline receives dev-feed text; live (optional) runs the mic loop.
+
+    projection_screen picks the starting monitor for the live output (the display box can change it).
+    """
     app = QApplication.instance() or QApplication([])
     projection = ProjectionWindow()
-    screens = app.screens()
-    if screens and len(screens) > projection_screen:
-        projection.setGeometry(screens[projection_screen].geometry())
     projection.show_theme(theme)
-    op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live)
-    op.resize(1200, 720)
+    op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live, songs_dir=songs_dir)
+    op.display_box.setCurrentIndex(projection_screen)
+    op.resize(1280, 800)
     op.show()
-    projection.show()
+    if op.output.on:
+        projection.present()
     return app.exec()
