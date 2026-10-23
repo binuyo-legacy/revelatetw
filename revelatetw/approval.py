@@ -32,7 +32,16 @@ class ApprovalQueue:
         self.selected: int = 0
         self.live: Optional[Candidate] = None   # what the output shows right now
         self.blank: bool = False
+        self.auto_approve: bool = False         # Settings > Detection; bypasses the operator rule
         self._log_path = Path(log_path) if log_path else None
+
+    def set_auto_approve(self, on: bool) -> None:
+        with self._lock:
+            self.auto_approve = bool(on)
+
+    def set_dedupe_seconds(self, seconds: float) -> None:
+        with self._lock:
+            self._dedupe = max(0.0, float(seconds))
 
     # --- status ------------------------------------------------------------
     @property
@@ -70,6 +79,8 @@ class ApprovalQueue:
                 self._items.append(c)
                 added.append(c)
                 self._log("detected", c)
+                if self.auto_approve:
+                    self.approve(c.id)          # operator-approved by setting, not by a click
         return added
 
     # --- operator side -------------------------------------------------------

@@ -15,12 +15,14 @@ class Transcriber(Protocol):
 
 
 class FasterWhisperTranscriber:
-    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8"):
+    def __init__(self, model_size: str = "small", device: str = "cpu", compute_type: str = "int8",
+                 language: str = "en"):
         from faster_whisper import WhisperModel  # lazy import
+        self.language = language
         self._model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
     def transcribe(self, audio: np.ndarray) -> str:
-        segments, _info = self._model.transcribe(audio, language="en", vad_filter=True,
+        segments, _info = self._model.transcribe(audio, language=self.language, vad_filter=True,
                                                  beam_size=1)
         return " ".join(s.text.strip() for s in segments)
 

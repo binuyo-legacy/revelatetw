@@ -58,6 +58,10 @@ def main(argv=None) -> int:
                     help="folder for saved songs (one JSON file per song)")
     ap.add_argument("--output-screen", type=int, default=0,
                     help="index of the monitor for the live output (see the display picker)")
+    ap.add_argument("--dev", action="store_true",
+                    help="show the Dev feed (typed text instead of the mic). Off by default.")
+    ap.add_argument("--settings", default="data/settings.json",
+                    help="JSON settings file (created on first save).")
     ap.add_argument("--paraphrase-threshold", type=int, default=60,
                     help="0-100. Lower finds more paraphrases (default 60).")
     args = ap.parse_args(argv)
@@ -78,8 +82,13 @@ def main(argv=None) -> int:
             from .live import LiveTranscriptionLoop
             from .transcription import LazyWhisperTranscriber
             live = LiveTranscriptionLoop(pipeline, LazyWhisperTranscriber(args.transcriber_model))
+        from .store import load_settings
+        settings = load_settings(args.settings)
+        if args.paraphrase_threshold != 60:          # explicit CLI value wins over the saved file
+            settings.paraphrase_threshold = args.paraphrase_threshold
         return run_app(queue, Theme(), pipeline=pipeline, live=live, songs_dir=args.songs_dir,
-                       projection_screen=args.output_screen)
+                       projection_screen=args.output_screen, settings=settings,
+                       settings_path=args.settings, dev=args.dev)
     ap.print_help()
     return 0
 

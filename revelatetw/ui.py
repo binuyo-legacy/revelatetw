@@ -15,12 +15,14 @@ from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                              QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
-                             QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+                             QSpinBox, QTabWidget, QVBoxLayout, QWidget, QMessageBox)
 
 from .approval import ApprovalQueue
 from .detection import Candidate
 from .displays import DisplayInfo, list_displays
-from .output_state import LiveOutputState
+from .output_state import LiveOutputState, pill_state
+from .settings_page import SettingsPage
+from .store import APP_VERSION, AppSettings, save_settings
 from .sermon import SermonInfo
 from .songs import Slide, Song, SongLibrary, split_lyrics
 from .theme import Theme
@@ -154,8 +156,8 @@ QPushButton#seg { background: #1d2535; color: #94a3b8; border: 1px solid #2f3a52
 QPushButton#seg[active="true"] { background: #facc15; color: #0b0f19; border-color: #facc15; font-weight: 800; }
 QPushButton#nav { background: #1d2535; color: #facc15; border: 1px solid #facc15; font-weight: 800; padding: 6px 14px; }
 QPushButton#nav:disabled { color: #475569; border-color: #2f3a52; }
-QPushButton#live { background: #3a1418; color: #f87171; border: 1px solid #b42f3d; border-radius: 12px; padding: 3px 12px; font-weight: 800; }
-QPushButton#live[on="false"] { background: #161c2a; color: #64748b; border: 1px dashed #475569; }
+QPushButton#live { background: #14532d; color: #4ade80; border: 1px solid #22c55e; border-radius: 12px; padding: 3px 12px; font-weight: 800; }
+QPushButton#live[on="false"] { background: #3a1418; color: #f87171; border: 1px solid #b42f3d; }
 QTabWidget::pane { border: none; }
 QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 6px 14px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
 QTabBar::tab:selected { background: #facc15; color: #0b0f19; font-weight: 800; }
@@ -197,8 +199,13 @@ def _seg(text: str) -> QPushButton:
 
 class OperatorWindow(QMainWindow):
     def __init__(self, queue: ApprovalQueue, theme: Theme, projection: ProjectionWindow,
-                 audio_meter=None, pipeline=None, live=None, songs_dir: str = "data/songs"):
+                 audio_meter=None, pipeline=None, live=None, songs_dir: str = "data/songs",
+                 settings: Optional[AppSettings] = None, settings_path: Optional[str] = None,
+                 dev: bool = False):
         super().__init__()
+        self.settings = settings or AppSettings()
+        self._settings_path = settings_path
+        self._dev = bool(dev)
         self.setWindowTitle("RevelateTW \u2014 Operator")
         self.queue = queue
         self.pipeline = pipeline
@@ -210,7 +217,7 @@ class OperatorWindow(QMainWindow):
         self._started = time.time()
         self._cursor: Optional[tuple[int, int, int]] = None  # (book, chapter, verse) last projected
         self._store = getattr(pipeline, "detector", None) and pipeline.detector.store
-        self.output = LiveOutputState(on=True)     # LIVE pill: projection window shown or hidden
+        self.output = LiveOutputState(on=self.settings.startup_live_on)  # LIVE pill: shown or hidden
         self._kind: Optional[str] = None           # what the output shows: verse | song | sermon
         self._song_live: Optional[tuple[Song, int]] = None
         self._song_pending: Optional[tuple[Song, int]] = None
@@ -240,6 +247,15 @@ class OperatorWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.addTab(live_page, "Live (verses)")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
+        media_placeholder = QLabel("Media is coming soon.")
+        media_placeholder.setObjectName("sub")
+        self._tabs.addTab(media_placeholder, "Media")
+        self._tabs.setTabEnabled(self._tabs.count() - 1, False)
+        self._tabs.setTabToolTip(self._tabs.count() - 1, "soon")
+        self.settings_page = SettingsPage(self.settings, check_updates_cb=self._check_updates)
+        self.settings_page.changed.connect(self._on_setting_changed)
+        self._tabs.addTab(self.settings_page, "Settings")
+        self._settings_index = self._tabs.count() - 1
         outer.addWidget(self._tabs, 1)
         outer.addWidget(self._build_statusbar())
 
@@ -308,6 +324,7 @@ class OperatorWindow(QMainWindow):
         seg.setSpacing(0)
         self.btn_source_mic = _seg("Mic")
         self.btn_source_dev = _seg("Dev feed")
+        self.btn_source_dev.setVisible(self._dev)     # Dev feed only with --dev
         self.btn_source_mic.setToolTip("Live microphone (audio input picker on the right)")
         self.btn_source_dev.setToolTip("Dev text feed: type sermon text in the feed box")
         seg.addWidget(self.btn_source_mic)
@@ -343,6 +360,7 @@ class OperatorWindow(QMainWindow):
         lay.addWidget(scroll, 1)
         self.feed = QLineEdit()
         self.feed.setPlaceholderText("Dev feed: type a sentence and press Enter")
+        self.feed.setVisible(self._dev)               # dev text box only with --dev
         lay.addWidget(self.feed)
         foot = QHBoxLayout()
         self.transcriber_label = _label("Transcriber: text feed", "footer")
@@ -479,6 +497,7 @@ class OperatorWindow(QMainWindow):
         lay.addWidget(self.gain)
         self.source_box = QComboBox()
         self.source_box.addItems(["Dev text feed", "Live microphone"])
+        self.source_box.setCurrentIndex(1)           # default source: live microphone
         self.source_box.hide()   # the Mic / Dev feed pills in the toolbar drive this
         self.device_box = QComboBox()
         self.device_box.setToolTip("Audio input (WASAPI loopback lists mixing-desk output)")
@@ -680,8 +699,11 @@ class OperatorWindow(QMainWindow):
         if self.live is None:
             self.btn_source_mic.setEnabled(False)
             self.device_box.setEnabled(False)
-            self.btn_source_dev.setChecked(True)
-            self.source_status.setText("Live audio not available in this session (dev text feed only).")
+            self.btn_source_mic.setEnabled(False)
+            self.source_status.setText("Live audio not available in this session.")
+            if self._dev:
+                self.btn_source_dev.setChecked(True)
+                self.source_status.setText("Live audio not available in this session (dev text feed only).")
             return
         try:
             from .audio import list_input_devices
@@ -718,7 +740,7 @@ class OperatorWindow(QMainWindow):
             return
         dev = self._devices[max(0, self.device_box.currentIndex())]
         try:
-            self.live.start_mic(dev)
+            self.live.start_mic(dev, gate_db=self.settings.noise_gate_db)
             self.source_status.setText(f"Listening: {dev.name}")
             self.tile_audio.value.setText(dev.name)
             self.transcriber_label.setText("Transcriber: Whisper")
@@ -820,6 +842,99 @@ class OperatorWindow(QMainWindow):
         self._render_output()
         self.refresh()
 
+    # --- settings, menus, and persistence ----------------------------------------------------
+    def _apply_settings_to_widgets(self) -> None:
+        """Push the loaded settings into the live app once, at startup."""
+        self.queue.set_dedupe_seconds(self.settings.dedupe_minutes * 60.0)
+        self.queue.set_auto_approve(self.settings.auto_approve)
+        if self.pipeline is not None and hasattr(self.pipeline, "detector"):
+            self.pipeline.detector.paraphrase_threshold = self.settings.paraphrase_threshold
+        self._apply_auto_label()
+        self._apply_output_state()
+
+    def _apply_auto_label(self) -> None:
+        on = self.settings.auto_approve
+        text = "Auto-approve: ON (no operator approval)" if on else "Auto-approve: off"
+        self.status_auto.setText(text)
+        self.auto_label.setText(text)
+
+    def _on_setting_changed(self, key: str) -> None:
+        """Apply one changed setting to the running app, then save the file."""
+        s = self.settings
+        if key == "paraphrase_threshold" and self.pipeline is not None and hasattr(self.pipeline, "detector"):
+            self.pipeline.detector.paraphrase_threshold = s.paraphrase_threshold
+        elif key == "dedupe_minutes":
+            self.queue.set_dedupe_seconds(s.dedupe_minutes * 60.0)
+        elif key == "auto_approve":
+            self.queue.set_auto_approve(s.auto_approve)
+            self._apply_auto_label()
+        elif key == "output_display" and hasattr(self, "display_box") and self.display_box.count() > s.output_display:
+            self.display_box.setCurrentIndex(s.output_display)
+        elif key == "noise_gate_db" and self.live is not None and getattr(self.live, "capture", None) is not None:
+            self.live.capture.set_gate_threshold(s.noise_gate_db)
+        elif key == "input_device_name":
+            self._select_device_by_name(s.input_device_name)
+        self._save_settings()
+
+    def _select_device_by_name(self, name: str) -> None:
+        for i, d in enumerate(self._devices):
+            if d.name == name:
+                self.device_box.setCurrentIndex(i)
+                return
+
+    def _save_settings(self) -> None:
+        if self._settings_path:
+            try:
+                save_settings(self._settings_path, self.settings)
+            except OSError as exc:
+                self.source_status.setText(f"Could not save settings: {exc}")
+
+    def _check_updates(self) -> str:
+        return ("Couldn't reach the update server. Check your internet connection and try again. "
+                f"You are on {APP_VERSION}.")
+
+    def _build_menus(self) -> None:
+        bar = self.menuBar()
+        f = bar.addMenu("File")
+        f.addAction("Open song library folder", self._open_song_folder)
+        f.addSeparator()
+        f.addAction("Exit", self.close)
+        o = bar.addMenu("Output")
+        o.addAction("Toggle live output (O)", self.toggle_output)
+        o.addMenu("Choose display").aboutToShow.connect(self._fill_display_menu)
+        o.addAction("Display settings...", self._open_settings_output)
+        h = bar.addMenu("Help")
+        h.addAction("Setup docs (see README.md in the project folder)", self._show_setup_docs)
+        h.addAction("About RevelateTW", self._show_about)
+
+    def _open_song_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Song library folder", str(self.library.root))
+        if path:
+            self.library.root = type(self.library.root)(path)
+            self._fill_song_list()
+
+    def _fill_display_menu(self) -> None:
+        menu = self.sender()
+        if menu is None:
+            return
+        menu.clear()
+        for i, d in enumerate(getattr(self, "_displays", None) or []):
+            act = menu.addAction(f"{i}: {d.name} ({d.width}x{d.height})",
+                                 lambda idx=i: self.display_box.setCurrentIndex(idx))
+            act.setCheckable(True)
+            act.setChecked(i == self.display_box.currentIndex())
+
+    def _open_settings_output(self) -> None:
+        self._tabs.setCurrentIndex(self._settings_index)
+        self.settings_page.select_section("Output")
+
+    def _show_setup_docs(self) -> None:
+        QMessageBox.information(self, "Setup docs",
+                                "The setup guide is the README.md in the RevelateTW project folder.")
+
+    def _show_about(self) -> None:
+        QMessageBox.about(self, "About RevelateTW", f"RevelateTW version {APP_VERSION}.")
+
     # --- live output ON/OFF (LIVE pill, key O) --------------------------------------------
     def toggle_output(self) -> None:
         self.output.toggle()
@@ -828,13 +943,12 @@ class OperatorWindow(QMainWindow):
 
     def _apply_output_state(self) -> None:
         on = self.output.on
-        self.live_pill.setText(self.output.pill_text())
-        self.live_pill.setChecked(on)
-        self.live_pill.setProperty("on", "true" if on else "false")
+        st = pill_state(on)
+        self.live_pill.setText(st["text"])
+        self.live_pill.setProperty("on", st["on"])
         self.live_pill.style().unpolish(self.live_pill)
         self.live_pill.style().polish(self.live_pill)
-        self.live_pill.setToolTip("Live output ON: click to hide the projection window (O)" if on
-                                  else "Live output OFF: projection window hidden. Click to show (O)")
+        self.live_pill.setToolTip(st["tooltip"])
         if on:
             self._render_output()
             self.projection.present()
@@ -1322,7 +1436,8 @@ class OperatorWindow(QMainWindow):
 
 
 def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen: int = 0,
-            live=None, songs_dir: str = "data/songs"):
+            live=None, songs_dir: str = "data/songs", settings: Optional[AppSettings] = None,
+            settings_path: Optional[str] = None, dev: bool = False):
     """Start the Qt event loop. pipeline receives dev-feed text; live (optional) runs the mic loop.
 
     projection_screen picks the starting monitor for the live output (the display box can change it).
@@ -1330,7 +1445,8 @@ def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen
     app = QApplication.instance() or QApplication([])
     projection = ProjectionWindow()
     projection.show_theme(theme)
-    op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live, songs_dir=songs_dir)
+    op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live, songs_dir=songs_dir,
+                        settings=settings, settings_path=settings_path, dev=dev)
     op.display_box.setCurrentIndex(projection_screen)
     op.resize(1280, 800)
     op.show()

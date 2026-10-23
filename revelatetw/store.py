@@ -84,3 +84,84 @@ class VerseStore:
     def items(self) -> Iterator[tuple[tuple[int, int, int], str]]:
         for b, c, v, t in self._conn.execute("SELECT book_id, chapter, verse, text FROM verses"):
             yield (b, c, v), t
+
+
+# ---------------------------------------------------------------- app settings (JSON)
+import dataclasses as _dc
+import logging as _logging
+
+APP_VERSION = "0.1.0"
+_log = _logging.getLogger(__name__)
+
+
+@_dc.dataclass
+class AppSettings:
+    """Operator settings, saved as JSON. Unknown keys are ignored; bad values fall back to defaults."""
+    # General
+    startup_live_on: bool = True          # open with live output ON
+    check_updates: bool = True
+    language: str = "en"
+    # Output
+    output_display: int = 0               # index into the display list
+    default_resolution: str = "auto"      # "auto" or "WIDTHxHEIGHT"
+    borderless_fullscreen: bool = True
+    virtual_camera: bool = False          # OBS / virtual camera readiness flag (see ui notes)
+    # Audio
+    input_device_name: str = ""           # remembered by name (indexes change between boots)
+    wasapi_loopback: bool = False         # list WASAPI loopback (mixing desk output) devices
+    noise_gate_db: float = -45.0          # RMS gate threshold, -80..-10
+    # Transcription
+    model_size: str = "small"             # small | medium | large
+    whisper_language: str = "en"
+    detection_threshold: int = 60         # paraphrase threshold 0-100
+    # Detection
+    paraphrase_threshold: int = 60        # same knob as --paraphrase-threshold
+    dedupe_minutes: float = 5.0
+    auto_approve: bool = False            # OFF by default; bypasses operator approval
+
+    def clean(self) -> "AppSettings":
+        """Coerce every field to a valid value."""
+        d = AppSettings()
+        self.startup_live_on = bool(self.startup_live_on)
+        self.check_updates = bool(self.check_updates)
+        self.language = str(self.language or d.language)
+        self.output_display = max(0, int(self.output_display or 0))
+        res = str(self.default_resolution or "auto")
+        self.default_resolution = res if res == "auto" or "x" in res.lower() else "auto"
+        self.borderless_fullscreen = bool(self.borderless_fullscreen)
+        self.virtual_camera = bool(self.virtual_camera)
+        self.input_device_name = str(self.input_device_name or "")
+        self.wasapi_loopback = bool(self.wasapi_loopback)
+        self.noise_gate_db = min(-10.0, max(-80.0, float(self.noise_gate_db)))
+        self.model_size = self.model_size if self.model_size in ("small", "medium", "large") else d.model_size
+        self.whisper_language = str(self.whisper_language or d.whisper_language)
+        self.detection_threshold = min(100, max(0, int(self.detection_threshold)))
+        self.paraphrase_threshold = min(100, max(0, int(self.paraphrase_threshold)))
+        self.dedupe_minutes = min(60.0, max(0.0, float(self.dedupe_minutes)))
+        self.auto_approve = bool(self.auto_approve)
+        return self
+
+
+def load_settings(path) -> AppSettings:
+    """Read the JSON settings file. Missing or corrupt file gives defaults (never raises)."""
+    p = Path(path)
+    if not p.exists():
+        return AppSettings()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("settings root is not an object")
+    except (OSError, ValueError) as exc:
+        _log.warning("settings file %s unreadable, using defaults: %s", p, exc)
+        return AppSettings()
+    known = {f.name for f in _dc.fields(AppSettings)}
+    return AppSettings(**{k: v for k, v in raw.items() if k in known}).clean()
+
+
+def save_settings(path, settings: AppSettings) -> None:
+    """Write the settings JSON (atomic replace so a crash never leaves half a file)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(_dc.asdict(settings.clean()), indent=2), encoding="utf-8")
+    tmp.replace(p)

@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Optional
 
-from .audio import AudioCapture, InputDevice, TARGET_RATE
+from .audio import AudioCapture, InputDevice, NoiseGate, TARGET_RATE
 from .transcription import RollingWindow, Transcriber
 
 SOURCE_MIC = "mic"
@@ -37,9 +37,11 @@ class LiveTranscriptionLoop:
         self.last_text = ""
 
     # ---- operator controls -------------------------------------------------------------
-    def start_mic(self, device: InputDevice, channel: int = 0, gain_db: float = 0.0) -> None:
+    def start_mic(self, device: InputDevice, channel: int = 0, gain_db: float = 0.0,
+                  gate_db: float = -45.0) -> None:
         self.stop()
-        self.capture = AudioCapture(device, channel=channel, gain_db=gain_db)
+        self.capture = AudioCapture(device, channel=channel, gain_db=gain_db,
+                                    gate=NoiseGate(threshold_db=gate_db))
         self.capture.start()
         self.source = SOURCE_MIC
         self._stop = threading.Event()
