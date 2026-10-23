@@ -224,10 +224,7 @@ def paint_background(painter, rect, theme, image_cache: dict | None = None) -> N
         pix = None
         if path is not None:
             cache = image_cache if image_cache is not None else {}
-            key = str(path)
-            if key not in cache:
-                cache[key] = QPixmap(key)
-            pix = cache[key]
+            pix = lru_get_or_load(cache, str(path), lambda p: QPixmap(p))
         if pix is not None and not pix.isNull():
             scaled = pix.scaled(int(rect.width()), int(rect.height()), 
                                 _keep_aspect_crop(), _smooth())
@@ -454,6 +451,24 @@ def paint_verse(painter, rect, theme, candidate) -> None:
                      centre, ref)
 
 
+IMAGE_CACHE_MAX = 8   # audit: bounded LRU of decoded projection images (full-res, so keep it small)
+
+
+def lru_get_or_load(cache: dict, key, loader, max_entries: int = IMAGE_CACHE_MAX):
+    """Return cache[key], loading it with loader(key) on a miss. Least recently used entries are
+    dropped once the cache holds more than max_entries, so long media sessions cannot grow memory
+    without limit. dict preserves insertion order: a hit is moved to the end."""
+    if key in cache:
+        value = cache.pop(key)
+        cache[key] = value
+        return value
+    value = loader(key)
+    cache[key] = value
+    while len(cache) > max_entries:
+        cache.pop(next(iter(cache)))
+    return value
+
+
 def paint_media_image(painter, rect, path: str, image_cache: dict | None = None) -> None:
     """Full-frame media image: scaled to fill the frame, aspect kept (cropped to fit), on black.
 
@@ -463,9 +478,7 @@ def paint_media_image(painter, rect, path: str, image_cache: dict | None = None)
     from PyQt6.QtGui import QPixmap
     painter.fillRect(rect, _qcolor(MIDNIGHT))
     cache = image_cache if image_cache is not None else {}
-    if path not in cache:
-        cache[path] = QPixmap(path)
-    pix = cache[path]
+    pix = lru_get_or_load(cache, path, lambda p: QPixmap(p))
     if pix.isNull():
         return
     scaled = pix.scaled(int(rect.width()), int(rect.height()), _keep_aspect_crop(), _smooth())

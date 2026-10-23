@@ -92,6 +92,8 @@ def main(argv=None) -> int:
             live = LiveTranscriptionLoop(pipeline, LazyWhisperTranscriber(args.transcriber_model))
         from .store import load_settings
         settings = load_settings(args.settings)
+        if live is not None:                     # saved performance options apply to the lazy model
+            live.transcriber.configure(compute_type=settings.compute_type, cpu_threads=settings.cpu_threads)
         if args.paraphrase_threshold != 60:          # explicit CLI value wins over the saved file
             settings.paraphrase_threshold = args.paraphrase_threshold
         return run_app(queue, Theme(), pipeline=pipeline, live=live, songs_dir=args.songs_dir,

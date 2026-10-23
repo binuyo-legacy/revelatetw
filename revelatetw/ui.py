@@ -52,6 +52,9 @@ def render_verse_html(c: Candidate | None, theme: Theme) -> str:
             f'{c.reference} ({c.translation})</span></div>')
 
 
+OPERATOR_TICK_MS = 1000              # audit: operator refresh/clock max 1s cadence (visible only)
+
+
 class ProjectionWindow(QWidget):
     """Borderless live output. Standalone: fullscreen on a chosen display, no OBS needed.
 
@@ -640,8 +643,10 @@ class OperatorWindow(QMainWindow):
         self.btn_preset_delete.clicked.connect(self.delete_sermon_preset)
         self.sermon_preset_pick.currentIndexChanged.connect(self._on_preset_pick)
 
-        self._timer = QTimer(self, interval=150, timeout=self.refresh)
-        self._timer.start()
+        # Audit: operator refresh/clock cadence is 1s (was 150ms) and runs only while the window
+        # is visible (showEvent/hideEvent below). The status clock needs whole seconds only.
+        self._timer = QTimer(self, interval=OPERATOR_TICK_MS, timeout=self.refresh)
+        self._timer.setTimerType(Qt.TimerType.CoarseTimer)   # 1s, whole-second clock is enough
         self._fill_testaments()
         self._populate_displays()
         self._fill_song_list()
@@ -1274,7 +1279,7 @@ class OperatorWindow(QMainWindow):
         lay.addLayout(bar)
         self.media_list = QListWidget()
         self.media_list.setViewMode(QListWidget.ViewMode.IconMode)
-        self.media_list.setIconSize(QSize(180, 102))
+        self.media_list.setIconSize(QSize(160, 90))    # matches the 160px cached thumbnails (no upscale)
         self.media_list.setGridSize(QSize(200, 150))
         self.media_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.media_list.setMovement(QListWidget.Movement.Static)
@@ -1441,6 +1446,10 @@ class OperatorWindow(QMainWindow):
             self._apply_auto_label()
         elif key == "output_display" and hasattr(self, "display_box") and self.display_box.count() > s.output_display:
             self.display_box.setCurrentIndex(s.output_display)
+        elif key in ("model_size", "compute_type", "cpu_threads") and self.live is not None:
+            cfg = getattr(self.live.transcriber, "configure", None)
+            if callable(cfg):   # a changed model/compute/threads takes effect on the next mic start
+                cfg(model_size=s.model_size, compute_type=s.compute_type, cpu_threads=s.cpu_threads)
         elif key == "noise_gate_db" and self.live is not None and getattr(self.live, "capture", None) is not None:
             self.live.capture.set_gate_threshold(s.noise_gate_db)
         elif key == "input_device_name":
@@ -2239,6 +2248,14 @@ class OperatorWindow(QMainWindow):
         self.transcript_badge.setText(f"{hits} detected")
         self._transcript_scroll.verticalScrollBar().setValue(
             self._transcript_scroll.verticalScrollBar().maximum())
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._timer.start()              # idle timer runs only while visible
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._timer.stop()               # hidden operator window: no refresh, no clock work
+        super().hideEvent(event)
 
     def refresh(self) -> None:
         pending = self.queue.pending()

@@ -25,8 +25,8 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 VIDEO_EXTS = (".mp4", ".mkv", ".webm", ".mov")
 INDEX_NAME = ".revelatetw-media-index.json"
 THUMB_DIR_NAME = ".thumbs"
-THUMB_PX = 320
-INDEX_VERSION = 1
+THUMB_PX = 160                # cached thumb size; the grid scales these (never full-res)
+INDEX_VERSION = 2              # v2: thumbs are 160px; bumping regenerates old 320px caches
 DEFAULT_MEDIA_FOLDER = "data/media"
 
 

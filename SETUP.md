@@ -106,3 +106,17 @@ Not implemented yet (see spec)
 - Packaging (PyInstaller or Nuitka) and installer.
 
 Spec files (revelatetw-mvp-spec.md, pdfs/) are unchanged.
+
+## Performance
+
+Idle cost is low by design. The operator window refreshes its clock and status once per second, and only while it is visible. The projection window runs a transition timer (about 60 fps) only during a slide change, and stops it at the end of the transition or when hidden. A static verse costs close to nothing.
+
+Live transcription (faster-whisper) is the biggest CPU and RAM user. It loads only on the first live mic start and is freed when live detection stops. Compute type defaults to int8, the lightest option on CPU. Threads default to automatic and can be lowered in Settings > Transcription > Performance.
+
+Recommended model per RAM tier:
+- 4GB RAM or less: tiny or base
+- 8GB RAM or more: small
+
+Thumbnails are cached at 160px and generated only on Rescan or Import (ffmpeg runs on demand, never during a service). Projection images use a bounded cache of 8 decoded images.
+
+Measured numbers: run `QT_QPA_PLATFORM=offscreen python scripts/bench.py 50` for paint events per slide change and offscreen transition frame cost on your machine. Figures from a Windows church PC are not yet measured.

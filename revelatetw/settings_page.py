@@ -8,7 +8,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout,
                              QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QStackedWidget,
-                             QVBoxLayout, QWidget)
+                             QVBoxLayout, QWidget, QSpinBox)
 
 from . import fftools
 from .store import APP_VERSION, AppSettings
@@ -249,6 +249,24 @@ class SettingsPage(QWidget):
         lay.addRow("Detection threshold", row)
         self._update_label(self.det_label, self.det_slider.value())
         lay.addRow(_note("Detection threshold and the paraphrase threshold on the Detection tab are the same setting."))
+        # Performance: whisper only loads on the first mic start and is freed when live detection
+        # stops. int8 is the default (smallest, fastest on CPU). Threads 0 = automatic.
+        lay.addRow(_note("Performance: whisper loads on the first mic start and is freed when live detection stops."))
+        self.compute_combo = QComboBox()
+        self.compute_combo.addItems(["int8", "int8_float32", "float32"])
+        self.compute_combo.setCurrentText(self.s.compute_type)
+        self.compute_combo.setToolTip("int8 is the default and the lightest on CPU. float32 is heavier and "
+                                      "not faster on most church PCs.")
+        self.compute_combo.currentTextChanged.connect(lambda t: self._set("compute_type", t))
+        lay.addRow("Compute type", self.compute_combo)
+        self.threads_spin = QSpinBox()
+        self.threads_spin.setRange(0, 64)
+        self.threads_spin.setSpecialValueText("Automatic")
+        self.threads_spin.setValue(int(self.s.cpu_threads or 0))
+        self.threads_spin.setToolTip("CPU threads for whisper. 0 = automatic. Lower it to leave CPU for the "
+                                     "projection and other apps.")
+        self.threads_spin.valueChanged.connect(lambda v: self._set("cpu_threads", int(v)))
+        lay.addRow("CPU threads", self.threads_spin)
         return w
 
     def _update_label(self, label: QLabel, v: int) -> None:

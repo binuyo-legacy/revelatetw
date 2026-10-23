@@ -66,6 +66,11 @@ class LiveTranscriptionLoop:
         if self._thread and self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=2)
         self._thread = None
+        # Audit: live detection OFF means whisper is idle. Drop the model so its RAM is freed;
+        # the next mic start loads it again (lazy). Text feed never loads it at all.
+        unload = getattr(self.transcriber, "unload", None)
+        if callable(unload):
+            unload()
 
     def meter(self) -> dict:
         if self.capture:
@@ -74,6 +79,11 @@ class LiveTranscriptionLoop:
 
     # ---- worker ------------------------------------------------------------------------
     def _run(self) -> None:
+        # Bounded: the rolling window holds at most one window plus one chunk, and the capture
+        # queue is bounded (AudioCapture max_backlog, drops the oldest chunk). Windows are
+        # transcribed in order on this thread. Known limit: a window that is slower than real
+        # time delays later windows; the capture queue then drops the oldest audio. Partial
+        # results are not skipped (overlap windows are kept so references are not lost).
         window = RollingWindow(rate=TARGET_RATE, window_s=self.window_s, overlap_s=self.overlap_s)
         chunks = self.capture.chunks
         while not self._stop.is_set():
@@ -84,6 +94,7 @@ class LiveTranscriptionLoop:
             for win in window.push(chunk):
                 if self._stop.is_set():
                     break
+                # Audit: poll cadence is 0.2s only while capturing (the thread exits on stop()).
                 try:
                     text = self.transcriber.transcribe(win).strip()
                 except Exception as exc:  # model errors must not kill the loop

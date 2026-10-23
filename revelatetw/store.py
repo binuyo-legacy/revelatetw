@@ -115,6 +115,8 @@ class AppSettings:
     # Transcription
     model_size: str = "small"             # small | medium | large
     whisper_language: str = "en"
+    compute_type: str = "int8"            # faster-whisper: int8 (default) | int8_float32 | float32
+    cpu_threads: int = 0                  # 0 = automatic
     detection_threshold: int = 60         # paraphrase threshold 0-100
     # Detection
     paraphrase_threshold: int = 60        # same knob as --paraphrase-threshold
@@ -139,6 +141,9 @@ class AppSettings:
         self.noise_gate_db = min(-10.0, max(-80.0, float(self.noise_gate_db)))
         self.model_size = self.model_size if self.model_size in ("small", "medium", "large") else d.model_size
         self.whisper_language = str(self.whisper_language or d.whisper_language)
+        self.compute_type = self.compute_type if self.compute_type in ("int8", "int8_float32", "float32") \
+            else d.compute_type
+        self.cpu_threads = min(64, max(0, int(self.cpu_threads or 0)))
         self.detection_threshold = min(100, max(0, int(self.detection_threshold)))
         self.paraphrase_threshold = min(100, max(0, int(self.paraphrase_threshold)))
         self.dedupe_minutes = min(60.0, max(0.0, float(self.dedupe_minutes)))
