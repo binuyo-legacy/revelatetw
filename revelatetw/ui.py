@@ -487,7 +487,7 @@ def _set_prop(w, name, value) -> None:
     w.style().polish(w)
 
 
-_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.jpg"
+_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
 
 
 def _logo_pixmap(height: int = 30):
