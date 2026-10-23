@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QRect, QSize, Qt, QTimer
+from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
                              QInputDialog,
@@ -62,6 +62,10 @@ class ProjectionWindow(QWidget):
     a QTimer (about 60 fps) composites them (fade, slide, kinetic). The whole composed frame
     moves together, so background images and gradients animate with the text.
     """
+
+    # emitted whenever the projected video starts, stops, pauses or errors, or any content replaces it,
+    # so the Media tab playback buttons re-evaluate their enabled state
+    video_state_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -188,6 +192,7 @@ class ProjectionWindow(QWidget):
         self._player.setSource(QUrl.fromLocalFile(path))
         self._player.play()
         self.update()
+        self.video_state_changed.emit()
 
     def _stop_video(self) -> None:
         if getattr(self, "_player", None) is not None:
@@ -214,6 +219,7 @@ class ProjectionWindow(QWidget):
         if getattr(self, "_video_widget", None) is not None:
             self._video_widget.hide()
         self.update()
+        self.video_state_changed.emit()
 
     def _on_video_status(self, status) -> None:
         from PyQt6.QtMultimedia import QMediaPlayer
@@ -268,6 +274,12 @@ class ProjectionWindow(QWidget):
     # --- transitions ----------------------------------------------------------------------
     def _set_content(self, fn, key, group, index: int, section: str) -> None:
         """Make fn the settled content, animating from the previous frame when the theme asks for it."""
+        # Any content that is not a video stops the playing video first, so the video widget never
+        # sits on top of a verse, song, sermon or blank. The transition then fades from the
+        # background (the video's last frame is not captured: simple and correct).
+        if not (isinstance(key, tuple) and key and key[0] == "media-video"):
+            self._stop_video()
+        self.video_state_changed.emit()
         style = effective_style(self._theme.transition, self._last_section, section)
         duration = int(self._theme.transition_ms)
         direction = direction_for(self._last_pos, (group, index))
@@ -504,6 +516,7 @@ class OperatorWindow(QMainWindow):
         self.live = live                  # LiveTranscriptionLoop (mic or dev text)
         self.theme = theme
         self.projection = projection
+        self.projection.video_state_changed.connect(self._update_media_controls)
         self._audio_meter = audio_meter  # callable returning {'peak_db', 'rms_db'} or None
         self._devices = []
         self._started = time.time()
