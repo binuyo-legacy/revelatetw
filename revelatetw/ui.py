@@ -181,6 +181,8 @@ class ProjectionWindow(QWidget):
         from PyQt6.QtCore import QUrl
         self._video_error = ""
         self._video_loop = bool(loop)
+        self._video_active = True
+        self._video_paused = False
         self._video_widget.setGeometry(self.rect())
         self._video_widget.show()
         self._player.setSource(QUrl.fromLocalFile(path))
@@ -195,6 +197,10 @@ class ProjectionWindow(QWidget):
             self._video_widget.hide()
         self._video_error = ""
         self._video_loop = False
+        self._video_active = False
+        self._video_paused = False
+        self._video_active = False
+        self._video_paused = False
 
     @staticmethod
     def _empty_url():
@@ -203,6 +209,8 @@ class ProjectionWindow(QWidget):
 
     def _on_video_error(self, *_args) -> None:
         self._video_error = "Cannot play this video format"
+        self._video_active = False
+        self._video_paused = False
         if getattr(self, "_video_widget", None) is not None:
             self._video_widget.hide()
         self.update()
@@ -210,11 +218,49 @@ class ProjectionWindow(QWidget):
     def _on_video_status(self, status) -> None:
         from PyQt6.QtMultimedia import QMediaPlayer
         if status == QMediaPlayer.MediaStatus.EndOfMedia and self._video_loop and self._player is not None:
-            self._player.setPosition(0)
-            self._player.play()
+            self._rewind_and_play()
+
+    def _rewind_and_play(self) -> None:
+        """Back to the first frame and playing. Used by Loop at the end and by Restart."""
+        self._player.setPosition(0)
+        self._player.play()
+        self._video_paused = False
 
     def set_video_loop(self, loop: bool) -> None:
         self._video_loop = bool(loop)
+
+    # --- playback controls (Media tab buttons) -------------------------------------------
+    def has_playing_video(self) -> bool:
+        return bool(getattr(self, "_video_active", False)) and getattr(self, "_player", None) is not None
+
+    def is_video_paused(self) -> bool:
+        return bool(getattr(self, "_video_paused", False))
+
+    def pause_video(self) -> bool:
+        """Pause the projected video. No-op (False) when no video is loaded or it is already paused."""
+        if not self.has_playing_video() or self._video_paused:
+            return False
+        self._player.pause()
+        self._video_paused = True
+        return True
+
+    def resume_video(self) -> bool:
+        """Resume a paused video. No-op (False) when no video is loaded or it is not paused."""
+        if not self.has_playing_video() or not self._video_paused:
+            return False
+        self._player.play()
+        self._video_paused = False
+        return True
+
+    def toggle_video_pause(self) -> bool:
+        return self.resume_video() if self.is_video_paused() else self.pause_video()
+
+    def restart_video(self) -> bool:
+        """Restart the projected video from 0 and play it (also clears a paused state)."""
+        if not self.has_playing_video():
+            return False
+        self._rewind_and_play()
+        return True
 
     def show_blank(self) -> None:
         self._set_content(None, ("blank",), "blank", 0, "")
@@ -1105,6 +1151,7 @@ class OperatorWindow(QMainWindow):
         self._song_pending = None
         self.projection.show_theme(self.theme)
         self.projection.show_verse(c)
+        self._update_media_controls()
 
     def _render_output(self) -> None:
         """Re-draw whatever the output is showing (after theme change or blank toggle)."""
@@ -1168,13 +1215,18 @@ class OperatorWindow(QMainWindow):
         self.media_loop = QCheckBox("Loop video")
         self.media_loop.setToolTip("Replay a projected video from the start when it ends")
         self.media_loop.toggled.connect(self._on_media_loop)
+        self.media_pause = QPushButton("Pause video")
+        self.media_pause.clicked.connect(self._on_media_pause)
+        self.media_restart = QPushButton("Restart video")
+        self.media_restart.clicked.connect(self._on_media_restart)
         rescan = QPushButton("Rescan")
         rescan.clicked.connect(self.rescan_media)
         import_btn = QPushButton("Import")
         import_btn.clicked.connect(self.import_media)
         proj_btn = QPushButton("Project")
         proj_btn.clicked.connect(self.project_selected_media)
-        for w in (self.media_search, self.media_filter, self.media_loop, rescan, import_btn, proj_btn):
+        for w in (self.media_search, self.media_filter, self.media_loop, self.media_pause, self.media_restart,
+                  rescan, import_btn, proj_btn):
             bar.addWidget(w)
         bar.setStretch(0, 3)
         lay.addLayout(bar)
@@ -1282,14 +1334,41 @@ class OperatorWindow(QMainWindow):
         self.media_status.setText(f"Projected: {it.name} ({it.type_label.lower()})")
         if self.output.on and not self.queue.blank:
             self.projection.show_media(it, loop=self.media_loop.isChecked())
+        self._update_media_controls()
         self.refresh()
 
     def _on_media_loop(self, on: bool) -> None:
         self.projection.set_video_loop(on)
 
+    def _media_controls_state(self) -> dict:
+        from .output_state import media_controls_state
+        kind = self._media_live.kind if (self._kind == "media" and self._media_live is not None) else None
+        projected = kind == "video" and self.projection.has_playing_video()
+        return media_controls_state(kind, self.output.on, self.queue.blank, projected,
+                                    self.projection.is_video_paused())
+
+    def _update_media_controls(self) -> None:
+        if not hasattr(self, "media_pause"):
+            return
+        st = self._media_controls_state()
+        self.media_pause.setText(st["pause_text"])
+        self.media_pause.setToolTip(st["pause_tip"])
+        self.media_pause.setEnabled(st["enabled"])
+        self.media_restart.setToolTip(st["restart_tip"])
+        self.media_restart.setEnabled(st["enabled"])
+
+    def _on_media_pause(self) -> None:
+        self.projection.toggle_video_pause()
+        self._update_media_controls()
+
+    def _on_media_restart(self) -> None:
+        self.projection.restart_video()
+        self._update_media_controls()
+
     def toggle_blank(self) -> None:
         self.queue.set_blank(not self.queue.blank)
         self._render_output()
+        self._update_media_controls()
         self.refresh()
 
     # --- settings, menus, and persistence ----------------------------------------------------
@@ -1407,6 +1486,7 @@ class OperatorWindow(QMainWindow):
         else:
             self.projection.hide()                     # media stays selected in _media_live; re-shown on ON
         self.tile_feed.value.setText("On" if on else "Off (hidden)")
+        self._update_media_controls()
 
     # --- display picker -----------------------------------------------------------------------
     def _populate_displays(self, keep: int = 0) -> None:
