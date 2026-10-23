@@ -115,7 +115,8 @@ class AppSettings:
     wasapi_loopback: bool = False         # list WASAPI loopback (mixing desk output) devices
     noise_gate_db: float = -45.0          # RMS gate threshold, -80..-10
     # Transcription
-    model_size: str = "small"             # small | medium | large
+    model_size: str = "small"             # tiny | base | small | medium | large | large-v3
+    yoruba_advisory_dismissed: bool = False  # one-time Yoruba live detection advisory dismissed
     whisper_language: str = "en"
     compute_type: str = "int8"            # faster-whisper: int8 (default) | int8_float32 | float32
     cpu_threads: int = 0                  # 0 = automatic
@@ -143,7 +144,9 @@ class AppSettings:
         self.input_device_name = str(self.input_device_name or "")
         self.wasapi_loopback = bool(self.wasapi_loopback)
         self.noise_gate_db = min(-10.0, max(-80.0, float(self.noise_gate_db)))
-        self.model_size = self.model_size if self.model_size in ("small", "medium", "large") else d.model_size
+        self.model_size = self.model_size if self.model_size in ("tiny", "base", "small", "medium", "large", "large-v3") \
+            else d.model_size
+        self.yoruba_advisory_dismissed = bool(self.yoruba_advisory_dismissed)
         self.whisper_language = str(self.whisper_language or d.whisper_language)
         self.compute_type = self.compute_type if self.compute_type in ("int8", "int8_float32", "float32") \
             else d.compute_type

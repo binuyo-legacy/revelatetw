@@ -14,7 +14,7 @@ from . import fftools
 from .store import APP_VERSION, AppSettings
 
 SECTIONS = ["General", "Output", "Audio", "Transcription", "Detection", "Bible", "About"]
-MODEL_SIZES = ["small", "medium", "large"]
+MODEL_SIZES = ["tiny", "base", "small", "medium", "large", "large-v3"]
 WHISPER_LANGS = [("en", "English"), ("fr", "French"), ("yo", "Yoruba"), ("ha", "Hausa"), ("sw", "Swahili")]
 RESOLUTIONS = ["auto", "1920x1080", "1280x720", "3840x2160"]
 WARN_STYLE = "color:#f59e0b;font-size:11px;"
@@ -237,7 +237,7 @@ class SettingsPage(QWidget):
         self.model_combo.addItems(MODEL_SIZES)
         self.model_combo.setCurrentText(self.s.model_size)
         self.model_combo.setToolTip("Bigger models are more accurate and slower. Loads on the first mic start.")
-        self.model_combo.currentTextChanged.connect(lambda t: self._set("model_size", t))
+        self.model_combo.currentIndexChanged.connect(self._on_model_pick)
         lay.addRow("Model size", self.model_combo)
         self.lang_combo = QComboBox()
         for code, label in WHISPER_LANGS:
@@ -277,6 +277,24 @@ class SettingsPage(QWidget):
         self.threads_spin.valueChanged.connect(lambda v: self._set("cpu_threads", int(v)))
         lay.addRow("CPU threads", self.threads_spin)
         return w
+
+    def _on_model_pick(self, idx: int) -> None:
+        """Large models ask first (Cancel keeps the previous model). The choice is persisted."""
+        if getattr(self, "_loading", False):
+            return
+        from .model_advice import LARGE_MODEL_WARNING, needs_large_model_warning
+        chosen = self.model_combo.itemText(idx)
+        previous = self.s.model_size
+        if needs_large_model_warning(previous, chosen):
+            ans = QMessageBox.warning(self, "Large model", LARGE_MODEL_WARNING,
+                                      QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                                      QMessageBox.StandardButton.Cancel)
+            if ans != QMessageBox.StandardButton.Ok:
+                self.model_combo.blockSignals(True)
+                self.model_combo.setCurrentText(previous)
+                self.model_combo.blockSignals(False)
+                return
+        self._set("model_size", chosen)
 
     def _update_label(self, label: QLabel, v: int) -> None:
         label.setText(str(v))

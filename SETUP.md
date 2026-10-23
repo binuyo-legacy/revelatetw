@@ -116,6 +116,11 @@ Live transcription (faster-whisper) is the biggest CPU and RAM user. It loads on
 Recommended model per RAM tier:
 - 4GB RAM or less: tiny or base
 - 8GB RAM or more: small
+- 16GB RAM or more: medium, or large / large-v3 for the best accuracy
+
+Large models (large and large-v3) need a powerful PC. Choosing one in Settings > Transcription > Model size shows a warning; Cancel keeps your previous model, OK keeps the large model (saved). If your PC struggles, switch back to a smaller model. The large-v3 model is the recommended choice for Yoruba live detection (see below).
+
+Yoruba live detection is experimental. When the Verses tab translation is Yoruba and live detection is on, the operator window shows a one-time note recommending large-v3 or manual verse mode. Dismissing it is saved in settings and it stays hidden after that.
 
 Thumbnails are cached at 160px and generated only on Rescan or Import (ffmpeg runs on demand, never during a service). Projection images use a bounded cache of 8 decoded images.
 

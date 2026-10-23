@@ -738,6 +738,20 @@ class OperatorWindow(QMainWindow):
         tr_row.addWidget(self.translation_box, 1)
         lay.addLayout(tr_row)
 
+        # one-time, dismissible Yoruba live-detection advisory (informs only, never blocks)
+        self.yoruba_note = QFrame()
+        self.yoruba_note.setObjectName("liveNote")
+        yn = QHBoxLayout(self.yoruba_note)
+        yn.setContentsMargins(6, 4, 6, 4)
+        self.yoruba_note_text = QLabel("")
+        self.yoruba_note_text.setWordWrap(True)
+        yn.addWidget(self.yoruba_note_text, 1)
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self._dismiss_yoruba_advisory)
+        yn.addWidget(dismiss)
+        self.yoruba_note.hide()
+        lay.addWidget(self.yoruba_note)
+
         # search with autosuggest + manual verse mode (collapsible)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search: 'first john', '1 jn 3:16', 'jo 3 16'... (\u2191\u2193, Enter projects)")
@@ -1229,6 +1243,26 @@ class OperatorWindow(QMainWindow):
         self.settings.bible_translation = tid
         self.settings.clean()
         self.refresh()
+        self._refresh_yoruba_advisory()
+
+    def _live_detection_on(self) -> bool:
+        live = self.live
+        return bool(live is not None and getattr(live, "capture", None) is not None)
+
+    def _refresh_yoruba_advisory(self) -> None:
+        from .model_advice import YORUBA_ADVISORY, should_show_yoruba_advisory
+        if not hasattr(self, "yoruba_note"):
+            return
+        show = should_show_yoruba_advisory(self.settings.bible_translation, self._live_detection_on(),
+                                           self.settings.yoruba_advisory_dismissed)
+        self.yoruba_note_text.setText(YORUBA_ADVISORY)
+        self.yoruba_note.setVisible(show)
+
+    def _dismiss_yoruba_advisory(self) -> None:
+        self.settings.yoruba_advisory_dismissed = True
+        self.settings.clean()
+        self.yoruba_note.hide()
+        self._save_settings()
 
     def _in_selected_translation(self, c: Candidate) -> Candidate:
         """Same verse, text in the operator's chosen translation (falls back to the candidate's own text)."""
@@ -2393,6 +2427,7 @@ class OperatorWindow(QMainWindow):
         super().hideEvent(event)
 
     def refresh(self) -> None:
+        self._refresh_yoruba_advisory()
         pending = self.queue.pending()
         self.list.blockSignals(True)
         self.list.clear()
