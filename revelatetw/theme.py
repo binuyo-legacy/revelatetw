@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 SCHEMA_VERSION = 2
-TRANSITIONS = ("fade", "slide", "kinetic")       # spec F3 transition presets
+TRANSITIONS = ("fade", "slide", "kinetic", "none", "instant")  # spec F3 presets; none/instant = cut
 LAYOUTS = ("full", "lower_third")
 FRAMES = ("none", "thin", "double", "gold_rule")
 BACKGROUND_KINDS = ("solid", "linear", "radial", "image", "video")

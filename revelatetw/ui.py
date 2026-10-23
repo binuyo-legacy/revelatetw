@@ -30,6 +30,8 @@ from .sermon_presets import SermonPreset, SermonPresetLibrary
 from .theme import Theme
 from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_song, paint_sermon,
                       paint_verse)
+from .transitions import (FRAME_MS, compose_layout, direction_for, effective_style,
+                          interrupt_duration, is_cut, progress)
 
 # Brand palette (spec section 1)
 INDIGO, PURPLE, GOLD, MIDNIGHT, PARCHMENT, EMBER = (
@@ -53,6 +55,10 @@ class ProjectionWindow(QWidget):
     Hiding it (live output OFF) lets another app take the projector. Any capture tool
     (OBS window capture, virtual camera, other studio software) can read this window.
     Everything is painted by outputs.py (mockups A and B: gold chips, footer, sermon slide).
+
+    Transitions: on a content change the old and new frames are rendered once into pixmaps and
+    a QTimer (about 60 fps) composites them (fade, slide, kinetic). The whole composed frame
+    moves together, so background images and gradients animate with the text.
     """
 
     def __init__(self):
@@ -61,7 +67,16 @@ class ProjectionWindow(QWidget):
         self.setWindowTitle(PROJECTION_WINDOW_TITLE)
         self._theme = Theme()
         self._image_cache: dict = {}
-        self._frame = None          # callable(painter, rect) set by show_* methods
+        self._frame = None          # callable(painter, rect) for the settled content; None = background
+        self._key = None            # identity of the settled content (same key = no animation)
+        self._last_pos = None       # (group, index) of the last content, for direction
+        self._last_section = ""     # section label of the last content, for chorus detection
+        self._anim = None           # running transition state, or None
+        self._live = False          # True only while the window is shown on the output
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.setInterval(FRAME_MS)
+        self._timer.timeout.connect(self._on_tick)
         self.setMinimumSize(320, 180)
         self.show_theme(Theme())
         self.show_blank()
@@ -80,50 +95,169 @@ class ProjectionWindow(QWidget):
         rect = getattr(self, "_display_rect", None)
         if rect is not None:
             self.setGeometry(rect)
+        self._live = True
         self.showFullScreen()
         self.raise_()
 
     def show_verse(self, c: Candidate | None) -> None:
         if c is None:
-            self._frame = None
-        else:
-            self._frame = lambda p, r: paint_verse(p, r, self._theme, c)
-        self.update()
+            self._set_content(None, ("blank",), "blank", 0, "")
+            return
+        fn = lambda p, r: paint_verse(p, r, self._theme, c)  # noqa: E731
+        key = ("verse", c.reference, c.translation, c.display_text)
+        self._set_content(fn, key, ("verse",), 0, "")
 
     def show_song_slide(self, slide: Slide | None, song=None, index: int = 0, total: int = 0) -> None:
         if slide is None:
-            self._frame = None
-        else:
-            title = getattr(song, "title", "")
-            artist = getattr(song, "artist", "")
-            self._frame = lambda p, r: paint_song(
-                p, r, self._theme, title=title, artist=artist, section=slide.label,
-                index=index, total=total, lines=list(slide.lines), image_cache=self._image_cache)
-        self.update()
+            self._set_content(None, ("blank",), "blank", 0, "")
+            return
+        title = getattr(song, "title", "")
+        artist = getattr(song, "artist", "")
+        fn = lambda p, r: paint_song(  # noqa: E731
+            p, r, self._theme, title=title, artist=artist, section=slide.label,
+            index=index, total=total, lines=list(slide.lines), image_cache=self._image_cache)
+        key = ("song", title, artist, slide.label, tuple(slide.lines), index, total)
+        self._set_content(fn, key, ("song", title, artist), index, slide.label)
 
     def show_sermon(self, info: SermonInfo | None, church: str = "") -> None:
         if info is None or not info.lines() and not church:
-            self._frame = None
-        else:
-            line = church or info.church or self._theme.church_line
-            self._frame = lambda p, r: paint_sermon(
-                p, r, self._theme, church=line, title=info.title,
-                speaker=info.speaker, reference=info.reference, image_cache=self._image_cache)
-        self.update()
+            self._set_content(None, ("blank",), "blank", 0, "")
+            return
+        line = church or info.church or self._theme.church_line
+        fn = lambda p, r: paint_sermon(  # noqa: E731
+            p, r, self._theme, church=line, title=info.title,
+            speaker=info.speaker, reference=info.reference, image_cache=self._image_cache)
+        key = ("sermon", line, info.title, info.speaker, info.reference)
+        self._set_content(fn, key, ("sermon",), 0, "")
 
     def show_blank(self) -> None:
-        self._frame = None
+        self._set_content(None, ("blank",), "blank", 0, "")
+
+    # --- transitions ----------------------------------------------------------------------
+    def _set_content(self, fn, key, group, index: int, section: str) -> None:
+        """Make fn the settled content, animating from the previous frame when the theme asks for it."""
+        style = effective_style(self._theme.transition, self._last_section, section)
+        duration = int(self._theme.transition_ms)
+        direction = direction_for(self._last_pos, (group, index))
+        same = key == self._key
+        old_fn = self._frame
+        was_animating = self._anim is not None
+        self._key, self._last_pos, self._last_section = key, (group, index), section
+        self._frame = fn
+        if same or not self._live or is_cut(style, duration):
+            self._stop_anim()
+            self.update()
+            return
+        if was_animating:                      # interrupt: start from what is on screen now
+            old_pix = self._composite_pixmap()
+            dur = interrupt_duration(duration)
+        else:
+            old_pix = self._render_pixmap(old_fn)
+            dur = duration
+        self._anim = {"style": style, "old": old_pix, "new": self._render_pixmap(fn),
+                      "dir": direction, "dur": max(1, dur), "t0": time.monotonic()}
+        self._timer.start()
         self.update()
+
+    def _anim_progress(self) -> float:
+        elapsed = (time.monotonic() - self._anim["t0"]) * 1000.0
+        return progress(elapsed, self._anim["dur"])
+
+    def _on_tick(self) -> None:
+        if self._anim is None:
+            self._timer.stop()
+            return
+        if self._anim_progress() >= 1.0:
+            self._stop_anim()
+        else:
+            self.update()
+
+    def _stop_anim(self) -> None:
+        self._timer.stop()
+        self._anim = None
+
+    def reset_animation(self) -> None:
+        """Drop any running transition (output toggled off, or the window hidden)."""
+        self._stop_anim()
+        self._live = False
+        self.update()
+
+    def _device_size(self):
+        from PyQt6.QtCore import QSize
+        return QSize(self.width(), self.height())
+
+    def _new_pixmap(self):
+        from PyQt6.QtGui import QColor, QPixmap
+        dpr = self.devicePixelRatioF() or 1.0
+        size = self._device_size()
+        pix = QPixmap(max(1, int(size.width() * dpr)), max(1, int(size.height() * dpr)))
+        pix.setDevicePixelRatio(dpr)
+        pix.fill(QColor("#000000"))
+        return pix
+
+    def _paint_content(self, painter, rect, fn) -> None:
+        if fn is None:
+            paint_background(painter, rect, self._theme, self._image_cache)
+        else:
+            fn(painter, rect)
+
+    def _render_pixmap(self, fn):
+        from PyQt6.QtGui import QPainter
+        from PyQt6.QtCore import QRect
+        pix = self._new_pixmap()
+        painter = QPainter(pix)
+        try:
+            self._paint_content(painter, QRect(0, 0, self.width(), self.height()), fn)
+        finally:
+            painter.end()
+        return pix
+
+    def _composite_pixmap(self):
+        from PyQt6.QtGui import QPainter
+        pix = self._new_pixmap()
+        painter = QPainter(pix)
+        try:
+            self._paint_anim(painter, self.rect(), self._anim_progress())
+        finally:
+            painter.end()
+        return pix
+
+    def _paint_anim(self, painter, rect, t: float) -> None:
+        from PyQt6.QtGui import QColor
+        a = self._anim
+        layout = compose_layout(a["style"], t, a["dir"], float(rect.width()))
+        cx, cy = rect.width() / 2, rect.height() / 2
+        painter.fillRect(rect, QColor("#000000"))
+        self._draw_layer(painter, a["old"], layout["old_dx"], layout["old_scale"],
+                         layout["old_alpha"], cx, cy)
+        self._draw_layer(painter, a["new"], layout["new_dx"], layout["new_scale"],
+                         layout["new_alpha"], cx, cy)
+
+    @staticmethod
+    def _draw_layer(painter, pix, dx: float, scale: float, alpha: float, cx: float, cy: float) -> None:
+        if alpha <= 0.0:
+            return
+        painter.save()
+        painter.setOpacity(max(0.0, min(1.0, alpha)))
+        painter.translate(cx + dx, cy)
+        painter.scale(scale, scale)
+        painter.translate(-cx, -cy)
+        painter.drawPixmap(0, 0, pix)
+        painter.restore()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.reset_animation()
+        super().hideEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         from PyQt6.QtGui import QPainter
         painter = QPainter(self)
         try:
             rect = self.rect()
-            if self._frame is None:
-                paint_background(painter, rect, self._theme, self._image_cache)
+            if self._anim is not None:
+                self._paint_anim(painter, rect, self._anim_progress())
             else:
-                self._frame(painter, rect)
+                self._paint_content(painter, rect, self._frame)
         finally:
             painter.end()
 
