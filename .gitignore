@@ -8,3 +8,6 @@ session_log.jsonl
 *.pack
 build/
 dist/
+
+# Bundled ffmpeg binaries (fetched by scripts/fetch_ffmpeg.py, never committed)
+revelatetw/assets/bin/

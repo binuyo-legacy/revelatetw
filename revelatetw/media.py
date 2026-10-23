@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from . import fftools
+
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 VIDEO_EXTS = (".mp4", ".mkv", ".webm", ".mov")
 INDEX_NAME = ".revelatetw-media-index.json"
@@ -72,7 +74,8 @@ class MediaItem:
 # --- ffprobe (optional) ---------------------------------------------------------------------
 
 def ffprobe_path() -> Optional[str]:
-    return shutil.which("ffprobe")
+    """Resolved ffprobe (bundled, then Settings folder, then PATH). None when not found."""
+    return fftools.ffprobe_path()
 
 
 def parse_duration_output(text: str) -> Optional[float]:
@@ -126,7 +129,7 @@ def make_thumbnail(src: Path, dst: Path, kind: str, px: int = THUMB_PX) -> bool:
         img = img.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         return bool(img.save(str(dst), "JPG", 85))
     if kind == "video":
-        exe = shutil.which("ffmpeg")
+        exe = fftools.ffmpeg_path()
         if not exe:
             return False
         try:

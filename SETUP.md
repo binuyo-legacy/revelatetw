@@ -85,6 +85,16 @@ Startup splash
 - Turn it off with: python -m revelatetw --gui --no-splash
 - The splash closes as soon as the operator window appears.
 
+Bundling ffmpeg (recommended for releases)
+ffmpeg is optional. It only fills in video lengths and first-frame thumbnails in the Media tab. Playback does not need it. Without it, cards show "length unknown" and a placeholder thumbnail. To make the installer self-contained, bundle the binaries once on the build machine:
+- Run: python scripts/fetch_ffmpeg.py (needs internet; Windows x64 or any OS with Python). It downloads the gyan.dev release-essentials build and copies ffmpeg.exe and ffprobe.exe into revelatetw/assets/bin/.
+- Options: --dest <folder> to put them somewhere else; --zip <file> to use a zip you downloaded yourself; --sha256 <hex> to pin the exact build (recommended for releases; a mismatch installs nothing); --force to replace existing files; --no-run-check to skip the -version test.
+- Check the result with python -m revelatetw --gui: Settings > Output shows "ffmpeg: bundled".
+- The binaries are never committed. revelatetw/assets/bin/ is in .gitignore. Run the fetch script again on each build machine, then package the folder with the app (PyInstaller or your installer tool must include revelatetw/assets/bin/*.exe).
+- Lookup order: bundled (assets/bin, or next to the package) > the ffmpeg folder set in Settings > Output > ffmpeg folder > system PATH > not found. The result is cached until that setting changes.
+- Licence: ffmpeg is LGPL or GPL depending on how it was built. I have not verified which license the gyan.dev release-essentials build carries, so check the build's own license text (ffmpeg -L, or the readme in the zip) before commercial distribution. GPL builds (for example ones with x264 or x265) impose GPL terms on the combined distribution. Ship the license notice with your installer. Do not rely on this note as legal advice.
+- Download page: https://www.gyan.dev/ffmpeg/builds/
+
 Automated checks (headless, no GUI, no audio hardware): python -m unittest discover -s tests -v
 
 Not implemented yet (see spec)

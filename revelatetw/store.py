@@ -107,6 +107,7 @@ class AppSettings:
     borderless_fullscreen: bool = True
     virtual_camera: bool = False          # OBS / virtual camera readiness flag (see ui notes)
     media_folder: str = ""               # empty = data/media next to the app
+    ffmpeg_dir: str = ""                 # optional folder holding ffmpeg/ffprobe (empty = bundled, then PATH)
     # Audio
     input_device_name: str = ""           # remembered by name (indexes change between boots)
     wasapi_loopback: bool = False         # list WASAPI loopback (mixing desk output) devices
@@ -132,6 +133,7 @@ class AppSettings:
         self.borderless_fullscreen = bool(self.borderless_fullscreen)
         self.virtual_camera = bool(self.virtual_camera)
         self.media_folder = str(self.media_folder or "").strip()
+        self.ffmpeg_dir = str(self.ffmpeg_dir or "").strip()
         self.input_device_name = str(self.input_device_name or "")
         self.wasapi_loopback = bool(self.wasapi_loopback)
         self.noise_gate_db = min(-10.0, max(-80.0, float(self.noise_gate_db)))

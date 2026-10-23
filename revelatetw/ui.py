@@ -587,6 +587,8 @@ class OperatorWindow(QMainWindow):
         self._tabs.addTab(live_page, "Live (verses)")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
         self._tabs.addTab(self._build_media_tab(), "Media")
+        from . import fftools
+        fftools.set_configured_dir(self.settings.ffmpeg_dir)
         self.settings_page = SettingsPage(self.settings, check_updates_cb=self._check_updates)
         self.settings_page.changed.connect(self._on_setting_changed)
         self._tabs.addTab(self.settings_page, "Settings")
@@ -1445,6 +1447,11 @@ class OperatorWindow(QMainWindow):
             self._select_device_by_name(s.input_device_name)
         elif key == "media_folder":
             self._set_media_folder(s.media_folder or DEFAULT_MEDIA_FOLDER)
+        elif key == "ffmpeg_dir":
+            from . import fftools
+            fftools.set_configured_dir(s.ffmpeg_dir)
+            if hasattr(self, "settings_page") and self.settings_page is not None:
+                self.settings_page.refresh_ffmpeg_status()
         self._save_settings()
 
     def _select_device_by_name(self, name: str) -> None:

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, 
                              QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSlider, QStackedWidget,
                              QVBoxLayout, QWidget)
 
+from . import fftools
 from .store import APP_VERSION, AppSettings
 
 SECTIONS = ["General", "Output", "Audio", "Transcription", "Detection", "About"]
@@ -124,7 +125,41 @@ class SettingsPage(QWidget):
         box = QWidget()
         box.setLayout(row)
         lay.addRow("Media folder", box)
+        self.ffmpeg_dir_edit = QLineEdit(self.s.ffmpeg_dir or "")
+        self.ffmpeg_dir_edit.setPlaceholderText("(optional) folder with ffmpeg.exe and ffprobe.exe")
+        self.ffmpeg_dir_edit.setToolTip("Only needed if ffmpeg is not bundled with the app and not on PATH. "
+                                        "Leave empty for the default lookup.")
+        self.ffmpeg_dir_edit.editingFinished.connect(
+            lambda: self._set_ffmpeg_dir(self.ffmpeg_dir_edit.text().strip()))
+        ff_browse = QPushButton("Browse...")
+        ff_browse.clicked.connect(self._pick_ffmpeg_dir)
+        ff_row = QHBoxLayout()
+        ff_row.addWidget(self.ffmpeg_dir_edit, 1)
+        ff_row.addWidget(ff_browse)
+        ff_box = QWidget()
+        ff_box.setLayout(ff_row)
+        lay.addRow("ffmpeg folder", ff_box)
+        self.ffmpeg_status = QLabel(fftools.status_text())
+        self.ffmpeg_status.setWordWrap(True)
+        self.ffmpeg_status.setObjectName("ffmpegStatus")
+        lay.addRow("ffmpeg", self.ffmpeg_status)
         return w
+
+    def _pick_ffmpeg_dir(self) -> None:
+        start = self.s.ffmpeg_dir or ""
+        folder = QFileDialog.getExistingDirectory(self, "Choose the folder with ffmpeg.exe and ffprobe.exe", start)
+        if folder:
+            self.ffmpeg_dir_edit.setText(folder)
+            self._set_ffmpeg_dir(folder)
+
+    def _set_ffmpeg_dir(self, folder: str) -> None:
+        self._set("ffmpeg_dir", folder)
+        self.refresh_ffmpeg_status()
+
+    def refresh_ffmpeg_status(self) -> None:
+        """Re-run the lookup (after the folder changes) and show the one-line source."""
+        fftools.set_configured_dir(self.s.ffmpeg_dir)
+        self.ffmpeg_status.setText(fftools.status_text())
 
     def _pick_media_folder(self) -> None:
         start = self.s.media_folder or ""
