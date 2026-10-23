@@ -65,6 +65,22 @@ class VerseStore:
             (book_id, chapter, verse)).fetchone()
         return row[0] if row else None
 
+    def chapters(self, book_id: int) -> list[int]:
+        return [r[0] for r in self._conn.execute(
+            "SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,))]
+
+    def verse_numbers(self, book_id: int, chapter: int) -> list[int]:
+        return [r[0] for r in self._conn.execute(
+            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, chapter))]
+
+    def neighbour(self, book_id: int, chapter: int, verse: int, delta: int) -> Optional[int]:
+        """Next (+1) or previous (-1) verse number inside the same chapter, or None."""
+        nums = self.verse_numbers(book_id, chapter)
+        if verse not in nums:
+            return None
+        i = nums.index(verse) + delta
+        return nums[i] if 0 <= i < len(nums) else None
+
     def items(self) -> Iterator[tuple[tuple[int, int, int], str]]:
         for b, c, v, t in self._conn.execute("SELECT book_id, chapter, verse, text FROM verses"):
             yield (b, c, v), t

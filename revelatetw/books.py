@@ -6,6 +6,7 @@ BookIndex.add_aliases(), sourced from pack metadata (spec F1 / F6).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -48,3 +49,30 @@ BOOKS: tuple[Book, ...] = tuple(
 assert len(BOOKS) == 66, "canon must have 66 books"
 BOOK_BY_ID: dict[int, Book] = {b.book_id: b for b in BOOKS}
 BOOK_BY_NAME: dict[str, int] = {b.name.lower(): b.book_id for b in BOOKS}
+
+
+# ------------------------------------------------------------------ name forms
+_ORDINAL_WORDS = {1: ("first", "1st", "i"), 2: ("second", "2nd", "ii"), 3: ("third", "3rd", "iii")}
+
+
+@lru_cache(maxsize=None)
+def testament(book_id: int) -> str:
+    """'OT' for Genesis..Malachi (1-39), 'NT' for Matthew..Revelation (40-66)."""
+    return "OT" if book_id <= 39 else "NT"
+
+
+def name_forms(book_id: int) -> tuple[str, ...]:
+    """Every lowercase spelling a speaker or operator might use for a book.
+
+    '1 john' -> '1 john', '1john', 'first john', '1st john', 'i john' (and the same for
+    each alias, e.g. '1 jn' -> 'first jn'). Used by the detector and the autosuggest search.
+    """
+    base = {p.lower() for p in (BOOK_BY_ID[book_id].name, *BOOK_BY_ID[book_id].aliases)}
+    out = set(base)
+    for f in base:
+        if len(f) > 2 and f[0] in "123" and f[1] in " abcdefghijklmnopqrstuvwxyz":
+            n = int(f[0])
+            rest = f[1:].lstrip(" ")
+            out.update(f"{w} {rest}" for w in _ORDINAL_WORDS[n])
+            out.add(f"{n}{rest}")
+    return tuple(sorted(out))

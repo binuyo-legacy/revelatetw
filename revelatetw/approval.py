@@ -42,6 +42,11 @@ class ApprovalQueue:
             return "blank"
         return "live" if self.live else "idle"
 
+    def cleared_count(self) -> int:
+        """Verses resolved this session (approved or rejected)."""
+        with self._lock:
+            return sum(1 for c in self._items if c.status in ("approved", "rejected"))
+
     def pending(self) -> list[Candidate]:
         with self._lock:
             return [c for c in self._items if c.status in ("pending", "held")]

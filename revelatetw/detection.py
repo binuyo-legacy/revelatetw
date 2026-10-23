@@ -9,11 +9,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .books import BOOKS, BOOK_BY_ID
+from .books import BOOKS, BOOK_BY_ID, name_forms
 from .paraphrase import TokenSimilarityMatcher, best_paraphrase_matcher
 from .store import VerseStore
 
 # ------------------------------------------------------------------ spoken numbers
+_ORDINAL_SUFFIX_RE = re.compile(r"\b([123])(?:st|nd|rd|th)\b")
 _ORDINAL_RE = [(re.compile(r"\b(first|1st)\s+(?=[a-z])"), "1 "),
                (re.compile(r"\b(second|2nd)\s+(?=[a-z])"), "2 "),
                (re.compile(r"\b(third|3rd)\s+(?=[a-z])"), "3 ")]
@@ -53,6 +54,7 @@ def words_to_digits(phrase: str) -> str:
 
 def normalise(text: str) -> str:
     t = text.lower()
+    t = _ORDINAL_SUFFIX_RE.sub(r"\1 ", t)          # '2nd corinthians' -> '2 corinthians'
     for pat, repl in _ORDINAL_RE:
         t = pat.sub(repl, t)
     return _NUMBER_RE.sub(lambda m: words_to_digits(m.group(0)), t)
@@ -74,8 +76,8 @@ class BookIndex:
     def __init__(self):
         self._phrases: dict[str, int] = {}
         for b in BOOKS:
-            for p in (b.name, *b.aliases):
-                self._phrases[p.lower()] = b.book_id
+            for p in name_forms(b.book_id):
+                self._phrases[p] = b.book_id
         self._pattern: Optional[re.Pattern] = None
 
     def add_aliases(self, book_id: int, phrases) -> None:
