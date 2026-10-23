@@ -7,6 +7,9 @@
       Opens the operator window and projection window (PyQt6). Text in the 'Feed' box
       is detected like transcript.
 
+  python -m revelatetw --gui --transcriber-model small
+      Also enables the Live microphone source (needs faster-whisper and sounddevice).
+
   python -m revelatetw --list-devices
       Prints audio inputs (needs sounddevice).
 """
@@ -22,9 +25,9 @@ from .store import VerseStore
 from .theme import Theme
 
 
-def build(verses_path: str, log_path: str | None = "session_log.jsonl"):
+def build(verses_path: str, log_path: str | None = "session_log.jsonl", threshold: int = 60):
     store = VerseStore.from_json(verses_path)
-    detector = VerseDetector(store)
+    detector = VerseDetector(store, paraphrase_threshold=threshold)
     queue = ApprovalQueue(log_path=log_path)
     pipeline = DetectionPipeline(detector, queue)
     return store, queue, pipeline
@@ -49,6 +52,10 @@ def main(argv=None) -> int:
     ap.add_argument("--gui", action="store_true")
     ap.add_argument("--list-devices", action="store_true")
     ap.add_argument("--log", default="session_log.jsonl")
+    ap.add_argument("--transcriber-model", default=None,
+                    help="faster-whisper model size (tiny, base, small). Enables live mic in --gui.")
+    ap.add_argument("--paraphrase-threshold", type=int, default=60,
+                    help="0-100. Lower finds more paraphrases (default 60).")
     args = ap.parse_args(argv)
 
     if args.list_devices:
@@ -61,8 +68,13 @@ def main(argv=None) -> int:
         return 0
     if args.gui:
         from .ui import run_app
-        _, queue, pipeline = build(args.verses, args.log)
-        return run_app(queue, Theme(), pipeline=pipeline)
+        _, queue, pipeline = build(args.verses, args.log, args.paraphrase_threshold)
+        live = None
+        if args.transcriber_model:
+            from .live import LiveTranscriptionLoop
+            from .transcription import LazyWhisperTranscriber
+            live = LiveTranscriptionLoop(pipeline, LazyWhisperTranscriber(args.transcriber_model))
+        return run_app(queue, Theme(), pipeline=pipeline, live=live)
     ap.print_help()
     return 0
 

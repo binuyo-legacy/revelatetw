@@ -64,14 +64,16 @@ class ProjectionWindow(QWidget):
 
 class OperatorWindow(QMainWindow):
     def __init__(self, queue: ApprovalQueue, theme: Theme, projection: ProjectionWindow,
-                 audio_meter=None, pipeline=None):
+                 audio_meter=None, pipeline=None, live=None):
         super().__init__()
         self.setWindowTitle("RevelateTW (operator)")
         self.queue = queue
         self.pipeline = pipeline
+        self.live = live                  # LiveTranscriptionLoop (mic or dev text)
         self.theme = theme
         self.projection = projection
         self._audio_meter = audio_meter  # callable returning {'peak_db', 'rms_db'} or None
+        self._devices = []
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -106,10 +108,21 @@ class OperatorWindow(QMainWindow):
         right.addWidget(self.indicator)
         self.meter = QLabel("Level: --")
         right.addWidget(self.meter)
+        self.source_box = QComboBox()
+        self.source_box.addItems(["Dev text feed", "Live microphone"])
+        self.source_box.setToolTip("Dev text feed: typed sentences. Live microphone: audio from the device below.")
+        right.addWidget(QLabel("Source"))
+        right.addWidget(self.source_box)
         self.device_box = QComboBox()
         self.device_box.setToolTip("Audio input (WASAPI loopback lists mixing-desk output)")
         right.addWidget(QLabel("Audio input"))
         right.addWidget(self.device_box)
+        self.btn_theme = QPushButton("Theme editor...")
+        self.btn_theme.clicked.connect(self.open_theme_editor)
+        right.addWidget(self.btn_theme)
+        self.source_status = QLabel("")
+        self.source_status.setWordWrap(True)
+        right.addWidget(self.source_status)
         self.gain = QDoubleSpinBox()
         self.gain.setRange(-60, 20)
         self.gain.setSuffix(" dB")
@@ -120,7 +133,7 @@ class OperatorWindow(QMainWindow):
         self.feed = QLineEdit()
         self.feed.setPlaceholderText("Simulated speech: type a sentence and press Enter")
         self.feed.returnPressed.connect(self._on_feed)
-        right.addWidget(QLabel("Dev feed (stands in for the transcriber)"))
+        right.addWidget(QLabel("Dev feed (typed speech, used in text mode)"))
         right.addWidget(self.feed)
         root.addLayout(right, 2)
 
@@ -131,6 +144,9 @@ class OperatorWindow(QMainWindow):
                         ("B", self.toggle_blank)]:
             QShortcut(QKeySequence(key), self, activated=fn)
 
+        self.source_box.currentIndexChanged.connect(self._apply_source)
+        self.device_box.currentIndexChanged.connect(self._apply_source)
+        self._populate_devices()
         self.btn_approve.clicked.connect(self.approve_selected)
         self.btn_reject.clicked.connect(self.reject_selected)
         self.btn_hold.clicked.connect(self.hold_selected)
@@ -140,6 +156,52 @@ class OperatorWindow(QMainWindow):
         self._timer = QTimer(self, interval=150, timeout=self.refresh)
         self._timer.start()
         self.refresh()
+
+    # --- live source -----------------------------------------------------------------------
+    def _populate_devices(self) -> None:
+        if self.live is None:
+            self.source_box.setEnabled(False)
+            self.device_box.setEnabled(False)
+            self.source_status.setText("Live audio not available in this session (dev text feed only).")
+            return
+        try:
+            from .audio import list_input_devices
+            self._devices = list_input_devices()
+        except Exception as exc:  # sounddevice missing or no audio host
+            self._devices = []
+            self.source_status.setText(f"Audio devices unavailable: {exc}")
+        self.device_box.blockSignals(True)
+        self.device_box.clear()
+        for d in self._devices:
+            self.device_box.addItem(f"{d.name}  ({d.channels} ch, {d.default_rate} Hz)")
+        self.device_box.blockSignals(False)
+
+    def _apply_source(self) -> None:
+        if self.live is None:
+            return
+        if self.source_box.currentIndex() == 0 or not self._devices:
+            self.live.use_text_feed()
+            self.source_status.setText("Dev text feed (typed sentences)")
+            return
+        dev = self._devices[max(0, self.device_box.currentIndex())]
+        try:
+            self.live.start_mic(dev)
+            self.source_status.setText(f"Listening: {dev.name}")
+        except Exception as exc:  # device busy or unsupported; never leave the loop half-open
+            self.live.use_text_feed()
+            self.source_box.blockSignals(True)
+            self.source_box.setCurrentIndex(0)
+            self.source_box.blockSignals(False)
+            self.source_status.setText(f"Mic failed, back to text feed: {exc}")
+
+    def open_theme_editor(self) -> None:
+        from .theme_editor import ThemeEditor
+        dlg = ThemeEditor(self.theme, self)
+        if dlg.exec():
+            self.theme = dlg.theme
+            self.projection.show_theme(self.theme)
+            if self.queue.live:
+                self.projection.show_verse(self.queue.live)
 
     def _btn(self, text, bg, fg) -> QPushButton:
         b = QPushButton(text)
@@ -154,8 +216,11 @@ class OperatorWindow(QMainWindow):
     def _on_feed(self) -> None:
         text = self.feed.text()
         self.feed.clear()
-        if self.pipeline and text.strip():
-            self.pipeline.on_transcript(text)
+        if text.strip():
+            if self.live is not None:
+                self.live.feed_text(text)
+            elif self.pipeline:
+                self.pipeline.on_transcript(text)
         self.refresh()
 
     def _on_row(self, row: int) -> None:
@@ -221,20 +286,24 @@ class OperatorWindow(QMainWindow):
         self.indicator.setText({"live": "LIVE", "blank": "BLANK", "idle": "IDLE"}[st])
         color = {"live": GOLD, "blank": EMBER, "idle": PURPLE}[st]
         self.indicator.setStyleSheet(f"color:{color};")
-        if self._audio_meter:
+        if self.live is not None:
+            m = self.live.meter()
+            self.meter.setText(f"Peak {m['peak_db']:.0f} dB   RMS {m['rms_db']:.0f} dB")
+        elif self._audio_meter:
             m = self._audio_meter()
             self.meter.setText(f"Peak {m['peak_db']:.0f} dB   RMS {m['rms_db']:.0f} dB")
 
 
-def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen: int = 0):
-    """Start the Qt event loop. pipeline (optional) receives text from the dev feed box."""
+def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen: int = 0,
+            live=None):
+    """Start the Qt event loop. pipeline receives dev-feed text; live (optional) runs the mic loop."""
     app = QApplication.instance() or QApplication([])
     projection = ProjectionWindow()
     screens = app.screens()
     if screens and len(screens) > projection_screen:
         projection.setGeometry(screens[projection_screen].geometry())
     projection.show_theme(theme)
-    op = OperatorWindow(queue, theme, projection, pipeline=pipeline)
+    op = OperatorWindow(queue, theme, projection, pipeline=pipeline, live=live)
     op.resize(1200, 720)
     op.show()
     projection.show()

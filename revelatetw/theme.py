@@ -13,6 +13,12 @@ from typing import Optional
 TRANSITIONS = ("fade", "slide", "kinetic")       # spec F3 transition presets
 LAYOUTS = ("full", "lower_third")
 FRAMES = ("none", "thin", "double", "gold_rule")
+BACKGROUND_KINDS = ("solid", "linear", "radial", "image", "video")
+
+
+def is_hex_color(value: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", str(value)))
 
 
 @dataclass
@@ -46,19 +52,57 @@ class Theme:
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+
     @classmethod
     def from_dict(cls, data: dict) -> "Theme":
+        """Tolerant loader: unknown keys are ignored so newer theme files still open."""
         known = {f.name for f in fields(cls)}
-        bg = Background(**data.get("background", {}))
+        bg_known = {f.name for f in fields(Background)}
+        bg_raw = data.get("background") or {}
+        bg = Background(**{k: v for k, v in bg_raw.items() if k in bg_known})
         values = {k: v for k, v in data.items() if k in known and k != "background"}
         return cls(background=bg, **values)
 
+    def problems(self) -> list[str]:
+        """Human-readable list of anything the renderer cannot draw. Empty means valid."""
+        errs = []
+        if self.background.kind not in BACKGROUND_KINDS:
+            errs.append(f"background.kind must be one of {BACKGROUND_KINDS}")
+        if self.background.kind in ("solid", "linear", "radial") and not self.background.colors:
+            errs.append("background.colors needs at least one colour")
+        for c in [*self.background.colors, self.text_color, self.reference_color]:
+            if not is_hex_color(c):
+                errs.append(f"colour {c!r} is not #RRGGBB or #RRGGBBAA")
+        if self.transition not in TRANSITIONS:
+            errs.append(f"transition must be one of {TRANSITIONS}")
+        if self.frame not in FRAMES:
+            errs.append(f"frame must be one of {FRAMES}")
+        if self.layout not in LAYOUTS:
+            errs.append(f"layout must be one of {LAYOUTS}")
+        if not (12 <= self.font_size_px <= 300):
+            errs.append("font_size_px must be between 12 and 300")
+        if not (0 <= self.transition_ms <= 5000):
+            errs.append("transition_ms must be between 0 and 5000")
+        if not (100 <= self.font_weight <= 900):
+            errs.append("font_weight must be between 100 and 900")
+        return errs
+
+    def validate(self) -> None:
+        errs = self.problems()
+        if errs:
+            raise ValueError("invalid theme: " + "; ".join(errs))
+
     def save(self, path: str | Path) -> None:
+        self.validate()
         Path(path).write_text(self.to_json(), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | Path) -> "Theme":
-        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+        theme = cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+        theme.validate()
+        return theme
 
 
 def ready_made_themes() -> list[Theme]:

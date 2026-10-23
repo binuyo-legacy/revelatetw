@@ -1,7 +1,7 @@
 """Verse detection: exact citations (regex) plus a lexical paraphrase stub.
 
-Paraphrase matching here is word overlap. Spec F1 calls for a multilingual sentence
-embedding model with BM25 as fallback; LexicalParaphraseMatcher is the drop-in seam.
+Paraphrase matching lives in paraphrase.py: IDF-weighted token similarity offline by
+default, sentence embeddings when an optional model is cached (spec F1).
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .books import BOOKS, BOOK_BY_ID
+from .paraphrase import TokenSimilarityMatcher, best_paraphrase_matcher
 from .store import VerseStore
 
 # ------------------------------------------------------------------ spoken numbers
@@ -107,36 +108,6 @@ class BookIndex:
         return refs
 
 
-# ------------------------------------------------------------------ paraphrase stub
-_STOP = set("""a an and are as at be but by for from had has have he her his i if in into is it
-its me my no not of on or our she so that the their them then there they this to was we were
-what when who will with you your thy thee thou shall unto upon also""".split())
-
-
-def _content_words(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z']+", text.lower()) if len(w) > 2 and w not in _STOP}
-
-
-class LexicalParaphraseMatcher:
-    """Scores each verse by shared content words. Replace with embeddings + BM25 (spec F1)."""
-
-    def __init__(self, store: VerseStore, min_shared: int = 2, cap: int = 95):
-        self._index = [((b, c, v), _content_words(t), t) for (b, c, v), t in store.items()]
-        self._min_shared = min_shared
-        self._cap = cap
-
-    def match(self, text: str) -> list[tuple[int, int, int, int, str]]:
-        q = _content_words(text)
-        if not q:
-            return []
-        hits = []
-        for (b, c, v), words, verse_text in self._index:
-            shared = len(q & words)
-            if shared >= self._min_shared:
-                hits.append((min(self._cap, round(100 * shared / len(q))), b, c, v, verse_text))
-        return sorted(hits, reverse=True)
-
-
 # ------------------------------------------------------------------ candidates
 @dataclass
 class Candidate:
@@ -162,10 +133,14 @@ class Candidate:
 
 class VerseDetector:
     def __init__(self, store: VerseStore, books: Optional[BookIndex] = None,
-                 paraphrase_threshold: int = 70):
+                 paraphrase_threshold: int = 60, paraphrase_matcher=None,
+                 prefer_embeddings: bool = False):
+        """paraphrase_threshold: 0-100, lower finds more (and more false hits). Tunable per church.
+        prefer_embeddings: use a cached sentence-embedding model if one is installed."""
         self.store = store
         self.books = books or BookIndex()
-        self.paraphrase = LexicalParaphraseMatcher(store)
+        self.paraphrase = paraphrase_matcher or (
+            best_paraphrase_matcher(store, True) if prefer_embeddings else TokenSimilarityMatcher(store))
         self.paraphrase_threshold = paraphrase_threshold
 
     def detect(self, text: str) -> list[Candidate]:

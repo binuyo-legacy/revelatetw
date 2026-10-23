@@ -1,0 +1,5 @@
+# Optional. The app runs without these.
+# OBS virtual camera output:
+pyvirtualcam>=0.11
+# Embedding paraphrase matcher (needs a cached model, see SETUP.md):
+sentence-transformers>=2.7

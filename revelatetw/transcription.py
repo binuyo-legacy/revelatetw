@@ -25,6 +25,19 @@ class FasterWhisperTranscriber:
         return " ".join(s.text.strip() for s in segments)
 
 
+class LazyWhisperTranscriber:
+    """Loads the model on first use, so the GUI opens even if faster-whisper is missing."""
+
+    def __init__(self, model_size: str = "small"):
+        self.model_size = model_size
+        self._inner: FasterWhisperTranscriber | None = None
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        if self._inner is None:
+            self._inner = FasterWhisperTranscriber(self.model_size)
+        return self._inner.transcribe(audio)
+
+
 class TextTranscriber:
     """Development hook: feed typed sermon text as if it were speech."""
 
