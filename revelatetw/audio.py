@@ -91,7 +91,7 @@ class AudioCapture:
         self.gate = gate or NoiseGate()
         self.chunks: queue.Queue = queue.Queue(maxsize=max_backlog)
         self.meter = {"peak_db": -120.0, "rms_db": -120.0}   # read by the UI meter
-        # Optional observer on the SAME stream (header PASTOR MIC wave). Called on the audio
+        # Optional observer on the SAME stream (header AUDIO SOURCE wave). Called on the audio
         # thread with (gained mono block at the native rate, native rate). Must be cheap.
         self.tap = tap
         self._stream = None

@@ -144,7 +144,7 @@ def test_wave_turns_red_under_high_cpu():
 def test_wave_flat_states_and_labels():
     w = MicWaveWidget()
     w.set_detection_off()
-    assert w._state == "off" and w.label_text() == "PASTOR MIC" and w.isVisible() is False
+    assert w._state == "off" and w.label_text() == "AUDIO SOURCE" and w.isVisible() is False
     assert all(v == 0.0 for v in w._history)
     w.set_no_mic()
     assert w.label_text() == "NO MIC"

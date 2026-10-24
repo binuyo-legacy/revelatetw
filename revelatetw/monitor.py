@@ -1,4 +1,4 @@
-"""Operator header monitoring: PASTOR MIC level (AudioMonitor) and PC load (SystemMonitor).
+"""Operator header monitoring: AUDIO SOURCE level (AudioMonitor) and PC load (SystemMonitor).
 
 Threading rules
 - AudioMonitor.feed() runs on the PortAudio callback thread. It only updates numbers under a

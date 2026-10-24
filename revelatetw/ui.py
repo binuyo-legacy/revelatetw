@@ -545,7 +545,7 @@ _BAND_HEX = {"green": _GREEN_HEX, "amber": _AMBER_HEX, "red": _RED_HEX, "none": 
 
 
 class MicWaveWidget(QWidget):
-    """PASTOR MIC: 24 gold bars driven by level history with peak-hold decay.
+    """AUDIO SOURCE: 24 gold bars driven by level history with peak-hold decay.
 
     States: live (gold bars, green dot when signal present), detection off (flat dimmed strip,
     grey dot), no mic device (flat strip, 'NO MIC' label instead of a dot). Turns red/amber when
@@ -556,7 +556,7 @@ class MicWaveWidget(QWidget):
         super().__init__(parent)
         self.setFixedSize(WAVE_W, WAVE_H)
         self.setObjectName("waveWidget")
-        self.setToolTip("PASTOR MIC level. Needs the live microphone selected in Settings > Audio.")
+        self.setToolTip("AUDIO SOURCE level. Needs the live microphone selected in Settings > Audio.")
         self._history = [0.0] * WAVE_BARS     # newest last
         self._peak = 0.0                      # peak-hold value shown as the top marker
         self._present = False
@@ -601,7 +601,7 @@ class MicWaveWidget(QWidget):
         return QColor(_GOLD_HEX)
 
     def label_text(self) -> str:
-        return "NO MIC" if self._state == "nomic" else "PASTOR MIC"
+        return "NO MIC" if self._state == "nomic" else "AUDIO SOURCE"
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         from PyQt6.QtCore import QRectF
