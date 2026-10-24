@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
 from .books import BOOK_BY_NAME
+from .paths import resolve_data_arg
 
 
 class VerseStore:
@@ -34,7 +35,7 @@ class VerseStore:
     @classmethod
     def from_json(cls, path: str | Path) -> "VerseStore":
         """Build an in-memory store from a JSON file (used for dev samples)."""
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(Path(resolve_data_arg(path)).read_text(encoding="utf-8"))
         verses = []
         for v in data["verses"]:
             book_id = v.get("book_id") or BOOK_BY_NAME[v["book"].lower()]

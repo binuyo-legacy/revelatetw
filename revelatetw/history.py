@@ -13,8 +13,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_HISTORY_DIR = REPO_ROOT / "data" / "history"
+from .paths import bundled
+
+DEFAULT_HISTORY_DIR = bundled("data", "history")
 TYPES = ("verse", "song", "sermon", "media")
 
 

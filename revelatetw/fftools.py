@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import logging
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from .paths import bundled
+
 _log = logging.getLogger(__name__)
 
-PACKAGE_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = bundled("revelatetw")
 BUNDLED_BIN_DIR = PACKAGE_DIR / "assets" / "bin"
 _NOT_FOUND_TEXT_ASCII = "ffmpeg: not found, video details unavailable"  # shown in Settings > Output
 
@@ -54,12 +55,7 @@ class Tools:
 
 def bundled_dirs() -> list[Path]:
     """Folders searched first: assets/bin, the package folder, and the PyInstaller unpack folder."""
-    dirs = [BUNDLED_BIN_DIR, PACKAGE_DIR]
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        dirs.append(Path(meipass) / "revelatetw" / "assets" / "bin")
-        dirs.append(Path(meipass) / "revelatetw")
-    return dirs
+    return [BUNDLED_BIN_DIR, PACKAGE_DIR]
 
 
 def _find_in_dirs(tool: str, dirs: list[Path]) -> Optional[str]:

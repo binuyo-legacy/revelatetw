@@ -28,6 +28,7 @@ from .monitor import AudioMonitor, SystemMonitor, band_for
 from .output_state import LiveOutputState, pill_state
 from .settings_page import SettingsPage
 from .store import APP_VERSION, AppSettings, save_settings
+from .paths import bundled
 from .sermon import SermonInfo
 from .songs import Slide, Song, SongLibrary, lyrics_text, split_lyrics
 from .sermon_presets import SermonPreset, SermonPresetLibrary
@@ -492,7 +493,7 @@ def _set_prop(w, name, value) -> None:
     w.style().polish(w)
 
 
-_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
+_LOGO_PATH = bundled("revelatetw", "assets", "logo.png")
 
 
 def _logo_pixmap(height: int = 30):

@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Optional
 
 from .books import BOOK_BY_ID, BOOK_BY_NAME
+from .paths import bundled
 from .store import VerseStore
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BIBLE_DIR = REPO_ROOT / "data" / "bible"
-SAMPLE_JSON = REPO_ROOT / "data" / "sample_kjv.json"
+DEFAULT_BIBLE_DIR = bundled("data", "bible")
+SAMPLE_JSON = bundled("data", "sample_kjv.json")
 PACK_SUFFIX = ".sqlite"
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,15}$")
 REQUIRED_IMPORT_KEYS = ("id", "name", "language", "license", "verses")

@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
+from .paths import bundled
+
 SCHEMA_VERSION = 2
 TRANSITIONS = ("fade", "slide", "kinetic", "none", "instant")  # spec F3 presets; none/instant = cut
 LAYOUTS = ("full", "lower_third")
@@ -30,7 +32,7 @@ DEFAULT_DIM = "#A9A4C8"
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
 # Background images live here. The app folder is found from this file, so it works from a checkout.
-BACKGROUNDS_DIR = Path(__file__).resolve().parent.parent / "data" / "backgrounds"
+BACKGROUNDS_DIR = bundled("data", "backgrounds")
 
 
 def is_hex_color(value: str) -> bool:

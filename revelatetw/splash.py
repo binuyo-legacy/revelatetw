@@ -10,7 +10,9 @@ import math
 from pathlib import Path
 from typing import Optional
 
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+from .paths import bundled
+
+ASSETS_DIR = bundled("revelatetw", "assets")
 SPLASH_PATH = ASSETS_DIR / "splash.png"
 LOGO_PATH = ASSETS_DIR / "logo.png"
 
