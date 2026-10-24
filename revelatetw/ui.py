@@ -813,6 +813,8 @@ class OperatorWindow(QMainWindow):
         self.song_list.currentRowChanged.connect(self._on_song_row)
         self.btn_new_song.clicked.connect(self._new_song)
         self.btn_import_song.clicked.connect(self._import_song)
+        self.song_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.song_list.customContextMenuRequested.connect(self._song_context_menu)
         self.btn_split.clicked.connect(self._split_editor)
         self.btn_save_song.clicked.connect(self._save_song)
         self.slide_pick.currentRowChanged.connect(self._on_slide_pick)
@@ -1110,9 +1112,14 @@ class OperatorWindow(QMainWindow):
         row = QHBoxLayout()
         self.btn_new_song = QPushButton("New song")
         self.btn_new_song.setObjectName("primary")
-        self.btn_import_song = QPushButton("Import file")
+        self.btn_import_song = QPushButton("Import")
+        self.btn_import_song.setToolTip("Import a .rtsong file, a .txt lyrics file, or pasted lyrics")
+        self.btn_export_all = QPushButton("Export all")
+        self.btn_export_all.setToolTip("Save every song to one .rtsong file")
+        self.btn_export_all.clicked.connect(lambda: self._export_song(None))
         row.addWidget(self.btn_new_song)
         row.addWidget(self.btn_import_song)
+        row.addWidget(self.btn_export_all)
         ll.addLayout(row)
         self.song_count = _label("", "footer")
         ll.addWidget(self.song_count)
@@ -2070,6 +2077,16 @@ class OperatorWindow(QMainWindow):
             self.song_list.clearSelection()
         self.song_list.blockSignals(False)
 
+    def _song_context_menu(self, pos) -> None:
+        from PyQt6.QtWidgets import QMenu
+        row = self.song_list.indexAt(pos).row()
+        if row < 0 or row >= len(self._songs):
+            return
+        menu = QMenu(self)
+        act = menu.addAction("Export this song")
+        if menu.exec(self.song_list.viewport().mapToGlobal(pos)) == act:
+            self._export_song(self._songs[row])
+
     def _on_song_row(self, row: int) -> None:
         if row < 0 or row >= len(self._songs):
             return
@@ -2123,30 +2140,40 @@ class OperatorWindow(QMainWindow):
         self.song_title.setFocus()
 
     def _import_song(self) -> None:
-        if not self._confirm_discard():
+        from .song_import_dialog import ImportSongsDialog
+        dlg = ImportSongsDialog(self, self.library)
+        dlg.exec()
+        if dlg.saved_count:
+            self._fill_song_list()
+            self.editor_status.setText(dlg.result_message.split("\n")[0])
+
+    def _export_song(self, song: Optional[Song] = None) -> None:
+        """Export one song (row button / context menu) or the whole library when song is None."""
+        from . import song_io
+        if song is None:
+            songs = self.library.load_all()
+            if not songs:
+                self.editor_status.setText("No songs to export yet.")
+                return
+            default = f"revelate_songs_{len(songs)}.rtsong"
+            path, _ = QFileDialog.getSaveFileName(self, "Export all songs", default, "RevelateTW songs (*.rtsong)")
+            if not path:
+                return
+            try:
+                song_io.export_songs(songs, path)
+                self.editor_status.setText(f"Exported {len(songs)} songs to {Path(path).name}")
+            except Exception as exc:
+                self.editor_status.setText(f"Export failed: {exc}")
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import lyrics", "", "Text or song JSON (*.txt *.json)")
+        default = song_io.safe_filename(song.title) + song_io.EXTENSION
+        path, _ = QFileDialog.getSaveFileName(self, "Export song", default, "RevelateTW song (*.rtsong)")
         if not path:
             return
         try:
-            from pathlib import Path as _P
-            raw = _P(path).read_text(encoding="utf-8")
-            if path.lower().endswith(".json"):
-                import json as _json
-                song = Song.from_dict(_json.loads(raw))
-                # an import is a new song until saved: it keeps its id so Save overwrites the same file
-                self._load_into_editor(song)
-                self._song_sel = None
-                self._select_loaded_row()
-                self._update_dirty()
-                self.editor_status.setText(f"Imported {song.title}: {len(song.slides)} slides. Save song to keep it.")
-            else:
-                self._load_into_editor(None)
-                self.song_lyrics.setPlainText(raw)
-                self.song_title.setText(self.song_title.text() or _P(path).stem)
-                self._split_editor()
+            song_io.export_song(song, path)
+            self.editor_status.setText(f"Exported {song.title} to {Path(path).name}")
         except Exception as exc:
-            self.editor_status.setText(f"Import failed: {exc}")
+            self.editor_status.setText(f"Export failed: {exc}")
 
     def _split_editor(self) -> None:
         text = self.song_lyrics.toPlainText()

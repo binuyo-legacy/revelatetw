@@ -24,6 +24,12 @@ _HEADER = re.compile(
     re.IGNORECASE)
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
+# Short section headers used by many lyric sheets: V1, V2, C, CH, B, PC (case-insensitive).
+_ABBR_HEADER = re.compile(r"^[\[(]?\s*(?P<abbr>vs|v|ch|c|pc|b)\s*(?P<num>\d{1,2})?\s*[\])]?\s*:?$",
+                          re.IGNORECASE)
+_ABBR_NAMES = {"v": "Verse", "vs": "Verse", "c": "Chorus", "ch": "Chorus", "pc": "Pre-Chorus",
+               "b": "Bridge"}
+
 
 def normalize_label(raw: str) -> str:
     """'verse 1' -> 'Verse 1', 'PRE-CHORUS' -> 'Pre-Chorus'."""
@@ -31,16 +37,32 @@ def normalize_label(raw: str) -> str:
     return " ".join("-".join(p.capitalize() for p in w.split("-")) for w in words)
 
 
-def split_lyrics(text: str, max_lines: int = 4) -> list["Slide"]:
-    """Split pasted lyrics into slides.
+def header_label(line: str) -> Optional[str]:
+    """The section label if this line is a header ('Chorus 2:', '[Verse 1]', 'V1', 'C'), else None."""
+    s = line.strip()
+    m = _HEADER.match(s)
+    if m:
+        return normalize_label(m.group("name"))
+    m = _ABBR_HEADER.match(s)
+    if m:
+        abbr = m.group("abbr")
+        num = m.group("num")
+        # A bare single letter is only a header when it is written in capitals ('C', 'V1').
+        # A lowercase 'b' or 'c' on its own line is far more likely to be a lyric.
+        bare = not num and len(abbr) == 1 and not (s.endswith(":") or s[0] in "[(")
+        if bare and not abbr.isupper():
+            return None
+        name = _ABBR_NAMES[abbr.lower()]
+        return f"{name} {num}" if num else name
+    return None
 
-    A blank line ends a slide. A header line ([Verse 1], Chorus:, Bridge) ends the previous
-    slide and labels the next one. Blocks longer than max_lines are cut into several slides
-    (the later ones are labelled '(cont.)'). Unlabelled slides are named 'Slide N'.
-    """
-    if max_lines < 1:
-        raise ValueError("max_lines must be at least 1")
-    blocks: list[tuple[Optional[str], list[str]]] = []
+
+Block = tuple[Optional[str], list[str]]
+
+
+def split_blocks(text: str) -> list[Block]:
+    """Group lines into (label, lines) blocks. A blank line or a header line ends a block."""
+    blocks: list[Block] = []
     label: Optional[str] = None
     lines: list[str] = []
 
@@ -56,14 +78,20 @@ def split_lyrics(text: str, max_lines: int = 4) -> list["Slide"]:
         if not s:
             flush()
             continue
-        m = _HEADER.match(s)
-        if m:
+        hdr = header_label(s)
+        if hdr is not None:
             flush()
-            label = normalize_label(m.group("name"))
+            label = hdr
             continue
         lines.append(s)
     flush()
+    return blocks
 
+
+def blocks_to_slides(blocks: list[Block], max_lines: int = 4) -> list["Slide"]:
+    """Cut each block into slides of at most max_lines lines (continuations marked '(cont.)')."""
+    if max_lines < 1:
+        raise ValueError("max_lines must be at least 1")
     slides: list[Slide] = []
     for lbl, block in blocks:
         for i in range(0, len(block), max_lines):
@@ -76,6 +104,18 @@ def split_lyrics(text: str, max_lines: int = 4) -> list["Slide"]:
                 name = f"{lbl} (cont.)"
             slides.append(Slide(label=name, lines=chunk))
     return slides
+
+
+def split_lyrics(text: str, max_lines: int = 4) -> list["Slide"]:
+    """Split pasted lyrics into slides.
+
+    A blank line ends a slide. A header line ([Verse 1], Chorus:, Bridge, V1, C) ends the previous
+    slide and labels the next one. Blocks longer than max_lines are cut into several slides
+    (the later ones are labelled '(cont.)'). Unlabelled slides are named 'Slide N'.
+    """
+    if max_lines < 1:
+        raise ValueError("max_lines must be at least 1")
+    return blocks_to_slides(split_blocks(text), max_lines)
 
 
 _GENERIC_LABEL = re.compile(r"Slide \d+$")

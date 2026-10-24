@@ -169,6 +169,47 @@ How it works: the file is converted on a background thread, a three-verse previe
 
 Licence responsibility: RevelateTW does not include, check or license any copyrighted Bible text. You are responsible for having the right to import and use the translation you choose, including any attribution, use limits or trademark rules the publisher sets (for example Thomas Nelson for NKJV). The licence line you enter is stored with the translation and shown in Settings.
 
+## Song import & export
+
+Songs live in the Songs & sermon tab. Export and import use one file format, .rtsong, so a library made on one PC opens on another with no internet and no account.
+
+Export: right-click a song in the list and choose "Export this song" to save that one song. "Export all" in the Song Library panel saves the whole library to one .rtsong file. The file is plain JSON.
+
+Import: click Import in the Song Library panel. You can open a .rtsong file (one song or many), a .txt file of lyrics, or paste lyrics into the Paste lyrics tab. A preview shows exactly how the slides will split before anything is saved. Click Save to add the songs to your library. Parsing runs on a background thread, so a large file does not freeze the window.
+
+Duplicates: a song whose title already exists is saved with " (2)" added to its title by default (the second copy becomes "Title (2)", the next "Title (3)"). Tick "Replace songs with the same title" to overwrite the existing song instead.
+
+The .rtsong format (version 1), so other tools and churches can produce it:
+
+    {
+      "format": "rtsong",
+      "version": 1,
+      "songs": [
+        {
+          "title": "Amazing Grace",
+          "author": "John Newton",
+          "sections": [
+            {"label": "Verse 1", "lines": ["Amazing grace how sweet the sound", "That saved a wretch like me"]},
+            {"label": "Chorus", "lines": ["My chains are gone", "I've been set free"]}
+          ]
+        }
+      ]
+    }
+
+Rules: "format" must be "rtsong" and "version" must be 1. A file with a higher version number is refused with a message, because this build cannot know what a newer version means. "title" is required and must not be blank. "author" is optional. "sections" is a list in slide order, each with a "label" and a list of "lines". Keys the app does not know are ignored, so other tools can add their own fields. A file that is not valid JSON, or that breaks these rules, is refused with a message and nothing is imported.
+
+Splitting rules for plain text (.txt or pasted):
+- The first non-empty line becomes the title, unless you type one in the preview.
+- A blank line ends a slide.
+- A header line labels the slide that follows. Headers are case-insensitive and may have a colon or brackets: Chorus, Chorus:, [Chorus], Verse 1, V1, CH 2, PC, Bridge. Single-letter headers (C, V) must be written in capitals so ordinary lyric lines are not mistaken for headers.
+- A block longer than the Max lines setting (default 4) is cut into several slides; the later ones are labelled "(cont.)".
+- Unlabelled slides are named "Slide N".
+- A block that repeats exactly elsewhere in the text, and has no label of its own, is tagged Chorus. Explicit labels always win.
+
+Flash-drive workflow between PCs: on the first PC, export the song or the whole library to a .rtsong file and copy it to a flash drive. On the other PC (with RevelateTW installed), open Songs & sermon, click Import, choose the file, check the preview, then Save. Nothing is sent over the network.
+
+Verified headless: export and import round trips, raw text splitting, schema and version checks, duplicate handling, and the import dialog's preview and save flow. Not verified headless: clicking through the dialog on a real screen, and copying a file between two real PCs.
+
 ## Updates (GitHub Releases)
 
 About > Check for updates asks https://api.github.com/repos/binuyo-legacy/revelatetw/releases/latest once and compares the tag with the app version. If a newer release exists it offers to open the release page. No internet means a friendly message, never a crash. The check is off at startup by default; turn on "Check for updates when the app starts" in About if you want it. Nothing is sent otherwise.
