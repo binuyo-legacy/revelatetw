@@ -120,6 +120,9 @@ def start_splash(source: Optional[Path] = None, parent=None):
     src = source if source is not None else splash_source()
     if src is None:
         return None
+    from PyQt6.QtGui import QGuiApplication
+    if QGuiApplication.instance() is None:   # a QPixmap without an app aborts the process; skip the splash
+        return None
     try:
         win = make_splash_window(src, parent)
         if win is None:

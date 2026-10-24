@@ -79,10 +79,12 @@ def main(argv=None) -> int:
     if args.gui:
         from .ui import run_app
         splash = None
+        # Keep a named reference: a bare `QApplication([])` expression is garbage-collected at once,
+        # and a QPixmap then aborts the process ("Must construct a QGuiApplication before a QPixmap").
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
         if not args.no_splash:
             from .splash import start_splash
-            from PyQt6.QtWidgets import QApplication
-            QApplication.instance() or QApplication([])
             splash = start_splash()          # shown before the heavy startup below
         _, queue, pipeline = build(args.verses, args.log, args.paraphrase_threshold)
         live = None
