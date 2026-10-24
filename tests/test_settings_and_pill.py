@@ -29,7 +29,7 @@ def test_state_toggles_and_matches_pill():
 def test_defaults_keep_human_approval():
     s = AppSettings()
     assert s.auto_approve is False
-    assert s.startup_live_on is True
+    assert s.startup_live_on is True  # legacy key kept for old files; no longer shows output at launch
 
 
 def test_roundtrip_persists(tmp_path):

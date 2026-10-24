@@ -737,7 +737,8 @@ class OperatorWindow(QMainWindow):
         self._started = time.time()
         self._cursor: Optional[tuple[int, int, int]] = None  # (book, chapter, verse) last projected
         self._store = getattr(pipeline, "detector", None) and pipeline.detector.store
-        self.output = LiveOutputState(on=self.settings.startup_live_on)  # LIVE pill: shown or hidden
+        # Always starts OFF: the projection window is never shown until the operator projects.
+        self.output = LiveOutputState(on=False)  # LIVE pill: shown or hidden
         self._kind: Optional[str] = None           # what the output shows: verse | song | sermon
         self._song_live: Optional[tuple[Song, int]] = None
         self._song_pending: Optional[tuple[Song, int]] = None
@@ -1519,6 +1520,15 @@ class OperatorWindow(QMainWindow):
         if result.kind == "update" and getattr(self, "settings_page", None) is not None:
             self.settings_page._update_result.emit(result)
 
+    def _open_output_for_project(self) -> None:
+        """An explicit Project click opens the output (the one shared window) if it is hidden.
+
+        Skipped while blanked: a blank click must not pop the projection window up.
+        """
+        if not self.output.on and not self.queue.blank:
+            self.output.set(True)
+            self._apply_output_state()
+
     def _show_on_output(self, c: Candidate) -> None:
         self._cursor = (c.book_id, c.chapter, c.verse)
         self._kind = "verse"
@@ -1526,6 +1536,7 @@ class OperatorWindow(QMainWindow):
         self._record_history("verse", ref=f"{c.reference} ({c.translation})", text=c.display_text)
         self._media_live = None
         self._song_pending = None
+        self._open_output_for_project()
         self.projection.show_theme(self.theme)
         self.projection.show_verse(c)
         self._update_media_controls()
@@ -1709,6 +1720,7 @@ class OperatorWindow(QMainWindow):
         self._song_live = None
         self._sermon_live = None
         self.media_status.setText(f"Projected: {it.name} ({it.type_label.lower()})")
+        self._open_output_for_project()
         if self.output.on and not self.queue.blank:
             self.projection.show_media(it, loop=self.media_loop.isChecked())
             self._record_media_history(it)
@@ -2387,6 +2399,7 @@ class OperatorWindow(QMainWindow):
         self._media_live = None
         self.song_pending_label.setText("")
         self.song_now.setText(f"Projected: {song.title}  \u00b7  {song.slides[row].label}")
+        self._open_output_for_project()
         if self.output.on and not self.queue.blank:
             self.projection.show_song_slide(song.slides[row], song, row, len(song.slides))
             self._record_song_history(song.title, song.slides[row].label)
@@ -2430,6 +2443,7 @@ class OperatorWindow(QMainWindow):
         self._kind = "sermon"
         self._media_live = None
         self._song_pending = None
+        self._open_output_for_project()
         if self.output.on and not self.queue.blank:
             self.projection.show_sermon(info)
             self._record_sermon_history(info)
@@ -2791,6 +2805,5 @@ def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen
     if splash is not None:
         from .splash import finish_splash
         finish_splash(splash)
-    if op.output.on:
-        projection.present()
+    # The projection window stays hidden at launch (output starts OFF); it opens on the first project.
     return app.exec()

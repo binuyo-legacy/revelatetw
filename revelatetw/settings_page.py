@@ -92,8 +92,6 @@ class SettingsPage(QWidget):
     # --- General ----------------------------------------------------------------------------
     def _general(self) -> QWidget:
         w, lay = self._page()
-        lay.addRow(self._check("Start with live output ON", "startup_live_on", self.s.startup_live_on,
-                               "When the app opens, the projection window is shown."))
         self.language = QComboBox()
         self.language.addItem("English", "en")
         self.language.setToolTip("Interface language. English only in this build.")

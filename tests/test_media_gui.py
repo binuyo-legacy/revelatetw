@@ -124,3 +124,35 @@ def test_video_playback_when_backend_present(window):
     # Playing a missing file must not crash; the error callback (or no-op) handles it.
     proj.reset_animation()
     assert proj._video_widget.isHidden()
+
+
+def test_fresh_start_keeps_projection_hidden_even_with_legacy_setting(tmp_path):
+    """Launch never shows the fullscreen output, even when an old settings file says ON."""
+    proj = ProjectionWindow()
+    win = OperatorWindow(ApprovalQueue(None), Theme(), proj, songs_dir=str(tmp_path / "songs"),
+                         settings=AppSettings(startup_live_on=True))
+    assert win.output.on is False
+    assert not proj.isVisible()
+
+
+def test_project_opens_the_shared_output_once(tmp_path, media_folder):
+    proj = ProjectionWindow()
+    win = OperatorWindow(ApprovalQueue(None), Theme(), proj, songs_dir=str(tmp_path / "songs"),
+                         settings=AppSettings(media_folder=str(media_folder)))
+    win.rescan_media()
+    assert win.output.on is False
+    # the Project paths call this entry point; the first project opens the shared output
+    win._open_output_for_project()
+    assert win.output.on is True
+    assert proj._live is True
+    # a second project while already on does not re-toggle
+    win._open_output_for_project()
+    assert win.output.on is True
+
+
+def test_project_does_not_open_output_while_blanked(tmp_path):
+    proj = ProjectionWindow()
+    win = OperatorWindow(ApprovalQueue(None), Theme(), proj, songs_dir=str(tmp_path / "songs"))
+    win.queue.set_blank(True)
+    win._open_output_for_project()
+    assert win.output.on is False

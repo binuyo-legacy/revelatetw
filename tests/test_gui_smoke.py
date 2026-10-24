@@ -24,11 +24,11 @@ def window(tmp_path):
 
 def test_live_pill_toggles_projection_and_state(window):
     win, proj = window
-    assert win.output.on
-    win.toggle_output()
-    assert not win.output.on and win.live_pill.text().endswith("OFF") and not proj.isVisible()
+    assert not win.output.on and not proj.isVisible()  # fresh start: projection hidden
     win.toggle_output()
     assert win.output.on and win.live_pill.text().endswith("LIVE")
+    win.toggle_output()
+    assert not win.output.on and win.live_pill.text().endswith("OFF") and not proj.isVisible()
 
 
 def test_song_send_direct_and_step(window):
