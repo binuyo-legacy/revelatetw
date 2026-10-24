@@ -126,6 +126,15 @@ Thumbnails are cached at 160px and generated only on Rescan or Import (ffmpeg ru
 
 Measured numbers: run `QT_QPA_PLATFORM=offscreen python scripts/bench.py 50` for paint events per slide change and offscreen transition frame cost on your machine. Figures from a Windows church PC are not yet measured.
 
+## Operator header monitoring
+
+The top bar of the operator window shows two small monitors next to the LIVE pill. They sit only in the header (no extra panel), and their size is fixed so the bar never jumps.
+
+- PASTOR MIC wave: 24 gold bars showing the microphone level, with a peak marker that falls back slowly. The green dot means sound is coming in (signal present, with a small hysteresis so it does not flicker). A grey dot with a flat strip means live detection is off. NO MIC replaces the dot when no audio input device is found. The wave reads the same microphone stream used for transcription, so select the live microphone in Settings > Audio first. It does not open the device a second time.
+- PC chip: CPU and RAM percent with mini bars. Green under 60%, amber from 60% to 85%, red above 85%. When the CPU is amber or red, the wave bars change colour to match.
+
+Costs: the PC sampler runs every 2 seconds on a background thread, and only while the operator window is visible. The wave repaints 5 times a second, only while the window is visible and live detection is on. Hidden window or detection off: no timers and no level work.
+
 ## Bible translations (v0.2.0)
 
 Bundled public-domain packs live in data/bible/ (ships in the repo):

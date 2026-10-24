@@ -38,10 +38,11 @@ class LiveTranscriptionLoop:
 
     # ---- operator controls -------------------------------------------------------------
     def start_mic(self, device: InputDevice, channel: int = 0, gain_db: float = 0.0,
-                  gate_db: float = -45.0) -> None:
+                  gate_db: float = -45.0, tap=None) -> None:
         self.stop()
+        # tap: optional level observer on this same stream (header wave); no second device handle.
         self.capture = AudioCapture(device, channel=channel, gain_db=gain_db,
-                                    gate=NoiseGate(threshold_db=gate_db))
+                                    gate=NoiseGate(threshold_db=gate_db), tap=tap)
         self.capture.start()
         self.source = SOURCE_MIC
         self._stop = threading.Event()

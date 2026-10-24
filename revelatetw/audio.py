@@ -11,7 +11,7 @@ import math
 import queue
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 TARGET_RATE = 16000  # faster-whisper expects 16 kHz mono
 
@@ -83,13 +83,17 @@ class AudioCapture:
     """
 
     def __init__(self, device: InputDevice, channel: int = 0, gain_db: float = 0.0,
-                 gate: Optional[NoiseGate] = None, max_backlog: int = 64):
+                 gate: Optional[NoiseGate] = None, max_backlog: int = 64,
+                 tap: Optional[Callable] = None):
         self.device = device
         self.channel = channel
         self.gain = db_to_gain(gain_db)
         self.gate = gate or NoiseGate()
         self.chunks: queue.Queue = queue.Queue(maxsize=max_backlog)
         self.meter = {"peak_db": -120.0, "rms_db": -120.0}   # read by the UI meter
+        # Optional observer on the SAME stream (header PASTOR MIC wave). Called on the audio
+        # thread with (gained mono block at the native rate, native rate). Must be cheap.
+        self.tap = tap
         self._stream = None
         self._lock = threading.Lock()
 
@@ -114,6 +118,9 @@ class AudioCapture:
                 pk, rms = level_db(block)
                 self.meter = {"peak_db": pk, "rms_db": rms}
                 block = self.gate.process(block)
+            tap = self.tap
+            if tap is not None:
+                tap(indata[:, self.channel] * self.gain, native)   # pre-gate: what the mic hears
             # naive resample to 16 kHz; replace with a polyphase resampler for production
             n_out = int(len(block) * TARGET_RATE / native)
             resampled = np.interp(np.linspace(0, len(block) - 1, n_out),

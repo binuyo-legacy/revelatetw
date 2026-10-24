@@ -24,6 +24,7 @@ from .approval import ApprovalQueue
 from .media import DEFAULT_MEDIA_FOLDER, MediaItem, MediaLibrary, filter_items, format_duration
 from .detection import Candidate
 from .displays import DisplayInfo, list_displays
+from .monitor import AudioMonitor, SystemMonitor, band_for
 from .output_state import LiveOutputState, pill_state
 from .settings_page import SettingsPage
 from .store import APP_VERSION, AppSettings, save_settings
@@ -532,6 +533,188 @@ def _seg(text: str) -> QPushButton:
     return b
 
 
+# --- header monitoring widgets (top bar only; fixed width so the header never jiggles) -----
+WAVE_BARS = 24
+WAVE_W, WAVE_H = 210, 30
+SYS_W, SYS_H = 176, 30
+HEADER_TICK_MS = 200           # 5 fps wave + chip repaint, runs only while the window is visible
+
+_GOLD_HEX, _AMBER_HEX, _RED_HEX, _GREEN_HEX = "#facc15", "#f59e0b", "#ef4444", "#22c55e"
+_GREY_HEX, _PANEL_HEX, _TRACK_HEX = "#64748b", "#131926", "#2a3346"
+_BAND_HEX = {"green": _GREEN_HEX, "amber": _AMBER_HEX, "red": _RED_HEX, "none": _GREY_HEX}
+
+
+class MicWaveWidget(QWidget):
+    """PASTOR MIC: 24 gold bars driven by level history with peak-hold decay.
+
+    States: live (gold bars, green dot when signal present), detection off (flat dimmed strip,
+    grey dot), no mic device (flat strip, 'NO MIC' label instead of a dot). Turns red/amber when
+    the PC is under load (set_load_band). Never hidden, so the header layout never jumps.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(WAVE_W, WAVE_H)
+        self.setObjectName("waveWidget")
+        self.setToolTip("PASTOR MIC level. Needs the live microphone selected in Settings > Audio.")
+        self._history = [0.0] * WAVE_BARS     # newest last
+        self._peak = 0.0                      # peak-hold value shown as the top marker
+        self._present = False
+        self._state = "off"                   # off | live | nomic
+        self._load = "none"                   # green | amber | red | none (from SysChipWidget)
+
+    # state setters (main thread only)
+    def set_detection_off(self) -> None:
+        self._state = "off"
+        self._present = False
+        self._history = [0.0] * WAVE_BARS
+        self._peak = 0.0
+        self.update()
+
+    def set_no_mic(self) -> None:
+        self._state = "nomic"
+        self._present = False
+        self._history = [0.0] * WAVE_BARS
+        self._peak = 0.0
+        self.update()
+
+    def push(self, level: float, peak: float, present: bool) -> None:
+        """One UI tick of audio data. peak decays by 12%/tick so the top marker falls back."""
+        self._state = "live"
+        self._present = bool(present)
+        self._history = self._history[1:] + [max(0.0, min(1.0, float(level)))]
+        self._peak = max(float(peak), self._peak * 0.88)
+        self.update()
+
+    def set_load_band(self, band: str) -> None:
+        if band != self._load:
+            self._load = band
+            self.update()
+
+    def bar_color(self) -> QColor:
+        if self._state != "live":
+            return QColor(_GOLD_HEX)
+        if self._load == "red":
+            return QColor(_RED_HEX)
+        if self._load == "amber":
+            return QColor(_AMBER_HEX)
+        return QColor(_GOLD_HEX)
+
+    def label_text(self) -> str:
+        return "NO MIC" if self._state == "nomic" else "PASTOR MIC"
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QBrush, QFont, QPainter, QPen
+        p = QPainter(self)
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            w, h = self.width(), self.height()
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(_PANEL_HEX))
+            p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 8, 8)
+            dim = self._state != "live"
+            # mic glyph: capsule + stand
+            ink = QColor(_GREY_HEX if dim else _GOLD_HEX)
+            p.setBrush(ink)
+            p.drawRoundedRect(QRectF(9, 7, 6, 10), 3, 3)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(ink, 1.4))
+            p.drawArc(QRectF(6, 9, 12, 9), 180 * 16, -180 * 16)
+            p.drawLine(12, 18, 12, 21)
+            p.setPen(Qt.PenStyle.NoPen)
+            # label
+            font = QFont("Segoe UI", 8)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QColor("#94a3b8" if dim else "#e5e7eb"))
+            p.drawText(QRectF(20, 0, 84, h), Qt.AlignmentFlag.AlignVCenter, self.label_text())
+            # status dot / label handled above; dot sits at the right edge
+            if self._state == "live":
+                p.setBrush(QColor(_GREEN_HEX if self._present else _GREY_HEX))
+                p.drawEllipse(QRectF(w - 13, h / 2 - 3.5, 7, 7))
+            elif self._state == "off":
+                p.setBrush(QColor(_GREY_HEX))
+                p.drawEllipse(QRectF(w - 13, h / 2 - 3.5, 7, 7))
+            # bars area
+            x0, x1, top, bottom = 6, w - 18, 5, h - 5
+            bars_w = x1 - x0
+            slot = bars_w / WAVE_BARS
+            bw = max(2.0, slot * 0.55)
+            color = self.bar_color()
+            track = QColor(_TRACK_HEX)
+            for i, lv in enumerate(self._history):
+                cx = x0 + i * slot + (slot - bw) / 2
+                if dim:
+                    p.setBrush(track)
+                    p.drawRoundedRect(QRectF(cx, bottom - 2, bw, 2), 1, 1)
+                    continue
+                bh = max(2.0, lv * (bottom - top))
+                c = QColor(color)
+                if not dim:
+                    c.setAlphaF(0.35 + 0.65 * min(1.0, lv * 1.5))
+                p.setBrush(QBrush(c))
+                p.drawRoundedRect(QRectF(cx, bottom - bh, bw, bh), 1, 1)
+            if self._state == "live" and self._peak > 0.02:
+                py = bottom - self._peak * (bottom - top)
+                p.setBrush(color)
+                p.drawRect(QRectF(x0, py, bars_w, 1.2))
+        finally:
+            p.end()
+
+
+class SysChipWidget(QWidget):
+    """'CPU 23%  RAM 41%' with two mini bars. Colour band: green <60, amber 60-85, red >85."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(SYS_W, SYS_H)
+        self.setObjectName("sysChip")
+        self.setToolTip("PC load: CPU and RAM, sampled every 2 seconds.")
+        self._cpu: Optional[float] = None
+        self._ram: Optional[float] = None
+
+    def set_values(self, cpu: Optional[float], ram: Optional[float]) -> None:
+        self._cpu, self._ram = cpu, ram
+        self.update()
+
+    def cpu_band(self) -> str:
+        return band_for(self._cpu)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QFont, QPainter
+        p = QPainter(self)
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            w, h = self.width(), self.height()
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(_PANEL_HEX))
+            p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 8, 8)
+            font = QFont("Consolas", 8)
+            font.setBold(True)
+            p.setFont(font)
+            fm = p.fontMetrics()
+            cpu_txt = "CPU --" if self._cpu is None else f"CPU {round(self._cpu):d}%"
+            ram_txt = "RAM --" if self._ram is None else f"RAM {round(self._ram):d}%"
+            # fixed columns keep the chip the same width whatever the numbers
+            p.setPen(QColor(_BAND_HEX[band_for(self._cpu)]))
+            p.drawText(QRectF(8, 0, 58, 16), Qt.AlignmentFlag.AlignVCenter, cpu_txt)
+            p.setPen(QColor(_BAND_HEX[band_for(self._ram)]))
+            p.drawText(QRectF(90, 0, 80, 16), Qt.AlignmentFlag.AlignVCenter, ram_txt)
+            # mini bars under the text (fixed 4px height)
+            for x, val, lab in ((8, self._cpu, "cpu"), (90, self._ram, "ram")):
+                bar_w = 76 if lab == "ram" else 70
+                p.setBrush(QColor(_TRACK_HEX))
+                p.drawRoundedRect(QRectF(x, h - 9, bar_w, 4), 2, 2)
+                if val is not None:
+                    fill = max(0.0, min(100.0, float(val))) / 100.0 * bar_w
+                    p.setBrush(QColor(_BAND_HEX[band_for(val)]))
+                    p.drawRoundedRect(QRectF(x, h - 9, fill, 4), 2, 2)
+        finally:
+            p.end()
+
+
 class OperatorWindow(QMainWindow):
     def __init__(self, queue: ApprovalQueue, theme: Theme, projection: ProjectionWindow,
                  audio_meter=None, pipeline=None, live=None, songs_dir: str = "data/songs",
@@ -650,6 +833,14 @@ class OperatorWindow(QMainWindow):
         # is visible (showEvent/hideEvent below). The status clock needs whole seconds only.
         self._timer = QTimer(self, interval=OPERATOR_TICK_MS, timeout=self.refresh)
         self._timer.setTimerType(Qt.TimerType.CoarseTimer)   # 1s, whole-second clock is enough
+        # Header monitoring: one 5 fps main-thread timer, alive only while visible AND live mic
+        # detection is on. The PC sampler is a QThread that runs only while visible.
+        self.audio_mon = AudioMonitor()
+        self.sys_mon = SystemMonitor(parent=self)
+        self.sys_mon.sampled.connect(self._on_sys_sampled)   # queued: emitted from worker thread
+        self._mic_on = False                                 # True once start_mic succeeded
+        self._header_timer = QTimer(self, interval=HEADER_TICK_MS, timeout=self._tick_header)
+        self._header_timer.setTimerType(Qt.TimerType.CoarseTimer)
         self._fill_testaments()
         self._populate_displays()
         self._fill_song_list()
@@ -688,6 +879,10 @@ class OperatorWindow(QMainWindow):
         lay.addWidget(self.session_label)
         self.timer_label = _label("00:00:00", "timer")
         lay.addWidget(self.timer_label)
+        self.wave = MicWaveWidget()
+        self.sys_chip = SysChipWidget()
+        lay.addWidget(self.wave)
+        lay.addWidget(self.sys_chip)
         self.live_pill = QPushButton("\u25cf LIVE")
         self.live_pill.setObjectName("live")
         self.live_pill.setProperty("on", "true")
@@ -1164,6 +1359,8 @@ class OperatorWindow(QMainWindow):
             return
         if self.source_box.currentIndex() == 0 or not self._devices:
             self.live.use_text_feed()
+            self._mic_on = False
+            self._refresh_header_state()
             self.source_status.setText("Dev text feed (typed sentences)")
             self.transcriber_label.setText("Transcriber: text feed")
             self.status_transcriber.setText("Transcriber: text feed")
@@ -1171,18 +1368,21 @@ class OperatorWindow(QMainWindow):
             return
         dev = self._devices[max(0, self.device_box.currentIndex())]
         try:
-            self.live.start_mic(dev, gate_db=self.settings.noise_gate_db)
+            self.live.start_mic(dev, gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
+            self._mic_on = True
             self.source_status.setText(f"Listening: {dev.name}")
             self.tile_audio.value.setText(dev.name)
             self.transcriber_label.setText("Transcriber: Whisper")
             self.status_transcriber.setText("Transcriber: Whisper")
         except Exception as exc:  # device busy or unsupported; never leave the loop half-open
+            self._mic_on = False
             self.live.use_text_feed()
             self.source_box.blockSignals(True)
             self.source_box.setCurrentIndex(0)
             self.source_box.blockSignals(False)
             self.btn_source_dev.setChecked(True)
             self.source_status.setText(f"Mic failed, back to text feed: {exc}")
+        self._refresh_header_state()
 
     def open_theme_editor(self) -> None:
         from .theme_editor import ThemeEditor
@@ -2425,11 +2625,45 @@ class OperatorWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._timer.start()              # idle timer runs only while visible
+        self.sys_mon.start_sampling()    # PC sampler: visible only
         super().showEvent(event)
+        self._refresh_header_state()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._timer.stop()               # hidden operator window: no refresh, no clock work
+        self._header_timer.stop()
+        self.audio_mon.set_active(False)
+        self.sys_mon.stop_sampling()
         super().hideEvent(event)
+
+    # --- header monitoring (main thread only) ---------------------------------------------
+    def _detection_on(self) -> bool:
+        return bool(self._mic_on and self.isVisible())
+
+    def _refresh_header_state(self) -> None:
+        """Start or stop the header timer and the audio tap to match visibility + detection."""
+        on = self._detection_on()
+        self.audio_mon.set_active(on)
+        if on:
+            if not self._header_timer.isActive():
+                self._header_timer.start()
+            self.wave.set_load_band(self.sys_chip.cpu_band())
+        else:
+            self._header_timer.stop()
+            if not self._devices:            # no audio input device at all
+                self.wave.set_no_mic()
+            else:                            # device exists, detection off: flat dimmed strip
+                self.wave.set_detection_off()
+
+    def _tick_header(self) -> None:
+        if not self._detection_on():     # defensive: stop if state changed without a refresh
+            self._refresh_header_state()
+            return
+        self.wave.push(self.audio_mon.level, self.audio_mon.drain_peak(), self.audio_mon.signal_present)
+
+    def _on_sys_sampled(self, cpu: float, ram: float) -> None:
+        self.sys_chip.set_values(cpu, ram)
+        self.wave.set_load_band(band_for(cpu))
 
     def refresh(self) -> None:
         self._refresh_yoruba_advisory()
