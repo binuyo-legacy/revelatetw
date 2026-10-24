@@ -43,6 +43,7 @@ class Translation:
     path: str            # the file it is read from ("" for the sample fallback)
     bundled: bool        # True for files shipped with the app
     fallback: bool = False  # True only for the 9-verse offline sample
+    user_imported: bool = False  # True for packs the church imported (never bundled, removable)
 
     @property
     def label(self) -> str:
@@ -69,8 +70,10 @@ class BibleLibrary:
                 except Exception:          # a damaged pack must not break the operator screen
                     continue
                 tid = str(meta.get("id") or p.stem)
+                user = str(meta.get("user_imported", "")) == "1"
                 out.append(Translation(tid, str(meta.get("name") or tid), str(meta.get("license", "")),
-                                       str(p), bundled=tid.upper() in RESERVED_IDS))
+                                       str(p), bundled=tid.upper() in RESERVED_IDS and not user,
+                                       user_imported=user))
         if not any(t.id == "KJV" for t in out) and self.sample_json.is_file():
             out.append(Translation("KJV", "King James Version (sample)", "Public domain",
                                    str(self.sample_json), bundled=True, fallback=True))
@@ -205,7 +208,7 @@ def import_translation(json_path: Path | str, folder: Path | str | None = None) 
     target = out_dir / f"{tid}{PACK_SUFFIX}"
     meta = {"id": tid, "name": name, "language": str(raw["language"]).strip() or "en",
             "license": license_text, "attribution": str(raw.get("attribution", "")).strip(),
-            "version": "1"}
+            "version": "1", "user_imported": "1"}
     tmp = target.with_suffix(".tmp")
     if tmp.exists():
         tmp.unlink()
@@ -215,11 +218,40 @@ def import_translation(json_path: Path | str, folder: Path | str | None = None) 
 
 
 def remove_user_translation(tid: str, folder: Path | str | None = None) -> bool:
-    """Delete a user-imported pack. Bundled ids are never removed."""
+    """Delete a user-imported pack. Bundled packs (and anything not marked user_imported) are never removed."""
     if tid.upper() in RESERVED_IDS:
         return False
     target = (Path(folder) if folder else DEFAULT_BIBLE_DIR) / f"{tid}{PACK_SUFFIX}"
-    if target.is_file():
-        target.unlink()
-        return True
-    return False
+    if not target.is_file():
+        return False
+    try:
+        meta = VerseStore.open(target).meta
+    except Exception:
+        return False
+    if str(meta.get("user_imported", "")) != "1":
+        return False
+    target.unlink()
+    return True
+
+
+def verse_count(path: str | Path) -> int:
+    """Number of verse rows in a pack file. 0 when the file cannot be read (never raises)."""
+    import sqlite3
+    if not path or not Path(path).is_file():
+        return 0
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM verses").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+
+
+def installed_ids(folder: Path | str | None = None) -> set:
+    """Upper-case ids of every pack file in the folder (bundled and imported)."""
+    d = Path(folder) if folder else DEFAULT_BIBLE_DIR
+    if not d.is_dir():
+        return set()
+    return {p.stem.upper() for p in d.glob(f"*{PACK_SUFFIX}")}

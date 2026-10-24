@@ -144,6 +144,22 @@ Settings > Bible > Add translation, then pick a JSON file in this format:
    "verses": [{"book": "John", "chapter": 3, "verse": 16, "text": "..."}]}
 "book" may be a book name or a 1-66 number. The id must be 2-16 letters, digits, _ or -, and KJV/ASV cannot be replaced. Remove a user translation from the same page.
 
+## Bible importer (Settings > Bible > Import translation)
+
+Import a translation you are licensed to use. RevelateTW reads these formats:
+
+- USFM (.usfm, .usfm3, .sfm): the standard Paratext export. Needs \id, \c and \v markers. Footnotes, cross-references and headings are dropped; verse text is kept.
+- OSIS (.osis, or .xml with osisID attributes): verses in <verse osisID="John.3.16"> form, including start/end milestone verses. Notes and titles are dropped.
+- Plain text (.txt): one verse per line, starting with a reference such as "John 3:16 text". Lines that cannot be read are listed as a warning in the import dialog.
+
+Not supported: PDF, Word, EPUB, images, and XML without OSIS verse IDs. The app says so and shows the supported formats.
+
+Getting USFM or OSIS: ask the publisher or your church's Bible software for a USFM, OSIS or Paratext export of the text you hold. Many licensed texts are sold as digital copies in these formats for church use. Do not use a copy you do not have the right to use.
+
+How it works: the file is converted on a background thread, a three-verse preview is shown, and you enter the name, short code (for example NKJV) and the licence line. The result is stored at data/bible/<CODE>.sqlite and marked user_imported, so it is removable in Settings > Bible and is never shipped as a bundled translation. Bundled ids (KJV, ASV, WEB, Yoruba) cannot be replaced.
+
+Licence responsibility: RevelateTW does not include, check or license any copyrighted Bible text. You are responsible for having the right to import and use the translation you choose, including any attribution, use limits or trademark rules the publisher sets (for example Thomas Nelson for NKJV). The licence line you enter is stored with the translation and shown in Settings.
+
 ## Updates (GitHub Releases)
 
 About > Check for updates asks https://api.github.com/repos/binuyo-legacy/revelatetw/releases/latest once and compares the tag with the app version. If a newer release exists it offers to open the release page. No internet means a friendly message, never a crash. The check is off at startup by default; turn on "Check for updates when the app starts" in About if you want it. Nothing is sent otherwise.

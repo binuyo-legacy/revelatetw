@@ -59,7 +59,7 @@ class SettingsPage(QWidget):
         root.addWidget(self.nav)
         root.addWidget(self.stack, 1)
         self._loading = False
-        self._refresh_bible_list()
+        self.refresh_bible_list()
 
     def select_section(self, name: str) -> None:
         if name in SECTIONS:
@@ -363,95 +363,106 @@ class SettingsPage(QWidget):
         self._set("auto_approve", bool(on))
 
     # --- About ------------------------------------------------------------------------------
-    # --- Bible --------------------------------------------------------------------------
-    def _refresh_bible_list(self) -> None:
-        from .bible import BibleLibrary
-        self.bible_list.clear()
-        for t in BibleLibrary().installed():
-            self.bible_list.addItem(f"{t.label}" + ("  (bundled)" if t.bundled else "  (your import)"))
-            self.bible_list.item(self.bible_list.count() - 1).setData(Qt.ItemDataRole.UserRole, t.id)
-
-    def _add_translation(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        from .bible import BibleImportError, import_translation
-        path, _ = QFileDialog.getOpenFileName(self, "Add translation", "", "Translation JSON (*.json)")
-        if not path:
-            return
-        try:
-            t = import_translation(path)
-        except (BibleImportError, OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Translation not added", str(exc))
-            return
-        QMessageBox.information(self, "Translation added", f"{t.name} ({t.id}) is installed. Pick it on the Verses tab.")
-        self._refresh_bible_list()
-
-    def _remove_translation(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-        from .bible import remove_user_translation
-        item = self.bible_list.currentItem()
-        if item is None:
-            return
-        tid = item.data(Qt.ItemDataRole.UserRole)
-        if "(your import)" not in item.text():
-            QMessageBox.information(self, "Not removable", "Bundled public-domain translations stay installed.")
-            return
-        if remove_user_translation(tid):
-            self._refresh_bible_list()
+    # --- Bible ------------------------------------------------------------------------------
     def _bible(self) -> QWidget:
-        w, lay = self._page()
-        self.bible_list = QListWidget()
-        self.bible_list.setMaximumHeight(120)
-        lay.addRow(_note("Installed translations. Bundled public-domain versions ship with the app."), self.bible_list)
-        btn_add = QPushButton("Add translation...")
-        btn_add.setToolTip("Import a JSON file of a translation you are licensed to use (format in SETUP.md)")
-        btn_add.clicked.connect(self._add_translation)
-        btn_remove = QPushButton("Remove selected user translation")
-        btn_remove.clicked.connect(self._remove_translation)
-        row = QHBoxLayout()
-        row.addWidget(btn_add)
-        row.addWidget(btn_remove)
-        row.addStretch(1)
-        lay.addRow(row)
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.addWidget(QLabel("Bible"))
+        lay.addWidget(_note("Verse text for detection and projection. Only public-domain texts ship with the app; "
+                            "any other translation is one you import with your own licence."))
+        head = QLabel("BUNDLED TRANSLATIONS")
+        head.setObjectName("footer")
+        lay.addWidget(head)
+        self.bible_bundled = QVBoxLayout()
+        lay.addLayout(self.bible_bundled)
+        head2 = QLabel("YOUR IMPORTS")
+        head2.setObjectName("footer")
+        lay.addWidget(head2)
+        self.bible_imports = QVBoxLayout()
+        lay.addLayout(self.bible_imports)
         self.bible_msg = _note("")
-        lay.addRow(self.bible_msg)
+        lay.addWidget(self.bible_msg)
+        btn_import = QPushButton("Import translation")
+        btn_import.setObjectName("primary")
+        btn_import.setToolTip("Import a USFM, OSIS or XML file of a translation you are licensed to use.")
+        btn_import.clicked.connect(self._open_import_dialog)
+        lay.addWidget(btn_import)
+        lay.addWidget(_note("Add translation: import a licensed USFM, OSIS or XML file. Imported texts stay on this "
+                            "computer and appear in the Verses tab dropdown."))
+        lay.addWidget(self._check("Check for updates on startup", "check_updates_on_startup",
+                                  self.s.check_updates_on_startup,
+                                  "Sends one request to GitHub at startup. Off means the app makes no update requests."))
+        lay.addStretch(1)
         self.refresh_bible_list()
         return w
 
+    def _row(self, layout: QVBoxLayout, title: str, detail: str, remove_id: str | None = None) -> None:
+        row = QHBoxLayout()
+        text = QLabel(f"<b>{title}</b><br><span style='color:#9ca3af;'>{detail}</span>")
+        text.setTextFormat(Qt.TextFormat.RichText)
+        text.setWordWrap(True)
+        row.addWidget(text, 1)
+        if remove_id:
+            btn = QPushButton("Remove")
+            btn.setToolTip(f"Delete the imported translation {remove_id} from this computer.")
+            btn.clicked.connect(lambda _=False, t=remove_id: self._remove_translation(t))
+            row.addWidget(btn)
+        box = QWidget()
+        box.setLayout(row)
+        layout.addWidget(box)
+
+    def _clear(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear(item.layout())
+
     def refresh_bible_list(self) -> None:
         from .bible import BibleLibrary
-        self.bible_list.clear()
-        for t in BibleLibrary().installed():
-            self.bible_list.addItem(f"{t.label}  ({t.id})" + ("  [bundled]" if t.bundled else ""))
+        self._clear(self.bible_bundled)
+        self._clear(self.bible_imports)
+        lib = BibleLibrary()
+        n_user = 0
+        for t in lib.installed():
+            if t.user_imported:
+                n_user += 1
+                self._row(self.bible_imports, t.label, self._detail(t), remove_id=t.id)
+            elif t.bundled:
+                self._row(self.bible_bundled, t.label, self._detail(t))
+        if n_user == 0:
+            self.bible_imports.addWidget(_note("No imported translations yet."))
 
-    def _add_translation(self) -> None:
-        from PyQt6.QtWidgets import QFileDialog
-        from .bible import BibleLibrary, BibleImportError, import_translation
-        path, _ = QFileDialog.getOpenFileName(self, "Add translation", "", "Translation JSON (*.json)")
-        if not path:
-            return
-        try:
-            t = import_translation(path)
-        except (BibleImportError, OSError) as exc:
-            self.bible_msg.setText(f"Not imported: {exc}")
-            return
-        BibleLibrary().close()
-        self.refresh_bible_list()
-        self.bible_msg.setText(f"Added {t.label} ({t.id}). It is now in the Verses tab dropdown.")
-        self.changed.emit("bible_translation")
+    def _detail(self, t) -> str:
+        from .bible import verse_count
+        count = verse_count(t.path)
+        count_txt = f"{count:,} verses" if count else "verses not counted"
+        label = "Public domain" if t.license.lower().startswith("public domain") else t.license
+        return f"{count_txt} \u00b7 {label}"
 
-    def _remove_translation(self) -> None:
+    def _open_import_dialog(self) -> None:
+        from .import_dialog import ImportTranslationDialog
+        dlg = ImportTranslationDialog(self, folder=None)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            self.refresh_bible_list()
+            self.bible_msg.setText(dlg.result_message)
+            self.changed.emit("bible_translation")
+
+    def _remove_translation(self, tid: str) -> None:
         from .bible import remove_user_translation
-        row = self.bible_list.currentRow()
-        if row < 0:
-            self.bible_msg.setText("Pick a user translation in the list first.")
+        ans = QMessageBox.question(self, "Remove translation",
+                                   f"Remove {tid} from this computer? You can import the file again later.",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                   QMessageBox.StandardButton.No)
+        if ans != QMessageBox.StandardButton.Yes:
             return
-        tid = self.bible_list.item(row).text().rsplit("(", 1)[-1].rstrip(")").split()[0]
         if remove_user_translation(tid):
             self.refresh_bible_list()
             self.bible_msg.setText(f"Removed {tid}.")
             self.changed.emit("bible_translation")
         else:
-            self.bible_msg.setText(f"{tid} is bundled or not a user translation, so it was kept.")
+            self.bible_msg.setText(f"{tid} was kept: only your own imports can be removed.")
 
     def _start_update_check(self, btn) -> None:
         self.update_msg.setText("Checking for updates...")
@@ -489,8 +500,5 @@ class SettingsPage(QWidget):
         btn.clicked.connect(lambda: self._start_update_check(btn))
         lay.addWidget(btn)
         lay.addWidget(self.update_msg)
-        lay.addWidget(self._check("Check for updates when the app starts (off by default)", "check_updates_on_startup",
-                                  self.s.check_updates_on_startup,
-                                  "Sends one request to GitHub at startup. Off means the app makes no update requests."))
         lay.addStretch(1)
         return w

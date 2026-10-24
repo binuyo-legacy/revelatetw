@@ -1560,7 +1560,12 @@ class OperatorWindow(QMainWindow):
     def _on_setting_changed(self, key: str) -> None:
         """Apply one changed setting to the running app, then save the file."""
         s = self.settings
-        if key == "paraphrase_threshold" and self.pipeline is not None and hasattr(self.pipeline, "detector"):
+        if key == "bible_translation":
+            # a translation was imported or removed in Settings > Bible: rebuild the library and dropdown
+            self._bible = None
+            self._fill_translation_box()
+            self._refresh_yoruba_advisory()
+        elif key == "paraphrase_threshold" and self.pipeline is not None and hasattr(self.pipeline, "detector"):
             self.pipeline.detector.paraphrase_threshold = s.paraphrase_threshold
         elif key == "dedupe_minutes":
             self.queue.set_dedupe_seconds(s.dedupe_minutes * 60.0)

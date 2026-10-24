@@ -44,7 +44,7 @@ class VerseStore:
 
     @classmethod
     def write_pack(cls, path: str | Path, meta: dict, verses: Iterable[tuple[int, int, int, str]]) -> None:
-        cls._build(str(path), meta, list(verses))
+        cls._build(str(path), meta, list(verses))._conn.close()
 
     @classmethod
     def _build(cls, target: str, meta: dict, verses: list[tuple[int, int, int, str]]) -> "VerseStore":
@@ -54,9 +54,13 @@ class VerseStore:
             "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);"
             "CREATE TABLE verses(book_id INT, chapter INT, verse INT, text TEXT,"
             " PRIMARY KEY(book_id, chapter, verse));")
-        conn.executemany("INSERT INTO meta VALUES (?, ?)", [(k, str(v)) for k, v in meta.items()])
-        conn.executemany("INSERT INTO verses VALUES (?, ?, ?, ?)", verses)
-        conn.commit()
+        try:
+            conn.executemany("INSERT INTO meta VALUES (?, ?)", [(k, str(v)) for k, v in meta.items()])
+            conn.executemany("INSERT INTO verses VALUES (?, ?, ?, ?)", verses)
+            conn.commit()
+        except Exception:
+            conn.close()
+            raise
         return cls(conn)
 
     def get(self, book_id: int, chapter: int, verse: int) -> Optional[str]:
