@@ -729,6 +729,35 @@ def _cell_name(name: str, limit: int = 22) -> str:
     return name if len(name) <= limit else name[: limit - 1] + "\u2026"
 
 
+class AspectBox(QWidget):
+    """Holds one child at a fixed aspect ratio: full width, height derived, letterboxed (no distortion)."""
+
+    def __init__(self, child: QWidget, ratio: float = 16 / 9, parent=None):
+        super().__init__(parent)
+        self._child = child
+        self._ratio = ratio
+        child.setParent(self)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        return int(round(w / self._ratio))
+
+    def sizeHint(self):
+        return QSize(320, int(round(320 / self._ratio)))
+
+    def minimumSizeHint(self):
+        return QSize(160, int(round(160 / self._ratio)))
+
+    def resizeEvent(self, _event) -> None:
+        w = self.width()
+        h = min(self.height(), int(round(w / self._ratio)))
+        y = (self.height() - h) // 2
+        self._child.setGeometry(0, y, w, h)
+
+
 class MediaPreviewWidget(QWidget):
     """The selected media drawn the way the projection output draws it: 16:9, letterboxed on black."""
 
@@ -835,12 +864,17 @@ class OperatorWindow(QMainWindow):
         # ONE live preview panel, docked on the right of the main window. It sits outside the tabs,
         # so switching tabs only swaps the left-to-middle content and the preview never moves.
         self.shared_preview = self._build_preview_panel()
-        self.shared_preview.setMinimumWidth(330)
+        self.shared_preview.setMinimumWidth(300)
+        preview_scroll = QScrollArea()
+        preview_scroll.setWidgetResizable(True)
+        preview_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        preview_scroll.setWidget(self.shared_preview)
         preview_dock = QWidget()
         pd = QVBoxLayout(preview_dock)
         pd.setContentsMargins(0, 12, 14, 10)
         pd.setSpacing(0)
-        pd.addWidget(self.shared_preview)
+        pd.addWidget(preview_scroll)
         self._tabs = QTabWidget()
         self._tabs.addTab(live_page, "Live (verses)")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
@@ -854,8 +888,8 @@ class OperatorWindow(QMainWindow):
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
         middle.setSpacing(0)
-        middle.addWidget(self._tabs, 3)
-        middle.addWidget(preview_dock, 2)
+        middle.addWidget(self._tabs, 5)
+        middle.addWidget(preview_dock, 3)
         outer.addLayout(middle, 1)
         outer.addWidget(self._build_statusbar())
         if self.settings.check_updates_on_startup:
@@ -1099,7 +1133,7 @@ class OperatorWindow(QMainWindow):
         sl.addWidget(self.shared_media, 1)
         sl.addWidget(self.slide_text, 1)
         sl.addWidget(self.slide_ref)
-        lay.addWidget(self.slide, 1)
+        lay.addWidget(AspectBox(self.slide), 0)   # 16:9 like the output, letterboxed at the panel's width
 
         nav = QHBoxLayout()
         self.btn_prev = QPushButton("\u25c0 Prev verse (\u2190)")
