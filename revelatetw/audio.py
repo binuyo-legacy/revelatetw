@@ -42,6 +42,35 @@ def list_input_devices() -> list[InputDevice]:
     return devices
 
 
+def default_input_index() -> Optional[int]:
+    """Index of the system DEFAULT input device (sounddevice default), or None if there is none."""
+    import sounddevice as sd
+    try:
+        idx = sd.default.device[0]
+    except Exception:  # noqa: BLE001 - some hosts expose no default at all
+        return None
+    try:
+        idx = int(idx)
+    except (TypeError, ValueError):
+        return None
+    return idx if idx >= 0 else None
+
+
+def pick_default_device(devices: list[InputDevice]) -> Optional[InputDevice]:
+    """The system default mic from a list (never a loopback entry). Falls back to the first real input."""
+    plain = [d for d in devices if not getattr(d, "loopback", False)]
+    if not plain:
+        return None
+    try:
+        default = default_input_index()
+    except Exception:  # noqa: BLE001
+        default = None
+    for d in plain:
+        if getattr(d, "index", None) == default:
+            return d
+    return plain[0]
+
+
 def db_to_gain(db: float) -> float:
     return 10 ** (db / 20.0)
 

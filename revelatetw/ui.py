@@ -7,6 +7,7 @@ The operator window is never shown on the projector (spec F5 acceptance 1).
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from pathlib import Path
@@ -534,6 +535,8 @@ def _seg(text: str) -> QPushButton:
     return b
 
 
+_log = logging.getLogger(__name__)
+
 # --- header monitoring widgets (top bar only; fixed width so the header never jiggles) -----
 WAVE_BARS = 24
 WAVE_W, WAVE_H = 210, 30
@@ -725,7 +728,7 @@ class OperatorWindow(QMainWindow):
         self.settings = settings or AppSettings()
         self._settings_path = settings_path
         self._dev = bool(dev)
-        self.setWindowTitle("RevelateTW \u2014 Operator")
+        self.setWindowTitle("RevelateTW")
         self.queue = queue
         self.pipeline = pipeline
         self.live = live                  # LiveTranscriptionLoop (mic or dev text)
@@ -861,10 +864,7 @@ class OperatorWindow(QMainWindow):
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
         lay.addWidget(_brand_mark(30))
-        t = QVBoxLayout()
-        t.setSpacing(0)
-        t.addWidget(_label("RevelateTW \u2014 Operator", "title"))
-        lay.addLayout(t)
+        lay.addWidget(_label("RevelateTW", "title"))
         lay.addStretch(1)
         lay.addWidget(_label("Source", "sub"))
         seg = QHBoxLayout()
@@ -1258,7 +1258,55 @@ class OperatorWindow(QMainWindow):
         rl.addWidget(self.preset_note)
         rl.addStretch(1)
         root.addWidget(right, 3)
+        # live preview on the far right, same panel look as the Verses tab
+        root.addWidget(self._build_tab_preview(), 3)
+        self.slide_now_list.currentRowChanged.connect(lambda _r: self._update_tab_preview())
+        for w in (self.sermon_title, self.sermon_speaker, self.sermon_church):
+            w.textChanged.connect(lambda _t: self._update_tab_preview())
+        self._update_tab_preview()
         return page
+
+    def _build_tab_preview(self) -> QFrame:
+        frame, lay = self._panel("Live Preview", "")
+        self.tab_preview_badge = _label("Not projected", "badge")
+        frame.layout().itemAt(0).layout().insertWidget(2, self.tab_preview_badge)
+        self.tab_slide = QFrame()
+        self.tab_slide.setObjectName("slide")
+        sl = QVBoxLayout(self.tab_slide)
+        sl.setContentsMargins(18, 14, 18, 14)
+        self.tab_slide_text = _label("", "slideText", wrap=True)
+        self.tab_slide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tab_slide_ref = _label("", "slideRef", wrap=True)
+        self.tab_slide_ref.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sl.addWidget(self.tab_slide_text, 1)
+        sl.addWidget(self.tab_slide_ref)
+        lay.addWidget(self.tab_slide, 1)
+        self.tab_preview_note = _label("Pick a slide or fill the sermon info to preview it here.", "sub", wrap=True)
+        lay.addWidget(self.tab_preview_note)
+        return frame
+
+    def _update_tab_preview(self) -> None:
+        """Show the selected song slide (or the sermon info when no slide is selected) in the preview."""
+        if not hasattr(self, "tab_slide_text"):
+            return
+        song = self._song_sel
+        row = self.slide_now_list.currentRow()
+        if song is not None and song.slides and 0 <= row < len(song.slides):
+            slide = song.slides[row]
+            self.tab_slide_text.setText("\n".join(slide.lines))
+            self.tab_slide_ref.setText(f"{song.title}  \u00b7  {slide.label}")
+            self.tab_preview_badge.setText("Song slide")
+            self.tab_preview_note.setText("Selected slide. Send it from the panel beside this (Enter) or Direct to project now.")
+            return
+        title = self.sermon_title.text().strip()
+        speaker = self.sermon_speaker.text().strip()
+        church = self.sermon_church.text().strip()
+        lines = [x for x in (title, speaker, church) if x]
+        self.tab_slide_text.setText("\n".join(lines))
+        self.tab_slide_ref.setText("")
+        self.tab_preview_badge.setText("Sermon info" if lines else "Not projected")
+        self.tab_preview_note.setText("Sermon info slide preview. Show sermon info to project it." if lines
+                                      else "Pick a slide or fill the sermon info to preview it here.")
     def _build_statusbar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("statusbar")
@@ -1334,7 +1382,6 @@ class OperatorWindow(QMainWindow):
         if self.live is None:
             self.btn_source_mic.setEnabled(False)
             self.device_box.setEnabled(False)
-            self.btn_source_mic.setEnabled(False)
             self.source_status.setText("Live audio not available in this session.")
             if self._dev:
                 self.btn_source_dev.setChecked(True)
@@ -1342,15 +1389,39 @@ class OperatorWindow(QMainWindow):
             return
         try:
             from .audio import list_input_devices
-            self._devices = list_input_devices()
+            found = list_input_devices()
+            self._devices = [d for d in found if not d.loopback] + [d for d in found if d.loopback]
         except Exception as exc:  # sounddevice missing or no audio host
+            _log.warning("audio device enumeration failed: %s", exc)
             self._devices = []
             self.source_status.setText(f"Audio devices unavailable: {exc}")
         self.device_box.blockSignals(True)
         self.device_box.clear()
         for d in self._devices:
             self.device_box.addItem(f"{d.name}  ({d.channels} ch, {d.default_rate} Hz)")
+        # Start on the SYSTEM DEFAULT input (never a hardcoded index); a remembered name still wins.
+        self.device_box.setCurrentIndex(self._default_device_row())
         self.device_box.blockSignals(False)
+        if hasattr(self, "settings_page") and self.settings_page is not None:
+            self.settings_page.set_input_devices([d.name for d in self._devices if not d.loopback]
+                                                 + [d.name for d in self._devices if d.loopback])
+
+    def _default_device_row(self) -> int:
+        """Row for the remembered device name if it still exists, else the system default input."""
+        remembered = self.settings.input_device_name
+        for i, d in enumerate(self._devices):
+            if remembered and d.name == remembered:
+                return i
+        from .audio import pick_default_device
+        try:
+            chosen = pick_default_device(self._devices)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("default input lookup failed: %s", exc)
+            chosen = None
+        for i, d in enumerate(self._devices):
+            if chosen is not None and d is chosen:
+                return i
+        return 0
 
     def _on_source_toggle(self, checked: bool) -> None:
         if not checked:
@@ -1375,22 +1446,50 @@ class OperatorWindow(QMainWindow):
             self.status_transcriber.setText("Transcriber: text feed")
             self.tile_audio.value.setText("Dev feed")
             return
-        dev = self._devices[max(0, self.device_box.currentIndex())]
-        try:
-            self.live.start_mic(dev, gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
-            self._mic_on = True
-            self.source_status.setText(f"Listening: {dev.name}")
-            self.tile_audio.value.setText(dev.name)
-            self.transcriber_label.setText("Transcriber: Whisper")
-            self.status_transcriber.setText("Transcriber: Whisper")
-        except Exception as exc:  # device busy or unsupported; never leave the loop half-open
+        row = max(0, self.device_box.currentIndex())
+        tried = [self._devices[row]]
+        # Fallback chain: chosen device -> system default input -> text feed. The wave keeps running
+        # on whichever one opens; a failure is logged and shown, never a silent dead wave.
+        from .audio import pick_default_device
+        default = pick_default_device(self._devices)
+        if default is not None and default.name != tried[0].name:
+            tried.append(default)
+        last_exc = None
+        opened = None
+        for dev in tried:
+            try:
+                self.live.start_mic(dev, gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
+                opened = dev
+                break
+            except Exception as exc:  # device busy, unplugged, or unsupported
+                last_exc = exc
+                _log.warning("could not open audio input %r: %s", dev.name, exc)
+        if opened is None:
             self._mic_on = False
             self.live.use_text_feed()
             self.source_box.blockSignals(True)
             self.source_box.setCurrentIndex(0)
             self.source_box.blockSignals(False)
             self.btn_source_dev.setChecked(True)
-            self.source_status.setText(f"Mic failed, back to text feed: {exc}")
+            self.source_status.setText(f"Mic failed, back to text feed: {last_exc}")
+            self._refresh_header_state()
+            return
+        self._mic_on = True
+        if opened is not tried[0]:
+            _log.warning("configured input %r failed, using default input %r", tried[0].name, opened.name)
+            self.source_status.setText(f"{tried[0].name} unavailable, using default input: {opened.name}")
+            # keep the picker honest: show the device actually in use
+            for i, d in enumerate(self._devices):
+                if d is opened:
+                    self.device_box.blockSignals(True)
+                    self.device_box.setCurrentIndex(i)
+                    self.device_box.blockSignals(False)
+                    break
+        else:
+            self.source_status.setText(f"Listening: {opened.name}")
+        self.tile_audio.value.setText(opened.name)
+        self.transcriber_label.setText("Transcriber: Whisper")
+        self.status_transcriber.setText("Transcriber: Whisper")
         self._refresh_header_state()
 
     def open_theme_editor(self) -> None:
@@ -2141,6 +2240,8 @@ class OperatorWindow(QMainWindow):
         if slides:
             widget.setCurrentRow(0)
         widget.blockSignals(False)
+        if widget is getattr(self, "slide_now_list", None):
+            self._update_tab_preview()
         if hasattr(self, "slides_empty"):
             self._refresh_song_chrome()
 
