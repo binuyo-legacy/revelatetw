@@ -13,6 +13,8 @@ pytest.importorskip("PyQt6.QtWidgets")
 from PyQt6.QtGui import QColor, QImage, QPainter  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
+from pathlib import Path  # noqa: E402
+
 from revelatetw.approval import ApprovalQueue  # noqa: E402
 from revelatetw.media import MediaItem  # noqa: E402
 from revelatetw.store import AppSettings  # noqa: E402
@@ -74,7 +76,7 @@ def test_empty_state_shows_hint_until_media_exists(tmp_path):
                          settings=AppSettings(media_folder=str(empty)))
     win.rescan_media()
     assert win.media_empty.isVisible() or not win.media_list.isVisible()
-    assert win.media_empty.hint.text() == "No media yet \u2014 click Import to add images or videos"
+    assert win.media_empty.hint.text() == "No media yet \u2014 Add media to get started"
 
 
 def test_project_image_is_direct_and_respects_live(window):
@@ -156,3 +158,74 @@ def test_project_does_not_open_output_while_blanked(tmp_path):
     win.queue.set_blank(True)
     win._open_output_for_project()
     assert win.output.on is False
+
+
+def test_media_grid_labels_show_name_and_type(window):
+    win, _ = window
+    labels = [win.media_list.item(i).text() for i in range(win.media_list.count())]
+    assert any("Sunrise Hymn" in s and "IMAGE" in s for s in labels)
+    assert any("clip" in s and "VIDEO" in s for s in labels)
+
+
+def test_media_badge_counts_items(window):
+    win, _ = window
+    assert win.media_badge.text() == "3 items"
+    win.media_search.setText("sunrise")
+    assert win.media_badge.text() == "1 of 3 items"
+
+
+def test_preview_follows_selection_and_controls_track_it(window):
+    win, _ = window
+    win.media_list.setCurrentRow(0)
+    it = win._selected_media_item()
+    assert it is not None and win.media_preview._item is it
+    assert win.media_remove_btn.isEnabled()
+    assert it.name in win.media_preview_name.text()
+
+
+def test_empty_library_disables_remove_and_shows_placeholder(tmp_path):
+    win = OperatorWindow(ApprovalQueue(None), Theme(), ProjectionWindow(),
+                         songs_dir=str(tmp_path / "songs"),
+                         settings=AppSettings(media_folder=str(tmp_path / "none")))
+    win.rescan_media()
+    assert win.media_stack.currentWidget() is win.media_empty
+    assert win.media_badge.text() == "0 items"
+    assert not win.media_remove_btn.isEnabled()
+    assert win.media_preview._item is None
+
+
+def test_remove_deletes_file_and_thumb(window, monkeypatch):
+    win, _ = window
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    row = next(i for i in range(win.media_list.count()) if "Logo" in win.media_list.item(i).text())
+    win.media_list.setCurrentRow(row)
+    it = win._selected_media_item()
+    assert it is not None and it.name == "Logo"
+    win._on_media_remove()
+    assert not Path(it.path).exists()
+    assert not any(m.name == "Logo" for m in win.media.items)
+    assert win.media_badge.text() == "2 items"
+
+
+def test_removing_projected_media_clears_the_output(window, monkeypatch):
+    win, proj = window
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    win.media_list.setCurrentRow(0)
+    it = win._selected_media_item()
+    win.project_selected_media()
+    assert win._media_live is not None and win._media_live.path == it.path
+    win._on_media_remove()
+    assert win._media_live is None
+    assert not Path(it.path).exists()
+
+
+def test_cancelled_remove_keeps_file(window, monkeypatch):
+    win, _ = window
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
+    win.media_list.setCurrentRow(0)
+    it = win._selected_media_item()
+    win._on_media_remove()
+    assert Path(it.path).exists()

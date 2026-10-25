@@ -276,6 +276,24 @@ class MediaLibrary:
             copied.append(dst)
         return copied, skipped
 
+    def remove_item(self, item: MediaItem) -> bool:
+        """Delete a media file and its cached thumbnail. Returns False when the file could not be deleted.
+
+        The caller rescans afterwards so the index drops the entry.
+        """
+        try:
+            Path(item.path).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        if item.thumb:
+            try:
+                Path(item.thumb).unlink()
+            except OSError:
+                pass
+        return True
+
 
 def unique_path(folder: Path, file_name: str) -> Path:
     """'clip.mp4' -> 'clip (2).mp4' when the name is taken. Never overwrites a file."""

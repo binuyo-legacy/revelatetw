@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubl
                              QInputDialog,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                              QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
-                             QSpinBox, QTabWidget, QVBoxLayout, QWidget, QMessageBox)
+                             QSpinBox, QStackedWidget, QSizePolicy, QTabWidget, QVBoxLayout, QWidget, QMessageBox)
 
 from .approval import ApprovalQueue
 from .media import DEFAULT_MEDIA_FOLDER, MediaItem, MediaLibrary, filter_items, format_duration
@@ -475,6 +475,11 @@ QPushButton#small { padding: 3px 10px; font-size: 12px; }
 QLabel#emptyIcon { color: #8a7224; font-size: 46px; }
 QLabel#emptyHint { color: #94a3b8; font-size: 13px; }
 QLabel#emptyIconBook { color: #5b6478; font-size: 40px; }
+QLabel#mediaEmptyIcon { color: #5b6478; font-size: 48px; }
+QListWidget#mediaGrid { background: #0f1522; border: 1px solid #2f3a52; border-radius: 10px; }
+QListWidget#mediaGrid::item { color: #cbd5e1; border: 2px solid transparent; border-radius: 8px; padding: 4px; }
+QListWidget#mediaGrid::item:hover { background: #161d2c; border-color: #2f3a52; }
+QListWidget#mediaGrid::item:selected { background: #2a2412; color: #facc15; border: 2px solid #facc15; }
 QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 6px 8px; }
 QLineEdit:focus, QComboBox:focus { border-color: #facc15; }
 QComboBox QAbstractItemView { background: #0f1522; color: #e5e7eb; selection-background-color: #facc15; selection-color: #0b0f19; }
@@ -717,6 +722,59 @@ class SysChipWidget(QWidget):
                     p.drawRoundedRect(QRectF(x, h - 9, fill, 4), 2, 2)
         finally:
             p.end()
+
+
+def _cell_name(name: str, limit: int = 22) -> str:
+    """File name shortened for a grid cell (the full file name is in the tooltip)."""
+    return name if len(name) <= limit else name[: limit - 1] + "\u2026"
+
+
+class MediaPreviewWidget(QWidget):
+    """The selected media drawn the way the projection output draws it: 16:9, letterboxed on black."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._item = None
+        self._image_cache: dict = {}
+        self._thumb_cache: dict = {}
+        self.setMinimumSize(320, 180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_item(self, item) -> None:
+        self._item = item
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        from PyQt6.QtGui import QPainter, QPixmap
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#0b0f19"))
+        w, h = self.width(), self.height()
+        fw = min(w, h * 16 / 9)
+        fh = fw * 9 / 16
+        rect = QRect(int((w - fw) / 2), int((h - fh) / 2), int(fw), int(fh))
+        it = self._item
+        if it is None:
+            painter.setPen(QColor("#64748b"))
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "No media selected")
+        elif not it.is_video:
+            paint_media_image(painter, rect, it.path, self._image_cache)
+        else:
+            painter.fillRect(rect, QColor("#000000"))
+            pix = self._thumb_cache.get(it.path)
+            if pix is None:
+                pix = QPixmap(it.thumb) if it.thumb else QPixmap()
+                self._thumb_cache[it.path] = pix
+            if not pix.isNull():
+                scaled = pix.scaled(rect.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                    Qt.TransformationMode.SmoothTransformation)
+                painter.drawPixmap(rect.x() + (rect.width() - scaled.width()) // 2,
+                                   rect.y() + (rect.height() - scaled.height()) // 2, scaled)
+            strip = QRect(rect.x(), rect.bottom() - 28, rect.width(), 28)
+            painter.fillRect(strip, QColor(0, 0, 0, 170))
+            painter.setPen(QColor("#facc15"))
+            label = "\u25B6  VIDEO" + (f"  \u00b7  {it.duration_label()}" if it.duration_label() else "")
+            painter.drawText(strip, int(Qt.AlignmentFlag.AlignCenter), label)
+        painter.end()
 
 
 class OperatorWindow(QMainWindow):
@@ -1685,12 +1743,60 @@ class OperatorWindow(QMainWindow):
             self.preview.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
             self.preview.setFocus()
 
-    # --- Media tab ----------------------------------------------------------------------------
+    # --- Media tab ---
     def _build_media_tab(self) -> QWidget:
         page = QWidget()
-        lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 10, 12, 10)
+        self._media_page = page
+        root = QHBoxLayout(page)
+        root.setContentsMargins(14, 12, 14, 10)
+        root.setSpacing(12)
+        # left: live preview of the selected media, same panel look as the Verses and Songs previews
+        root.addWidget(self._build_media_preview_panel(), 2)
+        # right: the library (toolbar, item count, thumbnail grid, empty state)
+        root.addWidget(self._build_media_library_panel(), 3)
+        return page
+
+    def _build_media_preview_panel(self) -> QFrame:
+        frame, lay = self._panel("Live Preview", "")
+        self.media_preview_badge = _label("Nothing selected", "badge")
+        frame.layout().itemAt(0).layout().insertWidget(1, self.media_preview_badge)
+        self.media_preview = MediaPreviewWidget()
+        slide = QFrame()
+        slide.setObjectName("slide")
+        sl = QVBoxLayout(slide)
+        sl.setContentsMargins(6, 6, 6, 6)
+        sl.addWidget(self.media_preview, 1)
+        lay.addWidget(slide, 1)
+        self.media_preview_name = _label("", "slideRef", wrap=True)
+        self.media_preview_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.media_preview_name)
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(8)
+        self.media_project_btn = QPushButton("Project")
+        self.media_project_btn.setObjectName("primary")
+        self.media_project_btn.setToolTip("Project the selected media (double-click in the grid also works)")
+        self.media_project_btn.clicked.connect(self.project_selected_media)
+        self.media_pause = QPushButton("Pause video")
+        self.media_pause.clicked.connect(self._on_media_pause)
+        self.media_restart = QPushButton("Restart video")
+        self.media_restart.clicked.connect(self._on_media_restart)
+        self.media_loop = QCheckBox("Loop video")
+        self.media_loop.setToolTip("Replay a projected video from the start when it ends")
+        self.media_loop.toggled.connect(self._on_media_loop)
+        for w in (self.media_project_btn, self.media_pause, self.media_restart, self.media_loop):
+            ctrl.addWidget(w)
+        ctrl.addStretch(1)
+        lay.addLayout(ctrl)
+        self.media_preview_note = _label("", "sub", wrap=True)
+        lay.addWidget(self.media_preview_note)
+        return frame
+
+    def _build_media_library_panel(self) -> QFrame:
+        frame, lay = self._panel("Media Library", "")
+        self.media_badge = _label("0 items", "badge")
+        frame.layout().itemAt(0).layout().insertWidget(1, self.media_badge)
         bar = QHBoxLayout()
+        bar.setSpacing(8)
         self.media_search = QLineEdit()
         self.media_search.setPlaceholderText("Search media by name")
         self.media_search.textChanged.connect(self._refresh_media_grid)
@@ -1699,42 +1805,69 @@ class OperatorWindow(QMainWindow):
         self.media_filter.addItem("Images", "images")
         self.media_filter.addItem("Videos", "videos")
         self.media_filter.currentIndexChanged.connect(self._refresh_media_grid)
-        self.media_loop = QCheckBox("Loop video")
-        self.media_loop.setToolTip("Replay a projected video from the start when it ends")
-        self.media_loop.toggled.connect(self._on_media_loop)
-        self.media_pause = QPushButton("Pause video")
-        self.media_pause.clicked.connect(self._on_media_pause)
-        self.media_restart = QPushButton("Restart video")
-        self.media_restart.clicked.connect(self._on_media_restart)
-        rescan = QPushButton("Rescan")
-        rescan.clicked.connect(self.rescan_media)
-        import_btn = QPushButton("Import")
-        import_btn.clicked.connect(self.import_media)
-        proj_btn = QPushButton("Project")
-        proj_btn.clicked.connect(self.project_selected_media)
-        for w in (self.media_search, self.media_filter, self.media_loop, self.media_pause, self.media_restart,
-                  rescan, import_btn, proj_btn):
+        add_btn = QPushButton("Add media")
+        add_btn.setObjectName("primary")
+        add_btn.setToolTip("Copy images or videos into the media folder")
+        add_btn.clicked.connect(self.import_media)
+        self.media_remove_btn = QPushButton("Remove")
+        self.media_remove_btn.setObjectName("danger")
+        self.media_remove_btn.setToolTip("Delete the selected file from the media folder")
+        self.media_remove_btn.setEnabled(False)
+        self.media_remove_btn.clicked.connect(self._on_media_remove)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setToolTip("Rescan the media folder")
+        refresh_btn.clicked.connect(self.rescan_media)
+        bar.addWidget(self.media_search, 1)
+        for w in (self.media_filter, add_btn, self.media_remove_btn, refresh_btn):
             bar.addWidget(w)
-        bar.setStretch(0, 3)
         lay.addLayout(bar)
+        self.media_empty = self._build_media_empty_state()
         self.media_list = QListWidget()
+        self.media_list.setObjectName("mediaGrid")
         self.media_list.setViewMode(QListWidget.ViewMode.IconMode)
-        self.media_list.setIconSize(QSize(160, 90))    # matches the 160px cached thumbnails (no upscale)
-        self.media_list.setGridSize(QSize(200, 150))
+        self.media_list.setIconSize(QSize(160, 90))        # matches the 160px cached thumbnails (no upscale)
+        self.media_list.setGridSize(QSize(184, 150))       # fixed cells: thumb + name + type label
+        self.media_list.setSpacing(8)
+        self.media_list.setUniformItemSizes(True)
         self.media_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.media_list.setMovement(QListWidget.Movement.Static)
         self.media_list.setWordWrap(True)
+        self.media_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.media_list.currentRowChanged.connect(lambda _r: self._update_media_preview())
         self.media_list.itemDoubleClicked.connect(lambda _it: self.project_selected_media())
-        self.media_empty = self._empty_state("\U0001F5BC", "No media yet \u2014 click Import to add images or videos",
-                                             "emptyIconBook")
-        lay.addWidget(self.media_empty, 1)
-        lay.addWidget(self.media_list, 1)
+        self.media_stack = QStackedWidget()
+        self.media_stack.addWidget(self.media_empty)
+        self.media_stack.addWidget(self.media_list)
+        lay.addWidget(self.media_stack, 1)
         self.media_status = QLabel("")
         self.media_status.setObjectName("sub")
         lay.addWidget(self.media_status)
-        self.media_list.hide()
-        self._media_page = page
-        return page
+        return frame
+
+    def _build_media_empty_state(self) -> QFrame:
+        f = QFrame()
+        v = QVBoxLayout(f)
+        v.setContentsMargins(8, 18, 8, 18)
+        v.setSpacing(10)
+        icon = _label("\U0001F5BC", "mediaEmptyIcon")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint = _label("No media yet \u2014 Add media to get started", "emptyHint", wrap=True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        add_btn = QPushButton("Add media")
+        add_btn.setObjectName("primary")
+        add_btn.clicked.connect(self.import_media)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(add_btn)
+        row.addStretch(1)
+        v.addStretch(1)
+        v.addWidget(icon)
+        v.addWidget(hint)
+        v.addLayout(row)
+        v.addStretch(1)
+        f.icon = icon
+        f.hint = hint
+        return f
 
     def _set_media_folder(self, folder: str) -> None:
         self.media = MediaLibrary(folder)
@@ -1769,29 +1902,94 @@ class OperatorWindow(QMainWindow):
         self.media_status.setText(msg)
 
     def _refresh_media_grid(self) -> None:
-        kind = self.media_filter.currentData() if hasattr(self, "media_filter") else "all"
-        text = self.media_search.text() if hasattr(self, "media_search") else ""
+        if not hasattr(self, "media_stack"):
+            return
+        kind = self.media_filter.currentData()
+        text = self.media_search.text()
         shown = filter_items(self.media.items, text, kind)
         self._media_items = shown
+        keep = self._current_media_path()
+        self.media_list.blockSignals(True)
         self.media_list.clear()
         from PyQt6.QtGui import QIcon, QPixmap
         for it in shown:
-            label = f"{it.name}\n{it.type_label}"
+            label = f"{_cell_name(it.name)}\n{it.type_label}"
             if it.is_video:
                 label += f" \u00b7 {it.duration_label()}"
             row = QListWidgetItem(label)
+            row.setToolTip(Path(it.path).name)
             row.setData(Qt.ItemDataRole.UserRole, it.path)
             pix = QPixmap(it.thumb) if it.thumb else QPixmap()
             if not pix.isNull():
                 row.setIcon(QIcon(pix))
             self.media_list.addItem(row)
-        empty = not self.media.items
-        self.media_empty.setVisible(empty or not shown)
+            if it.path == keep:
+                self.media_list.setCurrentRow(self.media_list.count() - 1)
+        self.media_list.blockSignals(False)
+        total = len(self.media.items)
+        if len(shown) != total:
+            self.media_badge.setText(f"{len(shown)} of {total} items")
+        else:
+            self.media_badge.setText(f"{total} item" + ("" if total == 1 else "s"))
         if not self.media.items:
-            self.media_empty.hint.setText("No media yet \u2014 click Import to add images or videos")
+            self.media_empty.hint.setText("No media yet \u2014 Add media to get started")
+            self.media_stack.setCurrentWidget(self.media_empty)
         elif not shown:
             self.media_empty.hint.setText("No media matches this search or filter")
-        self.media_list.setVisible(bool(shown))
+            self.media_stack.setCurrentWidget(self.media_empty)
+        else:
+            self.media_stack.setCurrentWidget(self.media_list)
+        self._update_media_preview()
+
+    def _current_media_path(self):
+        row = self.media_list.currentItem() if hasattr(self, "media_list") else None
+        return row.data(Qt.ItemDataRole.UserRole) if row is not None else None
+
+    def _update_media_preview(self) -> None:
+        if not hasattr(self, "media_preview"):
+            return
+        it = self._selected_media_item()
+        self.media_preview.set_item(it)
+        self.media_remove_btn.setEnabled(it is not None)
+        if it is None:
+            self.media_preview_name.setText("")
+            self.media_preview_note.setText("Pick an item in the library to preview it here."
+                                            if self.media.items else "Add media to preview it here.")
+        else:
+            info = f"{it.name}  \u00b7  {it.type_label}"
+            if it.is_video:
+                info += f"  \u00b7  {it.duration_label()}"
+            self.media_preview_name.setText(info)
+            self.media_preview_note.setText(
+                "Video preview shows the first frame. Project it to play on the output." if it.is_video
+                else "Project to show this image on the output.")
+        self._update_media_controls()
+
+    def _on_media_remove(self) -> None:
+        it = self._selected_media_item()
+        if it is None:
+            self.media_status.setText("Select a media item to remove.")
+            return
+        answer = QMessageBox.question(
+            self, "Remove media",
+            f"Delete \"{Path(it.path).name}\" from the media folder? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        on_output = self._kind == "media" and self._media_live is not None and self._media_live.path == it.path
+        if not self.media.remove_item(it):
+            self.media_status.setText(f"Could not remove {Path(it.path).name}. Is it open in another app?")
+            return
+        if on_output:
+            # the shared output stops showing the deleted file (same as a blank)
+            self._media_live = None
+            self._kind = "verse" if self.queue.live else None
+            self._render_output()
+            if self._kind is None:
+                self.projection.show_blank()
+        self.rescan_media()
+        self.media_status.setText(f"Removed {Path(it.path).name}.")
+        self._update_media_controls()
 
     def _selected_media_item(self):
         row = self.media_list.currentItem()
@@ -1845,6 +2043,16 @@ class OperatorWindow(QMainWindow):
         self.media_pause.setEnabled(st["enabled"])
         self.media_restart.setToolTip(st["restart_tip"])
         self.media_restart.setEnabled(st["enabled"])
+        if hasattr(self, "media_preview_badge"):
+            self.media_preview_badge.setText(self._media_preview_badge_text())
+
+    def _media_preview_badge_text(self) -> str:
+        it = self._selected_media_item() if hasattr(self, "media_list") else None
+        if it is None:
+            return "Nothing selected"
+        on_output = (self._kind == "media" and self._media_live is not None and self.output.on
+                     and not self.queue.blank and self._media_live.path == it.path)
+        return "On output" if on_output else "Selected"
 
     def _on_media_pause(self) -> None:
         self.projection.toggle_video_pause()
