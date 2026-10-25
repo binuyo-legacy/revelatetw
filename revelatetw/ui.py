@@ -830,9 +830,17 @@ class OperatorWindow(QMainWindow):
         body.setSpacing(12)
         body.addWidget(self._build_transcript_panel(), 3)
         body.addWidget(self._build_queue_panel(), 3)
-        body.addWidget(self._build_preview_panel(), 3)
         live_page = QWidget()
         live_page.setLayout(body)
+        # ONE live preview panel, docked on the right of the main window. It sits outside the tabs,
+        # so switching tabs only swaps the left-to-middle content and the preview never moves.
+        self.shared_preview = self._build_preview_panel()
+        self.shared_preview.setMinimumWidth(330)
+        preview_dock = QWidget()
+        pd = QVBoxLayout(preview_dock)
+        pd.setContentsMargins(0, 12, 14, 10)
+        pd.setSpacing(0)
+        pd.addWidget(self.shared_preview)
         self._tabs = QTabWidget()
         self._tabs.addTab(live_page, "Live (verses)")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
@@ -843,7 +851,12 @@ class OperatorWindow(QMainWindow):
         self.settings_page.changed.connect(self._on_setting_changed)
         self._tabs.addTab(self.settings_page, "Settings")
         self._settings_index = self._tabs.count() - 1
-        outer.addWidget(self._tabs, 1)
+        middle = QHBoxLayout()
+        middle.setContentsMargins(0, 0, 0, 0)
+        middle.setSpacing(0)
+        middle.addWidget(self._tabs, 3)
+        middle.addWidget(preview_dock, 2)
+        outer.addLayout(middle, 1)
         outer.addWidget(self._build_statusbar())
         if self.settings.check_updates_on_startup:
             QTimer.singleShot(3000, lambda: self._check_updates(self._on_startup_update))
@@ -1081,6 +1094,9 @@ class OperatorWindow(QMainWindow):
         self.slide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slide_ref = _label("", "slideRef")
         self.slide_ref.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.shared_media = MediaPreviewWidget()    # the projected image or video, shown in the same frame
+        self.shared_media.hide()
+        sl.addWidget(self.shared_media, 1)
         sl.addWidget(self.slide_text, 1)
         sl.addWidget(self.slide_ref)
         lay.addWidget(self.slide, 1)
@@ -1316,55 +1332,37 @@ class OperatorWindow(QMainWindow):
         rl.addWidget(self.preset_note)
         rl.addStretch(1)
         root.addWidget(right, 3)
-        # live preview on the far right, same panel look as the Verses tab
-        root.addWidget(self._build_tab_preview(), 3)
-        self.slide_now_list.currentRowChanged.connect(lambda _r: self._update_tab_preview())
-        for w in (self.sermon_title, self.sermon_speaker, self.sermon_church):
-            w.textChanged.connect(lambda _t: self._update_tab_preview())
-        self._update_tab_preview()
         return page
 
-    def _build_tab_preview(self) -> QFrame:
-        frame, lay = self._panel("Live Preview", "")
-        self.tab_preview_badge = _label("Not projected", "badge")
-        frame.layout().itemAt(0).layout().insertWidget(2, self.tab_preview_badge)
-        self.tab_slide = QFrame()
-        self.tab_slide.setObjectName("slide")
-        sl = QVBoxLayout(self.tab_slide)
-        sl.setContentsMargins(18, 14, 18, 14)
-        self.tab_slide_text = _label("", "slideText", wrap=True)
-        self.tab_slide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tab_slide_ref = _label("", "slideRef", wrap=True)
-        self.tab_slide_ref.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sl.addWidget(self.tab_slide_text, 1)
-        sl.addWidget(self.tab_slide_ref)
-        lay.addWidget(self.tab_slide, 1)
-        self.tab_preview_note = _label("Pick a slide or fill the sermon info to preview it here.", "sub", wrap=True)
-        lay.addWidget(self.tab_preview_note)
-        return frame
 
-    def _update_tab_preview(self) -> None:
-        """Show the selected song slide (or the sermon info when no slide is selected) in the preview."""
-        if not hasattr(self, "tab_slide_text"):
+    def _update_shared_preview(self) -> None:
+        """The one live preview: mirrors what the output shows (verse, song slide, sermon info or media)."""
+        if not hasattr(self, "slide_text"):
             return
-        song = self._song_sel
-        row = self.slide_now_list.currentRow()
-        if song is not None and song.slides and 0 <= row < len(song.slides):
-            slide = song.slides[row]
-            self.tab_slide_text.setText("\n".join(slide.lines))
-            self.tab_slide_ref.setText(f"{song.title}  \u00b7  {slide.label}")
-            self.tab_preview_badge.setText("Song slide")
-            self.tab_preview_note.setText("Selected slide. Send it from the panel beside this (Enter) or Direct to project now.")
-            return
-        title = self.sermon_title.text().strip()
-        speaker = self.sermon_speaker.text().strip()
-        church = self.sermon_church.text().strip()
-        lines = [x for x in (title, speaker, church) if x]
-        self.tab_slide_text.setText("\n".join(lines))
-        self.tab_slide_ref.setText("")
-        self.tab_preview_badge.setText("Sermon info" if lines else "Not projected")
-        self.tab_preview_note.setText("Sermon info slide preview. Show sermon info to project it." if lines
-                                      else "Pick a slide or fill the sermon info to preview it here.")
+        text, ref, media = "", "", None
+        if self.queue.blank:
+            pass
+        elif self._kind == "song" and self._song_live:
+            song, i = self._song_live
+            slide = song.slides[i]
+            text = "\n".join(slide.lines)
+            ref = f"{song.title}  \u00b7  {slide.label}"
+        elif self._kind == "sermon" and self._sermon_live:
+            text = "\n".join(self._sermon_live.lines())
+        elif self._kind == "media" and self._media_live is not None:
+            media = self._media_live
+            ref = f"{media.name}  \u00b7  {media.type_label}"
+            if media.is_video and media.duration_label():
+                ref += f"  \u00b7  {media.duration_label()}"
+        elif self.queue.live is not None:
+            text = self.queue.live.display_text
+            ref = self.queue.live.reference
+        self.shared_media.set_item(media)
+        self.shared_media.setVisible(media is not None)
+        self.slide_text.setVisible(media is None)
+        self.slide_text.setText(text)
+        self.slide_ref.setText(ref)
+
     def _build_statusbar(self) -> QFrame:
         bar = QFrame()
         bar.setObjectName("statusbar")
@@ -1697,6 +1695,7 @@ class OperatorWindow(QMainWindow):
         self.projection.show_theme(self.theme)
         self.projection.show_verse(c)
         self._update_media_controls()
+        self._update_shared_preview()
 
     def _render_output(self) -> None:
         """Re-draw whatever the output is showing (after theme change or blank toggle)."""
@@ -1712,6 +1711,7 @@ class OperatorWindow(QMainWindow):
             self.projection.show_media(self._media_live, loop=self.media_loop.isChecked())
         elif self.queue.live:
             self.projection.show_verse(self.queue.live)
+        self._update_shared_preview()
 
     def approve_selected(self) -> None:
         if self._tabs.currentIndex() == 1:
@@ -1750,46 +1750,9 @@ class OperatorWindow(QMainWindow):
         root = QHBoxLayout(page)
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(12)
-        # left: live preview of the selected media, same panel look as the Verses and Songs previews
-        root.addWidget(self._build_media_preview_panel(), 2)
-        # right: the library (toolbar, item count, thumbnail grid, empty state)
-        root.addWidget(self._build_media_library_panel(), 3)
+        # the library only: the live preview is the one shared panel on the right
+        root.addWidget(self._build_media_library_panel(), 1)
         return page
-
-    def _build_media_preview_panel(self) -> QFrame:
-        frame, lay = self._panel("Live Preview", "")
-        self.media_preview_badge = _label("Nothing selected", "badge")
-        frame.layout().itemAt(0).layout().insertWidget(1, self.media_preview_badge)
-        self.media_preview = MediaPreviewWidget()
-        slide = QFrame()
-        slide.setObjectName("slide")
-        sl = QVBoxLayout(slide)
-        sl.setContentsMargins(6, 6, 6, 6)
-        sl.addWidget(self.media_preview, 1)
-        lay.addWidget(slide, 1)
-        self.media_preview_name = _label("", "slideRef", wrap=True)
-        self.media_preview_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.media_preview_name)
-        ctrl = QHBoxLayout()
-        ctrl.setSpacing(8)
-        self.media_project_btn = QPushButton("Project")
-        self.media_project_btn.setObjectName("primary")
-        self.media_project_btn.setToolTip("Project the selected media (double-click in the grid also works)")
-        self.media_project_btn.clicked.connect(self.project_selected_media)
-        self.media_pause = QPushButton("Pause video")
-        self.media_pause.clicked.connect(self._on_media_pause)
-        self.media_restart = QPushButton("Restart video")
-        self.media_restart.clicked.connect(self._on_media_restart)
-        self.media_loop = QCheckBox("Loop video")
-        self.media_loop.setToolTip("Replay a projected video from the start when it ends")
-        self.media_loop.toggled.connect(self._on_media_loop)
-        for w in (self.media_project_btn, self.media_pause, self.media_restart, self.media_loop):
-            ctrl.addWidget(w)
-        ctrl.addStretch(1)
-        lay.addLayout(ctrl)
-        self.media_preview_note = _label("", "sub", wrap=True)
-        lay.addWidget(self.media_preview_note)
-        return frame
 
     def _build_media_library_panel(self) -> QFrame:
         frame, lay = self._panel("Media Library", "")
@@ -1842,6 +1805,23 @@ class OperatorWindow(QMainWindow):
         self.media_status = QLabel("")
         self.media_status.setObjectName("sub")
         lay.addWidget(self.media_status)
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(8)
+        self.media_project_btn = QPushButton("Project")
+        self.media_project_btn.setObjectName("primary")
+        self.media_project_btn.setToolTip("Project the selected media (double-click in the grid also works)")
+        self.media_project_btn.clicked.connect(self.project_selected_media)
+        self.media_pause = QPushButton("Pause video")
+        self.media_pause.clicked.connect(self._on_media_pause)
+        self.media_restart = QPushButton("Restart video")
+        self.media_restart.clicked.connect(self._on_media_restart)
+        self.media_loop = QCheckBox("Loop video")
+        self.media_loop.setToolTip("Replay a projected video from the start when it ends")
+        self.media_loop.toggled.connect(self._on_media_loop)
+        for w in (self.media_project_btn, self.media_pause, self.media_restart, self.media_loop):
+            ctrl.addWidget(w)
+        ctrl.addStretch(1)
+        lay.addLayout(ctrl)
         return frame
 
     def _build_media_empty_state(self) -> QFrame:
@@ -1946,23 +1926,11 @@ class OperatorWindow(QMainWindow):
         return row.data(Qt.ItemDataRole.UserRole) if row is not None else None
 
     def _update_media_preview(self) -> None:
-        if not hasattr(self, "media_preview"):
+        """Keep Remove and the media controls in step with the grid selection (the preview is the shared panel)."""
+        if not hasattr(self, "media_remove_btn"):
             return
         it = self._selected_media_item()
-        self.media_preview.set_item(it)
         self.media_remove_btn.setEnabled(it is not None)
-        if it is None:
-            self.media_preview_name.setText("")
-            self.media_preview_note.setText("Pick an item in the library to preview it here."
-                                            if self.media.items else "Add media to preview it here.")
-        else:
-            info = f"{it.name}  \u00b7  {it.type_label}"
-            if it.is_video:
-                info += f"  \u00b7  {it.duration_label()}"
-            self.media_preview_name.setText(info)
-            self.media_preview_note.setText(
-                "Video preview shows the first frame. Project it to play on the output." if it.is_video
-                else "Project to show this image on the output.")
         self._update_media_controls()
 
     def _on_media_remove(self) -> None:
@@ -1990,6 +1958,7 @@ class OperatorWindow(QMainWindow):
         self.rescan_media()
         self.media_status.setText(f"Removed {Path(it.path).name}.")
         self._update_media_controls()
+        self._update_shared_preview()
 
     def _selected_media_item(self):
         row = self.media_list.currentItem()
@@ -2043,16 +2012,6 @@ class OperatorWindow(QMainWindow):
         self.media_pause.setEnabled(st["enabled"])
         self.media_restart.setToolTip(st["restart_tip"])
         self.media_restart.setEnabled(st["enabled"])
-        if hasattr(self, "media_preview_badge"):
-            self.media_preview_badge.setText(self._media_preview_badge_text())
-
-    def _media_preview_badge_text(self) -> str:
-        it = self._selected_media_item() if hasattr(self, "media_list") else None
-        if it is None:
-            return "Nothing selected"
-        on_output = (self._kind == "media" and self._media_live is not None and self.output.on
-                     and not self.queue.blank and self._media_live.path == it.path)
-        return "On output" if on_output else "Selected"
 
     def _on_media_pause(self) -> None:
         self.projection.toggle_video_pause()
@@ -2448,8 +2407,6 @@ class OperatorWindow(QMainWindow):
         if slides:
             widget.setCurrentRow(0)
         widget.blockSignals(False)
-        if widget is getattr(self, "slide_now_list", None):
-            self._update_tab_preview()
         if hasattr(self, "slides_empty"):
             self._refresh_song_chrome()
 
@@ -2756,6 +2713,7 @@ class OperatorWindow(QMainWindow):
         if self.output.on and not self.queue.blank:
             self.projection.show_sermon(info)
             self._record_sermon_history(info)
+        self._update_shared_preview()
         self.sermon_note.setText("Sermon info on screen." if not info.reference else
                                  f"Sermon info on screen. Reference: {info.reference}")
 
@@ -2764,6 +2722,7 @@ class OperatorWindow(QMainWindow):
         if self._kind == "sermon":
             self._kind = "verse" if self.queue.live else None
             self._render_output()
+        self._update_shared_preview()
         self.sermon_note.setText("Sermon slide cleared.")
 
     # --- verse navigation (next/prev in the same chapter) ----------------------------------
@@ -3044,12 +3003,7 @@ class OperatorWindow(QMainWindow):
         st = self.queue.state
         # The pill shows the output switch (ON/OFF), not the queue state; blank/idle shows in the status bar.
         self.live_pill.setVisible(True)
-        if live is not None:
-            self.slide_text.setText(live.display_text if not self.queue.blank else "")
-            self.slide_ref.setText(live.reference)
-        else:
-            self.slide_text.setText("")
-            self.slide_ref.setText("")
+        self._update_shared_preview()
         self.footer_proj.setText({"live": "Projecting", "blank": "Blanked", "idle": "Idle"}[st])
         self.footer_proj.setObjectName("footerOk" if st == "live" else "footer")
         self.footer_proj.style().unpolish(self.footer_proj)

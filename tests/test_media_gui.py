@@ -178,9 +178,9 @@ def test_preview_follows_selection_and_controls_track_it(window):
     win, _ = window
     win.media_list.setCurrentRow(0)
     it = win._selected_media_item()
-    assert it is not None and win.media_preview._item is it
+    assert it is not None
     assert win.media_remove_btn.isEnabled()
-    assert it.name in win.media_preview_name.text()
+    assert win.media_pause.isEnabled() is False   # nothing projected yet, so the controls stay off
 
 
 def test_empty_library_disables_remove_and_shows_placeholder(tmp_path):
@@ -191,7 +191,6 @@ def test_empty_library_disables_remove_and_shows_placeholder(tmp_path):
     assert win.media_stack.currentWidget() is win.media_empty
     assert win.media_badge.text() == "0 items"
     assert not win.media_remove_btn.isEnabled()
-    assert win.media_preview._item is None
 
 
 def test_remove_deletes_file_and_thumb(window, monkeypatch):
