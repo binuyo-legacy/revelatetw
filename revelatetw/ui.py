@@ -425,62 +425,62 @@ class ProjectionWindow(QWidget):
 QSS = """
 QMainWindow, QWidget#root { background: #0b0f19; }
 QFrame#toolbar { background: #171d2b; border-bottom: 1px solid #232b3b; }
-QFrame#panel { background: #131926; border: 1px solid #232b3b; border-radius: 14px; }
-QFrame#card { background: #161c2a; border: 1px solid #2a3346; border-radius: 14px; }
+QFrame#panel { background: #131926; border: 1px solid #232b3b; border-radius: 10px; }
+QFrame#card { background: #161c2a; border: 1px solid #2a3346; border-radius: 10px; }
 QFrame#card[selected="true"] { border: 2px solid #facc15; background: #1b2231; }
-QFrame#tile { background: #161c2a; border: 1px solid #2a3346; border-radius: 10px; }
+QFrame#tile { background: #161c2a; border: 1px solid #2a3346; border-radius: 8px; }
 QFrame#slide { background: #0b0f19; border: 3px solid #facc15; border-radius: 6px; }
 QLabel { color: #e5e7eb; }
-QLabel#brand { color: #0b0f19; background: #facc15; border-radius: 8px; font-weight: 800; font-size: 18px; padding: 4px 9px; }
-QLabel#title { color: #f8fafc; font-size: 16px; font-weight: 700; }
-QLabel#sub { color: #94a3b8; font-size: 12px; }
-QLabel#panelTitle { color: #f8fafc; font-size: 14px; font-weight: 700; }
+QLabel#brand { color: #0b0f19; background: #facc15; border-radius: 8px; font-weight: 800; font-size: 15px; padding: 2px 7px; }
+QLabel#title { color: #f8fafc; font-size: 14px; font-weight: 700; }
+QLabel#sub { color: #94a3b8; font-size: 11px; }
+QLabel#panelTitle { color: #f8fafc; font-size: 13px; font-weight: 700; }
 QLabel#badge { color: #facc15; background: #2a2412; border-radius: 9px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
 QLabel#badgeGreen { color: #86efac; background: #1f3a2e; border-radius: 9px; padding: 2px 7px; font-size: 11px; font-weight: 700; }
 QLabel#live { color: #f87171; background: #3a1418; border: 1px solid #b42f3d; border-radius: 12px; padding: 3px 10px; font-weight: 800; }
 QLabel#timer { color: #facc15; font-family: Consolas, monospace; font-size: 14px; font-weight: 700; }
 QLabel#tileLabel { color: #94a3b8; font-size: 11px; }
-QLabel#tileValue { color: #f8fafc; font-size: 13px; font-weight: 600; }
-QLabel#verse { color: #e5e7eb; font-style: italic; font-size: 13px; }
-QLabel#ref { color: #facc15; font-weight: 700; font-size: 13px; }
-QLabel#transcript { color: #cbd5e1; font-size: 13px; }
+QLabel#tileValue { color: #f8fafc; font-size: 12px; font-weight: 600; }
+QLabel#verse { color: #e5e7eb; font-style: italic; font-size: 12px; }
+QLabel#ref { color: #facc15; font-weight: 700; font-size: 12px; }
+QLabel#transcript { color: #cbd5e1; font-size: 12px; }
 QLabel#time { color: #64748b; font-family: Consolas, monospace; font-size: 12px; }
 QLabel#hit { color: #facc15; background: rgba(250,204,21,0.14); border-radius: 4px; padding: 0 3px; font-weight: 700; }
 QLabel#footer { color: #94a3b8; font-size: 11px; }
 QLabel#footerOk { color: #86efac; font-size: 11px; }
-QLabel#slideRef { color: #facc15; font-weight: 700; font-size: 13px; }
-QLabel#slideText { color: #f8fafc; font-family: Georgia; font-size: 15px; }
-QPushButton { background: #1d2535; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 7px 12px; font-weight: 600; }
+QLabel#slideRef { color: #facc15; font-weight: 700; font-size: 12px; }
+QLabel#slideText { color: #f8fafc; font-family: Georgia; font-size: 13px; }
+QPushButton { background: #1d2535; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 7px; padding: 4px 10px; font-weight: 600; }
 QPushButton:hover { border-color: #facc15; }
 QPushButton#approve { background: #2f9e62; color: #06140c; border: 1px solid #3cc47e; font-weight: 800; }
 QPushButton#reject { background: #3a1f2a; color: #f87171; border: 1px solid #7f2a38; font-weight: 700; }
 QPushButton#seg { background: #1d2535; color: #94a3b8; border: 1px solid #2f3a52; border-radius: 0px; padding: 5px 12px; }
 QPushButton#seg[active="true"] { background: #facc15; color: #0b0f19; border-color: #facc15; font-weight: 800; }
-QPushButton#nav { background: #1d2535; color: #facc15; border: 1px solid #facc15; font-weight: 800; padding: 6px 14px; }
+QPushButton#nav { background: #1d2535; color: #facc15; border: 1px solid #facc15; font-weight: 800; padding: 4px 12px; }
 QPushButton#nav:disabled { color: #475569; border-color: #2f3a52; }
 QPushButton#live { background: #14532d; color: #4ade80; border: 1px solid #22c55e; border-radius: 12px; padding: 3px 12px; font-weight: 800; }
 QPushButton#live[on="false"] { background: #3a1418; color: #f87171; border: 1px solid #b42f3d; }
 QTabWidget::pane { border: none; }
-QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 6px 14px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 4px 12px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
 QTabBar::tab:selected { background: #facc15; color: #0b0f19; font-weight: 800; }
 QLabel#liveNote { color: #f59e0b; font-size: 11px; }
 QPushButton#ghost { background: transparent; border: 1px solid #2f3a52; color: #cbd5e1; }
-QPushButton#primary { background: #facc15; color: #0b0f19; border: 1px solid #facc15; font-weight: 800; padding: 8px 14px; }
+QPushButton#primary { background: #facc15; color: #0b0f19; border: 1px solid #facc15; font-weight: 800; padding: 5px 12px; }
 QPushButton#primary:hover { background: #fde047; }
 QPushButton#subtle { background: #161d2c; color: #cbd5e1; border: 1px solid #2f3a52; }
 QPushButton#subtle:disabled { color: #475569; border-color: #232d40; }
 QPushButton#danger { background: transparent; color: #8a4a55; border: 1px solid #3a2228; font-weight: 600; }
 QPushButton#danger:disabled { color: #3f2a31; border-color: #251a1e; }
 QPushButton#small { padding: 3px 10px; font-size: 12px; }
-QLabel#emptyIcon { color: #8a7224; font-size: 46px; }
-QLabel#emptyHint { color: #94a3b8; font-size: 13px; }
-QLabel#emptyIconBook { color: #5b6478; font-size: 40px; }
-QLabel#mediaEmptyIcon { color: #5b6478; font-size: 48px; }
+QLabel#emptyIcon { color: #8a7224; font-size: 36px; }
+QLabel#emptyHint { color: #94a3b8; font-size: 12px; }
+QLabel#emptyIconBook { color: #5b6478; font-size: 32px; }
+QLabel#mediaEmptyIcon { color: #5b6478; font-size: 36px; }
 QListWidget#mediaGrid { background: #0f1522; border: 1px solid #2f3a52; border-radius: 10px; }
 QListWidget#mediaGrid::item { color: #cbd5e1; border: 2px solid transparent; border-radius: 8px; padding: 4px; }
 QListWidget#mediaGrid::item:hover { background: #161d2c; border-color: #2f3a52; }
 QListWidget#mediaGrid::item:selected { background: #2a2412; color: #facc15; border: 2px solid #facc15; }
-QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 6px 8px; }
+QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 7px; padding: 4px 7px; }
 QLineEdit:focus, QComboBox:focus { border-color: #facc15; }
 QComboBox QAbstractItemView { background: #0f1522; color: #e5e7eb; selection-background-color: #facc15; selection-color: #0b0f19; }
 QListWidget { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; }
@@ -855,8 +855,8 @@ class OperatorWindow(QMainWindow):
         outer.addWidget(self._build_toolbar())
 
         body = QHBoxLayout()
-        body.setContentsMargins(14, 12, 14, 10)
-        body.setSpacing(12)
+        body.setContentsMargins(10, 8, 10, 8)
+        body.setSpacing(8)
         body.addWidget(self._build_transcript_panel(), 3)
         body.addWidget(self._build_queue_panel(), 3)
         live_page = QWidget()
@@ -872,7 +872,7 @@ class OperatorWindow(QMainWindow):
         preview_scroll.setWidget(self.shared_preview)
         preview_dock = QWidget()
         pd = QVBoxLayout(preview_dock)
-        pd.setContentsMargins(0, 12, 14, 10)
+        pd.setContentsMargins(0, 8, 10, 8)
         pd.setSpacing(0)
         pd.addWidget(preview_scroll)
         self._tabs = QTabWidget()
@@ -966,8 +966,8 @@ class OperatorWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("toolbar")
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(16, 10, 16, 10)
-        lay.setSpacing(10)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
         lay.addWidget(_brand_mark(30))
         lay.addWidget(_label("RevelateTW", "title"))
         lay.addStretch(1)
@@ -1123,7 +1123,7 @@ class OperatorWindow(QMainWindow):
         self.slide = QFrame()
         self.slide.setObjectName("slide")
         sl = QVBoxLayout(self.slide)
-        sl.setContentsMargins(18, 14, 18, 14)
+        sl.setContentsMargins(12, 10, 12, 10)
         self.slide_text = _label("", "slideText", wrap=True)
         self.slide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slide_ref = _label("", "slideRef")
@@ -1147,7 +1147,7 @@ class OperatorWindow(QMainWindow):
         lay.addWidget(self.next_label)
 
         grid = QGridLayout()
-        grid.setSpacing(8)
+        grid.setSpacing(6)
         self.tile_theme = self._tile("Theme", self.theme.name)
         self.tile_transition = self._tile("Transition", f"{self.theme.transition.title()} \u00b7 {self.theme.transition_ms}ms")
         self.tile_feed = self._tile("Live output", "On")
@@ -1203,8 +1203,8 @@ class OperatorWindow(QMainWindow):
         page = QWidget()
         self._songs_page = page
         root = QHBoxLayout(page)
-        root.setContentsMargins(14, 12, 14, 10)
-        root.setSpacing(12)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(8)
 
         # library
         left, ll = self._panel("Song Library", "")
@@ -1419,8 +1419,8 @@ class OperatorWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName("panel")
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(14, 12, 14, 12)
-        lay.setSpacing(8)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
         head = QHBoxLayout()
         head.addWidget(_label(title, "panelTitle"))
         head.addStretch(1)
@@ -1433,8 +1433,8 @@ class OperatorWindow(QMainWindow):
         f = QFrame()
         f.setObjectName("tile")
         v = QVBoxLayout(f)
-        v.setContentsMargins(10, 8, 10, 8)
-        v.setSpacing(2)
+        v.setContentsMargins(8, 6, 8, 6)
+        v.setSpacing(1)
         v.addWidget(_label(label.upper(), "tileLabel"))
         val = _label(value, "tileValue")
         val.setWordWrap(True)
@@ -1782,8 +1782,8 @@ class OperatorWindow(QMainWindow):
         page = QWidget()
         self._media_page = page
         root = QHBoxLayout(page)
-        root.setContentsMargins(14, 12, 14, 10)
-        root.setSpacing(12)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(8)
         # the library only: the live preview is the one shared panel on the right
         root.addWidget(self._build_media_library_panel(), 1)
         return page
@@ -1862,7 +1862,7 @@ class OperatorWindow(QMainWindow):
         f = QFrame()
         v = QVBoxLayout(f)
         v.setContentsMargins(8, 18, 8, 18)
-        v.setSpacing(10)
+        v.setSpacing(6)
         icon = _label("\U0001F5BC", "mediaEmptyIcon")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint = _label("No media yet \u2014 Add media to get started", "emptyHint", wrap=True)
