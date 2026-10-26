@@ -951,6 +951,9 @@ class OperatorWindow(QMainWindow):
         self.sys_mon = SystemMonitor(parent=self)
         self.sys_mon.sampled.connect(self._on_sys_sampled)   # queued: emitted from worker thread
         self._mic_on = False                                 # True once start_mic succeeded
+        self._mic_dev = None                                 # InputDevice currently capturing
+        self._failed_devices: set[str] = set()               # inputs that failed to open this session
+        self._capture_error = ""
         self._header_timer = QTimer(self, interval=HEADER_TICK_MS, timeout=self._tick_header)
         self._header_timer.setTimerType(Qt.TimerType.CoarseTimer)
         self._fill_testaments()
@@ -1530,46 +1533,80 @@ class OperatorWindow(QMainWindow):
         if self.source_box.currentIndex() == 0 or not self._devices:
             self.live.use_text_feed()
             self._mic_on = False
+            self._mic_dev = None
             self._refresh_header_state()
             self.source_status.setText("Dev text feed (typed sentences)")
             self.transcriber_label.setText("Transcriber: text feed")
             self.status_transcriber.setText("Transcriber: text feed")
             self.tile_audio.value.setText("Dev feed")
             return
-        row = max(0, self.device_box.currentIndex())
-        tried = [self._devices[row]]
-        # Fallback chain: chosen device -> system default input -> text feed. The wave keeps running
-        # on whichever one opens; a failure is logged and shown, never a silent dead wave.
+        # A user action (picking a device, pressing Mic) gives every input a fresh chance.
+        self._failed_devices.clear()
+        self._open_mic_chain()
+
+    def _start_default_mic(self) -> None:
+        """Startup: go live on the system default input without waiting for a click."""
+        from .audio import InputDevice
+        if self.live is None or self._dev or not self._devices:
+            return
+        if not all(isinstance(d, InputDevice) for d in self._devices):
+            return                          # not real devices (test doubles): leave the mic off
+        self.source_box.blockSignals(True)
+        self.source_box.setCurrentIndex(1)
+        self.source_box.blockSignals(False)
+        self.btn_source_mic.setChecked(True)     # toggled -> _on_source_toggle -> _apply_source
+        self._refresh_header_state()
+
+    def _open_mic_chain(self) -> None:
+        """Open the picked input, then the system default, then fall back to the text feed.
+
+        Every failure is logged and shown in the status line and on the AUDIO SOURCE wave.
+        """
         from .audio import pick_default_device
+        row = max(0, self.device_box.currentIndex())
+        chosen = self._devices[row] if row < len(self._devices) else self._devices[0]
         default = pick_default_device(self._devices)
-        if default is not None and default.name != tried[0].name:
-            tried.append(default)
-        last_exc = None
+        candidates: list = []
+        for dev in (chosen, default):
+            if dev is None or dev.name in self._failed_devices:
+                continue
+            if any(dev is c for c in candidates):
+                continue
+            candidates.append(dev)
+        if not candidates:
+            # every configured input already failed this session: try the rest, in list order
+            candidates = [d for d in self._devices if d.name not in self._failed_devices]
         opened = None
-        for dev in tried:
+        last_exc = None
+        for dev in candidates:
             try:
                 self.live.start_mic(dev, gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
                 opened = dev
                 break
             except Exception as exc:  # device busy, unplugged, or unsupported
                 last_exc = exc
+                self._failed_devices.add(dev.name)
                 _log.warning("could not open audio input %r: %s", dev.name, exc)
         if opened is None:
             self._mic_on = False
+            self._mic_dev = None
+            self._capture_error = f"Mic failed, back to text feed: {last_exc or 'no usable input'}"
             self.live.use_text_feed()
             self.source_box.blockSignals(True)
             self.source_box.setCurrentIndex(0)
             self.source_box.blockSignals(False)
             self.btn_source_dev.setChecked(True)
-            self.source_status.setText(f"Mic failed, back to text feed: {last_exc}")
+            self.source_status.setText(self._capture_error)
+            self.wave.set_no_mic()
             self._refresh_header_state()
             return
         self._mic_on = True
-        if opened is not tried[0]:
-            _log.warning("configured input %r failed, using default input %r", tried[0].name, opened.name)
-            self.source_status.setText(f"{tried[0].name} unavailable, using default input: {opened.name}")
-            # keep the picker honest: show the device actually in use
-            for i, d in enumerate(self._devices):
+        self._mic_dev = opened
+        self._capture_error = ""
+        if opened is not chosen:
+            _log.warning("configured input %r unavailable, using %r", chosen.name, opened.name)
+            self.source_status.setText(f"{chosen.name} unavailable, using default input: {opened.name}")
+            for i, d in enumerate(self._devices):   # keep the picker honest: show the device in use
                 if d is opened:
                     self.device_box.blockSignals(True)
                     self.device_box.setCurrentIndex(i)
@@ -1581,6 +1618,27 @@ class OperatorWindow(QMainWindow):
         self.transcriber_label.setText("Transcriber: Whisper")
         self.status_transcriber.setText("Transcriber: Whisper")
         self._refresh_header_state()
+
+    def _check_capture(self) -> bool:
+        """Watchdog (main thread, while the wave runs). True when the capture had to be replaced.
+
+        A stream that errors inside the audio callback, or that never delivers a block, is
+        reported and moved to the next input instead of leaving a dead grey wave.
+        """
+        cap = getattr(self.live, "capture", None) if self.live is not None else None
+        if cap is None or self._mic_dev is None:
+            return False
+        err = cap.error
+        if not err and not cap.stalled():
+            return False
+        name = self._mic_dev.name
+        reason = err or "no audio arrived from this input"
+        _log.warning("capture on %r failed: %s", name, reason)
+        self._failed_devices.add(name)
+        self.source_status.setText(f"{name} failed ({reason}). Switching input.")
+        self._populate_devices()                 # hot-plug: pick up devices added or removed
+        self._open_mic_chain()
+        return True
 
     def open_theme_editor(self) -> None:
         from .theme_editor import ThemeEditor
@@ -2971,6 +3029,13 @@ class OperatorWindow(QMainWindow):
         self._timer.start()              # idle timer runs only while visible
         self.sys_mon.start_sampling()    # PC sampler: visible only
         super().showEvent(event)
+        if not getattr(self, "_startup_mic_done", False):
+            self._startup_mic_done = True
+            try:
+                self._start_default_mic()     # first show: go live on the default input, no click needed
+            except Exception as exc:          # never let a mic problem break the window
+                _log.error("startup mic failed: %s", exc)
+                self.source_status.setText(f"Mic failed at startup: {exc}")
         self._refresh_header_state()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -3002,6 +3067,8 @@ class OperatorWindow(QMainWindow):
     def _tick_header(self) -> None:
         if not self._detection_on():     # defensive: stop if state changed without a refresh
             self._refresh_header_state()
+            return
+        if self._check_capture():        # stalled or failed capture was moved to the next input
             return
         self.wave.push(self.audio_mon.level, self.audio_mon.drain_peak(), self.audio_mon.signal_present)
 

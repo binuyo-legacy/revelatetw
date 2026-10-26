@@ -7,13 +7,17 @@ app (and the tests) run without audio hardware.
 """
 from __future__ import annotations
 
+import logging
 import math
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 TARGET_RATE = 16000  # faster-whisper expects 16 kHz mono
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -125,6 +129,19 @@ class AudioCapture:
         self.tap = tap
         self._stream = None
         self._lock = threading.Lock()
+        # Health, read from the UI thread: `blocks` counts audio callbacks (even when nothing is
+        # measured), so a stalled stream is visible; `error` holds the last callback failure.
+        self.blocks = 0
+        self.error: Optional[str] = None
+        self.rate = int(device.default_rate)
+        self.open_channels = min(max(1, int(device.channels)), 2)
+        self.started_at = 0.0
+
+    def stalled(self, after_s: float = 3.0) -> bool:
+        """True when the stream opened but has delivered no audio callbacks for `after_s` seconds."""
+        if self._stream is None or self.blocks:
+            return False
+        return time.monotonic() - self.started_at >= after_s
 
     # Gain and channel can change while running (no restart needed, spec F4).
     def set_gain(self, gain_db: float) -> None:
@@ -135,32 +152,67 @@ class AudioCapture:
         with self._lock:
             self.gate.threshold_db = db
 
+    def _pick_format(self, sd, extra) -> tuple[int, int]:
+        """(channels, sample rate) the device accepts for a shared-mode open.
+
+        Windows WASAPI often refuses a device's full channel count or its advertised rate
+        (a 32-channel mixer, or a 44.1 kHz USB card). Try the sane candidates first; if none
+        passes the check, return the first one and let the real open report the error.
+        """
+        dev = self.device.index
+        first_ch = self.open_channels
+        channels = [first_ch] + ([1] if first_ch != 1 else [])
+        rates: list[int] = []
+        for r in (int(self.device.default_rate), 48000, 44100):
+            if r and r not in rates:
+                rates.append(r)
+        for ch in channels:
+            for r in rates:
+                try:
+                    sd.check_input_settings(device=dev, channels=ch, dtype="float32",
+                                            samplerate=r, extra_settings=extra)
+                    return ch, r
+                except Exception:  # noqa: BLE001 - this candidate is refused, try the next
+                    continue
+        return first_ch, rates[0]
+
     def start(self) -> None:
         import sounddevice as sd
         import numpy as np
         extra = sd.WasapiSettings(loopback=True) if self.device.loopback else None
-        native = self.device.default_rate
+        channels, native = self._pick_format(sd, extra)
+        self.rate, self.open_channels = native, channels
+        self.blocks = 0
+        self.error = None
+        self.started_at = time.monotonic()
 
         def callback(indata, frames, time_info, status):
-            with self._lock:
-                block = indata[:, self.channel].astype(np.float32) * self.gain
-                pk, rms = level_db(block)
-                self.meter = {"peak_db": pk, "rms_db": rms}
-                block = self.gate.process(block)
-            tap = self.tap
-            if tap is not None:
-                tap(indata[:, self.channel] * self.gain, native)   # pre-gate: what the mic hears
-            # naive resample to 16 kHz; replace with a polyphase resampler for production
-            n_out = int(len(block) * TARGET_RATE / native)
-            resampled = np.interp(np.linspace(0, len(block) - 1, n_out),
-                                  np.arange(len(block)), block).astype(np.float32)
+            # Never let an exception escape into PortAudio: that stops the stream silently.
+            self.blocks += 1
             try:
-                self.chunks.put_nowait(resampled)
-            except queue.Full:
-                self.chunks.get_nowait()   # drop oldest
-                self.chunks.put_nowait(resampled)
+                with self._lock:
+                    block = indata[:, self.channel].astype(np.float32) * self.gain
+                    pk, rms = level_db(block)
+                    self.meter = {"peak_db": pk, "rms_db": rms}
+                    block = self.gate.process(block)
+                tap = self.tap
+                if tap is not None:
+                    tap(indata[:, self.channel] * self.gain, native)   # pre-gate: what the mic hears
+                # naive resample to 16 kHz; replace with a polyphase resampler for production
+                n_out = int(len(block) * TARGET_RATE / native)
+                resampled = np.interp(np.linspace(0, len(block) - 1, n_out),
+                                      np.arange(len(block)), block).astype(np.float32)
+                try:
+                    self.chunks.put_nowait(resampled)
+                except queue.Full:
+                    self.chunks.get_nowait()   # drop oldest
+                    self.chunks.put_nowait(resampled)
+            except Exception as exc:  # noqa: BLE001
+                if self.error is None:
+                    _log.error("audio callback failed on %r: %s", self.device.name, exc)
+                self.error = f"{type(exc).__name__}: {exc}"
 
-        self._stream = sd.InputStream(device=self.device.index, channels=self.device.channels,
+        self._stream = sd.InputStream(device=self.device.index, channels=channels,
                                       samplerate=native, dtype="float32", callback=callback,
                                       extra_settings=extra, blocksize=int(native * 0.1))
         self._stream.start()
