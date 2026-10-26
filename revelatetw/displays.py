@@ -46,3 +46,54 @@ def list_displays() -> list[DisplayInfo]:
     if QGuiApplication.instance() is None:
         return []
     return displays_from_screens(QGuiApplication.screens(), QGuiApplication.primaryScreen())
+
+
+# Display layout modes. Windows reports a duplicated (mirrored) screen with every display at the
+# same origin; an extended layout puts each monitor at its own position on the virtual desktop.
+MODE_SINGLE = "single"
+MODE_DUPLICATED = "duplicated"
+MODE_EXTENDED = "extended"
+
+
+def output_mode(displays: list[DisplayInfo]) -> str:
+    """single: one monitor. duplicated: several monitors sharing one origin (same picture).
+    extended: several monitors at different positions (each has its own desktop)."""
+    if len(displays) < 2:
+        return MODE_SINGLE
+    origins = {(d.x, d.y) for d in displays}
+    return MODE_DUPLICATED if len(origins) == 1 else MODE_EXTENDED
+
+
+def is_secondary(displays: list[DisplayInfo], d: DisplayInfo) -> bool:
+    """True for the monitor that is not the operator's main screen (the primary, or index 0 when none is flagged)."""
+    if any(x.primary for x in displays):
+        return not d.primary
+    return d.index != 0
+
+
+def default_output_index(displays: list[DisplayInfo]) -> int:
+    """The output monitor picked at startup: the second display in extended mode, otherwise the first."""
+    if output_mode(displays) == MODE_EXTENDED:
+        for d in displays:
+            if is_secondary(displays, d):
+                return d.index
+    return 0
+
+
+def mode_note(displays: list[DisplayInfo]) -> str:
+    mode = output_mode(displays)
+    if mode == MODE_EXTENDED:
+        return "extended: the output goes fullscreen on the second monitor"
+    if mode == MODE_DUPLICATED:
+        return "duplicated: same picture on every monitor, output opens minimized"
+    return "one monitor: output opens minimized so it does not cover this window"
+
+
+def should_fullscreen(displays: list[DisplayInfo], target: int) -> bool:
+    """Automatic placement rule: fullscreen only on a secondary monitor in extended mode.
+    Everywhere else the output stays minimized (the operator can still pick fullscreen from the menu)."""
+    if output_mode(displays) != MODE_EXTENDED:
+        return False
+    if target < 0 or target >= len(displays):
+        return False
+    return is_secondary(displays, displays[target])

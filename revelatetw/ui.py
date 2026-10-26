@@ -13,8 +13,8 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QRect, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence, QShortcut
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
                              QInputDialog,
                              QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -24,7 +24,8 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDoubl
 from .approval import ApprovalQueue
 from .media import DEFAULT_MEDIA_FOLDER, MediaItem, MediaLibrary, filter_items, format_duration
 from .detection import Candidate
-from .displays import DisplayInfo, list_displays
+from .displays import (DisplayInfo, default_output_index, list_displays, mode_note, output_mode,
+                       should_fullscreen, MODE_DUPLICATED, MODE_EXTENDED)
 from .monitor import AudioMonitor, SystemMonitor, band_for
 from .output_state import LiveOutputState, pill_state
 from .settings_page import SettingsPage
@@ -74,6 +75,8 @@ class ProjectionWindow(QWidget):
     # emitted whenever the projected video starts, stops, pauses or errors, or any content replaces it,
     # so the Media tab playback buttons re-evaluate their enabled state
     video_state_changed = pyqtSignal()
+    # right-click on the output: the operator window answers with the monitor menu
+    context_menu_requested = pyqtSignal(QPoint)
 
     def __init__(self):
         super().__init__()
@@ -99,19 +102,38 @@ class ProjectionWindow(QWidget):
         self._theme = theme
         self.update()
 
-    def move_to_display(self, geometry) -> None:
+    def move_to_display(self, geometry, screen=None) -> None:
         """Cover a whole display (QRect). Borderless and sized to the monitor, so it reads as fullscreen."""
         self._display_rect = geometry
+        self._display_screen = screen
         self.setGeometry(geometry)
 
-    def present(self) -> None:
-        """Show full-screen on the chosen display (no OBS needed; the window itself is the output)."""
+    def present_fullscreen(self) -> None:
+        """Fullscreen on the chosen display (no OBS needed; the window itself is the output)."""
         rect = getattr(self, "_display_rect", None)
+        screen = getattr(self, "_display_screen", None)
+        if screen is not None and self.windowHandle() is not None:
+            self.windowHandle().setScreen(screen)
         if rect is not None:
             self.setGeometry(rect)
         self._live = True
         self.showFullScreen()
         self.raise_()
+
+    def present_minimized(self) -> None:
+        """Output is ON but minimized: it never takes over the operator's screen (single or duplicated displays)."""
+        rect = getattr(self, "_display_rect", None)
+        if rect is not None:
+            self.setGeometry(rect)
+        self.showMinimized()
+        self._live = True                       # set after minimizing: the hide event from minimizing must not clear it
+
+    def present(self) -> None:
+        self.present_fullscreen()
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.context_menu_requested.emit(event.globalPos())
+        event.accept()
 
     def show_verse(self, c: Candidate | None) -> None:
         if c is None:
@@ -404,7 +426,10 @@ class ProjectionWindow(QWidget):
         super().resizeEvent(event)
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self.reset_animation()
+        # Minimizing also sends a hide event, but the output is still live then (it is just parked),
+        # so only a real hide (live output OFF) stops the transition and the video.
+        if not self.isMinimized():
+            self.reset_animation()
         super().hideEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -2211,7 +2236,7 @@ class OperatorWindow(QMainWindow):
         menu.clear()
         for i, d in enumerate(getattr(self, "_displays", None) or []):
             act = menu.addAction(f"{i}: {d.name} ({d.width}x{d.height})",
-                                 lambda idx=i: self.display_box.setCurrentIndex(idx))
+                                 lambda _checked=False, idx=i: self.display_box.setCurrentIndex(idx))
             act.setCheckable(True)
             act.setChecked(i == self.display_box.currentIndex())
 
@@ -2293,22 +2318,24 @@ class OperatorWindow(QMainWindow):
         self.live_pill.setToolTip(st["tooltip"])
         if on:
             self._render_output()
-            self.projection.present()
+            self._present_output()
         else:
             self.projection.hide()                     # media stays selected in _media_live; re-shown on ON
         self.tile_feed.value.setText("On" if on else "Off (hidden)")
         self._update_media_controls()
 
     # --- display picker -----------------------------------------------------------------------
-    def _populate_displays(self, keep: int = 0) -> None:
+    def _populate_displays(self, keep: int | None = None) -> None:
+        """keep=None (startup): the second monitor in extended mode, else the first. A rescan keeps the choice."""
         self._displays: list[DisplayInfo] = list_displays()
+        pick = default_output_index(self._displays) if keep is None else keep
         self.display_box.blockSignals(True)
         self.display_box.clear()
         for d in self._displays:
             self.display_box.addItem(d.label)
         if not self._displays:
             self.display_box.addItem("No display found")
-        self.display_box.setCurrentIndex(min(max(keep, 0), max(len(self._displays) - 1, 0)))
+        self.display_box.setCurrentIndex(min(max(pick, 0), max(len(self._displays) - 1, 0)))
         self.display_box.blockSignals(False)
         self._on_display_chosen(self.display_box.currentIndex())
 
@@ -2316,9 +2343,61 @@ class OperatorWindow(QMainWindow):
         if not getattr(self, "_displays", None) or idx < 0 or idx >= len(self._displays):
             return
         d = self._displays[idx]
-        self.projection.move_to_display(QRect(d.x, d.y, d.width, d.height))
+        screens = QGuiApplication.screens()
+        screen = screens[idx] if idx < len(screens) else None
+        self.projection.move_to_display(QRect(d.x, d.y, d.width, d.height), screen)
+        self.display_box.setToolTip(f"Monitor for the live output ({mode_note(self._displays)}).")
         if self.output.on:
-            self.projection.present()
+            self._present_output()
+
+    def _present_output(self, explicit: bool = False) -> None:
+        """Where the output window goes when the output is ON.
+        Automatic (explicit=False): fullscreen only on a second monitor in extended mode, otherwise minimized
+        so it never covers the operator's screen. explicit=True (menu pick): fullscreen on the chosen monitor."""
+        displays = getattr(self, "_displays", None) or []
+        idx = self.display_box.currentIndex()
+        if explicit or should_fullscreen(displays, idx):
+            self.projection.present_fullscreen()
+        else:
+            self.projection.present_minimized()
+
+    def _output_menu(self) -> "QMenu":
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        displays = list(getattr(self, "_displays", None) or [])
+        head = menu.addAction(f"Mode: {mode_note(displays)}")
+        head.setEnabled(False)
+        cur = self.display_box.currentIndex()
+        for i, d in enumerate(displays):
+            tag = " (active)" if i == cur else ""
+            prim = ", primary" if d.primary else ""
+            act = menu.addAction(f"Show on Monitor {i + 1}{tag}  [{d.width}x{d.height}{prim}]",
+                                 lambda _checked=False, idx=i: self._output_on_monitor(idx))
+            act.setCheckable(True)
+            act.setChecked(i == cur)
+        if not displays:
+            none = menu.addAction("No monitor found")
+            none.setEnabled(False)
+        menu.addSeparator()
+        mini = menu.addAction("Minimize output window", self._minimize_output)
+        mini.setEnabled(self.output.on)
+        return menu
+
+    def _show_output_menu(self, pos) -> None:
+        self._output_menu().exec(pos)   # monitor list as last scanned (Rescan refreshes it)
+
+    def _output_on_monitor(self, idx: int) -> None:
+        """Menu pick: that monitor carries the output, fullscreen there, and the output switches ON."""
+        self.display_box.setCurrentIndex(idx)            # moves the output window to that monitor
+        if not self.output.on:
+            self.output.set(True)
+            self._apply_output_state()
+        self._present_output(explicit=True)              # a deliberate pick goes fullscreen
+        self.refresh()
+
+    def _minimize_output(self) -> None:
+        if self.output.on:
+            self.projection.present_minimized()
 
     # --- songs library ------------------------------------------------------------------------
     def _empty_state(self, icon: str, hint: str, icon_obj: str) -> QFrame:
@@ -3163,8 +3242,17 @@ def run_app(queue: ApprovalQueue, theme: Theme, pipeline=None, projection_screen
                         settings=settings, settings_path=settings_path, dev=dev)
     if icon_path is not None:
         op.setWindowIcon(app.windowIcon())
-    op.display_box.setCurrentIndex(projection_screen)
+    if projection_screen is not None:               # None = automatic (second monitor in extended mode)
+        op.display_box.setCurrentIndex(projection_screen)
+    projection.context_menu_requested.connect(op._show_output_menu)
+    op.live_pill.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    op.live_pill.customContextMenuRequested.connect(op._show_output_menu)
+    op.display_box.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    op.display_box.customContextMenuRequested.connect(op._show_output_menu)
+    op.shared_preview.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    op.shared_preview.customContextMenuRequested.connect(op._show_output_menu)
     op.resize(1280, 800)
+    projection.hide()                               # startup: output is OFF, so the output window never appears
     op.show()
     if splash is not None:
         from .splash import finish_splash

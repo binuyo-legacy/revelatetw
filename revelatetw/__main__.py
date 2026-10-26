@@ -56,8 +56,8 @@ def main(argv=None) -> int:
                     help="faster-whisper model size (tiny, base, small). Enables live mic in --gui.")
     ap.add_argument("--songs-dir", default="data/songs",
                     help="folder for saved songs (one JSON file per song)")
-    ap.add_argument("--output-screen", type=int, default=0,
-                    help="index of the monitor for the live output (see the display picker)")
+    ap.add_argument("--output-screen", type=int, default=None,
+                    help="index of the monitor for the live output (default: the second monitor in extended mode)")
     ap.add_argument("--dev", action="store_true",
                     help="show the Dev feed (typed text instead of the mic). Off by default.")
     ap.add_argument("--settings", default="data/settings.json",
