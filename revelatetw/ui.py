@@ -40,6 +40,7 @@ from .outputs import (PROJECTION_WINDOW_TITLE, paint_background, paint_media_ima
                       paint_verse)
 from .transitions import (FRAME_MS, compose_layout, direction_for, effective_style,
                           interrupt_duration, is_cut, progress)
+from .ui_tokens import COLORS, SPACE, build_qss
 
 # Brand palette (spec section 1)
 INDIGO, PURPLE, GOLD, MIDNIGHT, PARCHMENT, EMBER = (
@@ -447,79 +448,22 @@ class ProjectionWindow(QWidget):
             painter.end()
 
 
-QSS = """
-QMainWindow, QWidget#root { background: #0b0f19; }
-QFrame#toolbar { background: #171d2b; border-bottom: 1px solid #232b3b; }
-QFrame#panel { background: #131926; border: 1px solid #232b3b; border-radius: 10px; }
-QFrame#card { background: #161c2a; border: 1px solid #2a3346; border-radius: 10px; }
-QFrame#card[selected="true"] { border: 2px solid #facc15; background: #1b2231; }
-QFrame#tile { background: #161c2a; border: 1px solid #2a3346; border-radius: 8px; }
-QFrame#slide { background: #0b0f19; border: 3px solid #facc15; border-radius: 6px; }
-QLabel { color: #e5e7eb; }
-QLabel#brand { color: #0b0f19; background: #facc15; border-radius: 8px; font-weight: 800; font-size: 15px; padding: 2px 7px; }
-QLabel#title { color: #f8fafc; font-size: 14px; font-weight: 700; }
-QLabel#sub { color: #94a3b8; font-size: 11px; }
-QLabel#panelTitle { color: #f8fafc; font-size: 13px; font-weight: 700; }
-QLabel#badge { color: #facc15; background: #2a2412; border-radius: 9px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
-QLabel#badgeGreen { color: #86efac; background: #1f3a2e; border-radius: 9px; padding: 2px 7px; font-size: 11px; font-weight: 700; }
-QLabel#live { color: #f87171; background: #3a1418; border: 1px solid #b42f3d; border-radius: 12px; padding: 3px 10px; font-weight: 800; }
-QLabel#timer { color: #facc15; font-family: Consolas, monospace; font-size: 14px; font-weight: 700; }
-QLabel#tileLabel { color: #94a3b8; font-size: 11px; }
-QLabel#tileValue { color: #f8fafc; font-size: 12px; font-weight: 600; }
-QLabel#verse { color: #e5e7eb; font-style: italic; font-size: 12px; }
-QLabel#ref { color: #facc15; font-weight: 700; font-size: 12px; }
-QLabel#transcript { color: #cbd5e1; font-size: 12px; }
-QLabel#time { color: #64748b; font-family: Consolas, monospace; font-size: 12px; }
-QLabel#hit { color: #facc15; background: rgba(250,204,21,0.14); border-radius: 4px; padding: 0 3px; font-weight: 700; }
-QLabel#footer { color: #94a3b8; font-size: 11px; }
-QLabel#footerOk { color: #86efac; font-size: 11px; }
-QLabel#slideRef { color: #facc15; font-weight: 700; font-size: 12px; }
-QLabel#slideText { color: #f8fafc; font-family: Georgia; font-size: 13px; }
-QPushButton { background: #1d2535; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 7px; padding: 4px 10px; font-weight: 600; }
-QPushButton:hover { border-color: #facc15; }
-QPushButton#approve { background: #2f9e62; color: #06140c; border: 1px solid #3cc47e; font-weight: 800; }
-QPushButton#reject { background: #3a1f2a; color: #f87171; border: 1px solid #7f2a38; font-weight: 700; }
-QPushButton#seg { background: #1d2535; color: #94a3b8; border: 1px solid #2f3a52; border-radius: 0px; padding: 5px 12px; }
-QPushButton#seg[active="true"] { background: #facc15; color: #0b0f19; border-color: #facc15; font-weight: 800; }
-QPushButton#nav { background: #1d2535; color: #facc15; border: 1px solid #facc15; font-weight: 800; padding: 4px 12px; }
-QPushButton#nav:disabled { color: #475569; border-color: #2f3a52; }
-QPushButton#live { background: #14532d; color: #4ade80; border: 1px solid #22c55e; border-radius: 12px; padding: 3px 12px; font-weight: 800; }
-QPushButton#live[on="false"] { background: #3a1418; color: #f87171; border: 1px solid #b42f3d; }
-QTabWidget::pane { border: none; }
-QTabBar::tab { background: #1d2535; color: #94a3b8; padding: 4px 12px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
-QTabBar::tab:selected { background: #facc15; color: #0b0f19; font-weight: 800; }
-QLabel#liveNote { color: #f59e0b; font-size: 11px; }
-QPushButton#ghost { background: transparent; border: 1px solid #2f3a52; color: #cbd5e1; }
-QPushButton#primary { background: #facc15; color: #0b0f19; border: 1px solid #facc15; font-weight: 800; padding: 5px 12px; }
-QPushButton#primary:hover { background: #fde047; }
-QPushButton#subtle { background: #161d2c; color: #cbd5e1; border: 1px solid #2f3a52; }
-QPushButton#subtle:disabled { color: #475569; border-color: #232d40; }
-QPushButton#danger { background: transparent; color: #8a4a55; border: 1px solid #3a2228; font-weight: 600; }
-QPushButton#danger:disabled { color: #3f2a31; border-color: #251a1e; }
-QPushButton#small { padding: 3px 10px; font-size: 12px; }
-QLabel#emptyIcon { color: #8a7224; font-size: 36px; }
-QLabel#emptyHint { color: #94a3b8; font-size: 12px; }
-QLabel#emptyIconBook { color: #5b6478; font-size: 32px; }
-QLabel#mediaEmptyIcon { color: #5b6478; font-size: 36px; }
-QListWidget#mediaGrid { background: #0f1522; border: 1px solid #2f3a52; border-radius: 10px; }
-QListWidget#mediaGrid::item { color: #cbd5e1; border: 2px solid transparent; border-radius: 8px; padding: 4px; }
-QListWidget#mediaGrid::item:hover { background: #161d2c; border-color: #2f3a52; }
-QListWidget#mediaGrid::item:selected { background: #2a2412; color: #facc15; border: 2px solid #facc15; }
-QLineEdit, QComboBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 7px; padding: 4px 7px; }
-QLineEdit:focus, QComboBox:focus { border-color: #facc15; }
-QComboBox QAbstractItemView { background: #0f1522; color: #e5e7eb; selection-background-color: #facc15; selection-color: #0b0f19; }
-QListWidget { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; }
-QListWidget::item:selected { background: #facc15; color: #0b0f19; }
-QDoubleSpinBox { background: #0f1522; color: #e5e7eb; border: 1px solid #2f3a52; border-radius: 8px; padding: 4px; }
-QScrollArea { background: transparent; border: none; }
-QScrollArea > QWidget > QWidget { background: transparent; }
-QFrame#statusbar { background: #0f1522; border-top: 1px solid #232b3b; }
-"""
+QSS = build_qss()     # all colours, sizes and spacing live in ui_tokens.py
 
 
 def _set_prop(w, name, value) -> None:
     """Re-polish a widget after changing a QSS dynamic property."""
     w.setProperty(name, value)
+    w.style().unpolish(w)
+    w.style().polish(w)
+
+
+def _set_name(w, name: str) -> None:
+    """Switch a widget to another QSS object name and re-polish it. No-op if it already has that name,
+    so calling it every refresh costs nothing."""
+    if w.objectName() == name:
+        return
+    w.setObjectName(name)
     w.style().unpolish(w)
     w.style().polish(w)
 
@@ -869,6 +813,7 @@ class OperatorWindow(QMainWindow):
         self._media_items: list = []
         self.sermon_presets = SermonPresetLibrary(sermons_dir)
         self._songs: list[Song] = []
+        self._setup_autoexpanded = False     # Audio & display section opened itself once for a problem
 
         self.setStyleSheet(QSS)
         central = QWidget()
@@ -926,6 +871,7 @@ class OperatorWindow(QMainWindow):
         self._populate_devices()
         self.btn_source_mic.toggled.connect(self._on_source_toggle)
         self.btn_source_dev.toggled.connect(self._on_source_toggle)
+        self.btn_setup.toggled.connect(self._on_setup_toggle)
         self.btn_approve.clicked.connect(self.approve_selected)
         self.btn_reject.clicked.connect(self.reject_selected)
         self.btn_hold.clicked.connect(self.hold_selected)
@@ -1046,13 +992,7 @@ class OperatorWindow(QMainWindow):
         self.feed.setPlaceholderText("Dev feed: type a sentence and press Enter")
         self.feed.setVisible(self._dev)               # dev text box only with --dev
         lay.addWidget(self.feed)
-        foot = QHBoxLayout()
-        self.transcriber_label = _label("Transcriber: text feed", "footer")
-        foot.addWidget(self.transcriber_label)
-        foot.addStretch(1)
-        self.latency_label = _label("Latency 0.0s", "footer")
-        foot.addWidget(self.latency_label)
-        lay.addLayout(foot)
+        # Transcriber and latency are shown once, in the status bar at the bottom of the window.
         return frame
 
     def _build_queue_panel(self) -> QFrame:
@@ -1116,6 +1056,7 @@ class OperatorWindow(QMainWindow):
         self._manual_on = False
 
         self.list = QListWidget()
+        self.list.setObjectName("queueList")     # larger rows and text (see ui_tokens)
         lay.addWidget(self.list, 3)
         self.cards_hint = _label("Select a card. First card is next to project.", "sub")
         lay.addWidget(self.cards_hint)
@@ -1131,17 +1072,15 @@ class OperatorWindow(QMainWindow):
         self.btn_reject = QPushButton("Reject (Esc)")
         self.btn_reject.setObjectName("reject")
         self.btn_hold = QPushButton("Hold (H)")
+        self.btn_hold.setObjectName("subtle")
         self.btn_blank = QPushButton("Blank (B)")
-        for b in (self.btn_approve, self.btn_reject, self.btn_hold, self.btn_blank):
-            row.addWidget(b)
+        self.btn_blank.setObjectName("subtle")
+        # Approve is the main action: it gets twice the width of the others.
+        row.addWidget(self.btn_approve, 2)
+        for b in (self.btn_reject, self.btn_hold, self.btn_blank):
+            row.addWidget(b, 1)
         lay.addLayout(row)
-        foot = QHBoxLayout()
-        self.auto_label = _label("Auto-approve: off", "footer")
-        foot.addWidget(self.auto_label)
-        foot.addStretch(1)
-        self.cleared_label = _label("Queue cleared 0 this session", "footerOk")
-        foot.addWidget(self.cleared_label)
-        lay.addLayout(foot)
+        # Auto-approve and "queue cleared" are shown once, in the status bar at the bottom of the window.
         return frame
 
     def _build_preview_panel(self) -> QFrame:
@@ -1174,16 +1113,39 @@ class OperatorWindow(QMainWindow):
         self.next_label = _label("", "sub", wrap=True)
         lay.addWidget(self.next_label)
 
+        # Output state, shown once here. The LIVE pill in the toolbar is the control; this line also
+        # says "Blanked", which the pill cannot.
+        self.footer_proj = _label("Projecting", "footerOk")
+        lay.addWidget(self.footer_proj)
+
         grid = QGridLayout()
-        grid.setSpacing(6)
+        grid.setSpacing(SPACE.sm)
         self.tile_theme = self._tile("Theme", self.theme.name)
         self.tile_transition = self._tile("Transition", f"{self.theme.transition.title()} \u00b7 {self.theme.transition_ms}ms")
-        self.tile_feed = self._tile("Live output", "On")
-        self.tile_audio = self._tile("Audio route", "Dev feed")
-        for i, t in enumerate([self.tile_theme, self.tile_transition, self.tile_feed, self.tile_audio]):
-            grid.addWidget(t, i // 2, i % 2)
+        grid.addWidget(self.tile_theme, 0, 0)
+        grid.addWidget(self.tile_transition, 0, 1)
         lay.addLayout(grid)
+        self.btn_theme = QPushButton("Theme editor...")
+        self.btn_theme.clicked.connect(self.open_theme_editor)
+        lay.addWidget(self.btn_theme)
 
+        # Setup (projector display and audio input) is needed once per service, so it is collapsed
+        # by default. The summary line under the button says what is currently chosen, and the section
+        # opens by itself if audio reports a problem (see _update_setup_summary).
+        self.btn_setup = QPushButton("Audio & display \u25b8")
+        self.btn_setup.setObjectName("disclosure")
+        self.btn_setup.setCheckable(True)
+        self.btn_setup.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_setup.setToolTip("Choose the projector display and the audio input")
+        lay.addWidget(self.btn_setup)
+        self.setup_summary = _label("", "sub", wrap=True)
+        lay.addWidget(self.setup_summary)
+        self.setup_box = QFrame()
+        self.setup_box.setObjectName("setupBody")
+        sb = QVBoxLayout(self.setup_box)
+        sb.setContentsMargins(SPACE.lg, SPACE.md, SPACE.lg, SPACE.lg)
+        sb.setSpacing(SPACE.sm)
+        sb.addWidget(_label("Output display", "fieldLabel"))
         disp = QHBoxLayout()
         self.display_box = QComboBox()
         self.display_box.setToolTip("Monitor for the live output. Fullscreen borderless on that display.")
@@ -1191,21 +1153,9 @@ class OperatorWindow(QMainWindow):
         self.btn_rescan.setObjectName("ghost")
         disp.addWidget(self.display_box, 1)
         disp.addWidget(self.btn_rescan)
-        lay.addWidget(_label("Output display (fullscreen, any capture software can read it)", "sub"))
-        lay.addLayout(disp)
-        self.btn_theme = QPushButton("Theme editor...")
-        self.btn_theme.clicked.connect(self.open_theme_editor)
-        lay.addWidget(self.btn_theme)
-        self.meter = _label("Level: --", "footer")
-        lay.addWidget(self.meter)
-        self.source_status = _label("", "footer", wrap=True)
-        lay.addWidget(self.source_status)
-        self.gain = QDoubleSpinBox()
-        self.gain.setRange(-60, 20)
-        self.gain.setSuffix(" dB")
-        self.gain.setValue(0)
-        self.gain.setToolTip("Input gain")
-        lay.addWidget(self.gain)
+        sb.addLayout(disp)
+        sb.addWidget(_label("Fullscreen on that monitor. Any capture software can read it.", "sub", wrap=True))
+        sb.addWidget(_label("Audio input", "fieldLabel"))
         self.source_box = QComboBox()
         self.source_box.addItems(["Dev text feed", "Live microphone"])
         self.source_box.setCurrentIndex(1)           # default source: live microphone
@@ -1213,18 +1163,23 @@ class OperatorWindow(QMainWindow):
         self.device_box = QComboBox()
         self.device_box.setToolTip("Audio input (WASAPI loopback lists mixing-desk output)")
         self.device_box.setPlaceholderText("Audio input")
-        lay.addWidget(self.device_box)
-        self.indicator = _label("IDLE", "footer")
-        self.indicator.hide()
-        lay.addWidget(self.indicator)
-
-        status = QHBoxLayout()
-        self.footer_proj = _label("Projecting", "footerOk")
-        status.addWidget(self.footer_proj)
-        status.addStretch(1)
-        self.footer_sync = _label("Preview synced", "footer")
-        status.addWidget(self.footer_sync)
-        lay.addLayout(status)
+        sb.addWidget(self.device_box)
+        gain_row = QHBoxLayout()
+        gain_row.addWidget(_label("Input gain", "fieldLabel"))
+        self.gain = QDoubleSpinBox()
+        self.gain.setRange(-60, 20)
+        self.gain.setSuffix(" dB")
+        self.gain.setValue(0)
+        self.gain.setToolTip("Input gain")
+        gain_row.addWidget(self.gain, 1)
+        sb.addLayout(gain_row)
+        self.meter = _label("Level: --", "footer")
+        sb.addWidget(self.meter)
+        self.source_status = _label("", "footer", wrap=True)
+        sb.addWidget(self.source_status)
+        self.setup_box.hide()
+        lay.addWidget(self.setup_box)
+        lay.addStretch(1)
         return frame
 
     def _build_songs_tab(self) -> QWidget:
@@ -1561,9 +1516,7 @@ class OperatorWindow(QMainWindow):
             self._mic_dev = None
             self._refresh_header_state()
             self.source_status.setText("Dev text feed (typed sentences)")
-            self.transcriber_label.setText("Transcriber: text feed")
             self.status_transcriber.setText("Transcriber: text feed")
-            self.tile_audio.value.setText("Dev feed")
             return
         # A user action (picking a device, pressing Mic) gives every input a fresh chance.
         self._failed_devices.clear()
@@ -1639,8 +1592,6 @@ class OperatorWindow(QMainWindow):
                     break
         else:
             self.source_status.setText(f"Listening: {opened.name}")
-        self.tile_audio.value.setText(opened.name)
-        self.transcriber_label.setText("Transcriber: Whisper")
         self.status_transcriber.setText("Transcriber: Whisper")
         self._refresh_header_state()
 
@@ -2158,7 +2109,8 @@ class OperatorWindow(QMainWindow):
         on = self.settings.auto_approve
         text = "Auto-approve: ON (no operator approval)" if on else "Auto-approve: off"
         self.status_auto.setText(text)
-        self.auto_label.setText(text)
+        # Auto-approve skips the operator, so when it is on the status bar says so in amber.
+        _set_name(self.status_auto, "footerWarn" if on else "footer")
 
     def _on_setting_changed(self, key: str) -> None:
         """Apply one changed setting to the running app, then save the file."""
@@ -2321,7 +2273,6 @@ class OperatorWindow(QMainWindow):
             self._present_output()
         else:
             self.projection.hide()                     # media stays selected in _media_live; re-shown on ON
-        self.tile_feed.value.setText("On" if on else "Off (hidden)")
         self._update_media_controls()
 
     # --- display picker -----------------------------------------------------------------------
@@ -3015,6 +2966,29 @@ class OperatorWindow(QMainWindow):
         if on:
             self._fill_books()
 
+    def _on_setup_toggle(self, on: bool) -> None:
+        """Show or hide the Audio & display section. While it is collapsed, a one-line summary stands in."""
+        self.setup_box.setVisible(on)
+        self.setup_summary.setVisible(not on)
+        self.btn_setup.setText("Audio & display \u25be" if on else "Audio & display \u25b8")
+
+    def _update_setup_summary(self) -> None:
+        """One line saying which input and display are in use. A problem is marked with a warning sign,
+        and the section opens by itself the first time one appears so the operator sees the message."""
+        status = self.source_status.text().strip()
+        normal = (not status or status.startswith(("Listening", "Dev text feed"))
+                  or (self._dev and self.live is None))      # --dev without audio is by design, not a fault
+        parts = [status or "Audio input not started"]
+        display = self.display_box.currentText().strip()
+        if display:
+            parts.append(display)
+        text = ("\u26a0 " if not normal else "") + "  \u00b7  ".join(parts)
+        if self.setup_summary.text() != text:
+            self.setup_summary.setText(text)
+        if not normal and not self._setup_autoexpanded:
+            self._setup_autoexpanded = True
+            self.btn_setup.setChecked(True)
+
     def _fill_testaments(self) -> None:
         from .navigation import manual_testaments
         self.man_testament.blockSignals(True)
@@ -3162,6 +3136,7 @@ class OperatorWindow(QMainWindow):
         self.list.clear()
         for c in pending:
             item = QListWidgetItem(f"{c.reference}   {c.confidence}%  {c.match_type}")
+            item.setSizeHint(QSize(0, SPACE.row_height))
             self.list.addItem(item)
         if pending:
             self.list.setCurrentRow(min(max(self.queue.selected, 0), len(pending) - 1))
@@ -3170,11 +3145,11 @@ class OperatorWindow(QMainWindow):
         for i in range(self.list.count()):   # first card = next to project: gold text, tinted row
             it = self.list.item(i)
             if i == 0:
-                it.setForeground(QColor("#facc15"))
-                it.setBackground(QColor("#1b2231"))
+                it.setForeground(QColor(COLORS.accent))
+                it.setBackground(QColor(COLORS.selected_bg))
             else:
-                it.setForeground(QColor("#e5e7eb"))
-                it.setBackground(QColor("#0f1522"))
+                it.setForeground(QColor(COLORS.text))
+                it.setBackground(QColor(COLORS.surface_input))
         self.queue_badge.setText(f"{len(pending)} pending")
         self._show_selected()
         self._refresh_transcript()
@@ -3184,10 +3159,13 @@ class OperatorWindow(QMainWindow):
         # The pill shows the output switch (ON/OFF), not the queue state; blank/idle shows in the status bar.
         self.live_pill.setVisible(True)
         self._update_shared_preview()
-        self.footer_proj.setText({"live": "Projecting", "blank": "Blanked", "idle": "Idle"}[st])
-        self.footer_proj.setObjectName("footerOk" if st == "live" else "footer")
-        self.footer_proj.style().unpolish(self.footer_proj)
-        self.footer_proj.style().polish(self.footer_proj)
+        if self.output.on:
+            self.footer_proj.setText({"live": "Projecting", "blank": "Blanked", "idle": "Idle"}[st])
+            _set_name(self.footer_proj, "footerOk" if st == "live" else "footer")
+        else:
+            # the output switch is off, so nothing reaches the projector whatever the queue says
+            self.footer_proj.setText("Output off (projector window hidden)")
+            _set_name(self.footer_proj, "footerWarn")
         self.btn_prev.setEnabled(live is not None and self._has_neighbour(-1))
         self.btn_next.setEnabled(live is not None and self._has_neighbour(+1))
         if live is not None and self._store is not None:
@@ -3197,11 +3175,9 @@ class OperatorWindow(QMainWindow):
             self.next_label.setText("")
 
         cleared = self.queue.cleared_count()
-        self.cleared_label.setText(f"Queue cleared {cleared} this session")
         self.status_cleared.setText(f"Queue cleared {cleared}")
         if self.pipeline is not None:
             ms = self.pipeline.last_latency_ms
-            self.latency_label.setText(f"Latency {ms / 1000:.1f}s")
             self.status_latency.setText(f"Latency {ms / 1000:.1f}s")
         self.timer_label.setText(time.strftime("%H:%M:%S", time.gmtime(time.time() - self._started)))
         if self.live is not None:
@@ -3210,6 +3186,7 @@ class OperatorWindow(QMainWindow):
         elif self._audio_meter:
             m = self._audio_meter()
             self.meter.setText(f"Peak {m['peak_db']:.0f} dB   RMS {m['rms_db']:.0f} dB")
+        self._update_setup_summary()
 
     def _has_neighbour(self, delta: int) -> bool:
         live = self.queue.live
