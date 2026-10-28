@@ -21,6 +21,9 @@ Live detection
 - Detects citations spoken as digits or words (for example "John chapter three verse sixteen") and paraphrased verses.
 - Every detection goes to the approval queue. Only the operator's approve action changes the projected output.
 - A LIVE toggle controls whether detection is running.
+- A "Getting ready" checklist on the Verses tab shows, before the sermon starts, whether the microphone is listening and hearing sound, which screen is the projector, and whether the output is on. Each problem has a button that opens the right setting.
+- Input gain (Audio & display) changes the microphone level while it is running and is remembered between sessions.
+- Ctrl+1 to Ctrl+4 switch between the Verses, Songs & sermon, Media and Settings tabs.
 
 Songs and sermon
 - Songs tab with create, read, update and delete for songs and their sections.

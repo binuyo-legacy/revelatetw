@@ -81,6 +81,9 @@ class Space:
     md: int = 8
     lg: int = 12
     xl: int = 16
+    panel_x: int = 12      # inner padding of a panel, sides
+    panel_y: int = 10      # inner padding of a panel, top and bottom
+    gap: int = 10          # space between neighbouring panels
     row_height: int = 38   # approval-queue rows: easy to hit with a mouse and to read at a glance
 
 
@@ -107,6 +110,7 @@ CONTRAST_PAIRS: tuple[tuple[str, str, float], ...] = (
     ("danger_quiet", "surface_input", 4.5),
     ("warning", "bg", 4.5), ("warning", "warning_bg", 4.5), ("warning", "surface_input", 4.5),
     ("live_on_text", "live_on_bg", 4.5),
+    ("text_strong", "surface_input", 4.5),
 )
 
 
@@ -143,6 +147,7 @@ QFrame#card[selected="true"] {{ border: 2px solid {c.accent}; background: {c.sel
 QFrame#tile {{ background: {c.surface_alt}; border: 1px solid {c.border_card}; border-radius: 8px; }}
 QFrame#slide {{ background: {c.bg}; border: 2px solid {c.accent}; border-radius: 6px; }}
 QFrame#setupBody {{ background: {c.surface_input}; border: 1px solid {c.border_card}; border-radius: 8px; }}
+QFrame#checklist {{ background: {c.surface_input}; border: 1px solid {c.border_card}; border-radius: 10px; }}
 QFrame#liveNote {{ background: {c.warning_bg}; border: 1px solid {c.warning_border}; border-radius: 8px; }}
 QFrame#liveNote QLabel {{ color: {c.warning}; background: transparent; }}
 
@@ -168,6 +173,11 @@ QLabel#footerOk {{ color: {c.success_text}; font-size: {px(t.caption)}; }}
 QLabel#footerWarn {{ color: {c.warning}; font-size: {px(t.caption)}; font-weight: 700; }}
 QLabel#slideRef {{ color: {c.accent}; font-weight: 700; font-size: {px(t.body)}; }}
 QLabel#slideText {{ color: {c.text_strong}; font-family: Georgia; font-size: {px(t.emphasis)}; }}
+QLabel#checkTitle {{ color: {c.text_strong}; font-size: {px(t.emphasis)}; font-weight: 700; background: transparent; }}
+QLabel#checkText {{ color: {c.text}; font-size: {px(t.body)}; background: transparent; }}
+QLabel#checkOk {{ color: {c.success_text}; font-size: {px(t.emphasis)}; font-weight: 800; background: transparent; }}
+QLabel#checkWarn {{ color: {c.warning}; font-size: {px(t.emphasis)}; font-weight: 800; background: transparent; }}
+QLabel#checkInfo {{ color: {c.text_muted}; font-size: {px(t.emphasis)}; font-weight: 800; background: transparent; }}
 QLabel#liveNote {{ color: {c.warning}; font-size: {px(t.caption)}; }}
 QLabel#emptyIcon {{ color: #8a7224; font-size: {px(t.icon)}; }}
 QLabel#emptyHint {{ color: {c.text_muted}; font-size: {px(t.caption)}; }}
@@ -202,6 +212,7 @@ QPushButton#disclosure:checked {{ color: {c.text_strong}; }}
 
 QTabWidget::pane {{ border: none; }}
 QTabBar::tab {{ background: {c.surface_raised}; color: {c.text_muted}; padding: 6px 16px; margin-right: 3px; border-top-left-radius: 8px; border-top-right-radius: 8px; font-size: {px(t.body)}; }}
+QTabBar::tab:last {{ margin-left: 28px; }}
 QTabBar::tab:hover:!selected {{ color: {c.text_strong}; background: {c.selected_bg}; }}
 QTabBar::tab:selected {{ background: {c.accent}; color: {c.accent_on}; font-weight: 800; }}
 

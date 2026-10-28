@@ -29,7 +29,9 @@ from .displays import (DisplayInfo, default_output_index, list_displays, mode_no
 from .monitor import AudioMonitor, SystemMonitor, band_for
 from .output_state import LiveOutputState, pill_state
 from .settings_page import SettingsPage
-from .store import APP_VERSION, AppSettings, save_settings
+from .preflight import (ACTION_AUDIO_SETUP, ACTION_TOGGLE_OUTPUT, INFO, OK, SUBLINE, headline,
+                        heard_sound, preflight)
+from .store import APP_VERSION, INPUT_GAIN_RANGE_DB, AppSettings, save_settings
 from .paths import bundled
 from .sermon import SermonInfo
 from .songs import Slide, Song, SongLibrary, lyrics_text, split_lyrics
@@ -814,6 +816,10 @@ class OperatorWindow(QMainWindow):
         self.sermon_presets = SermonPresetLibrary(sermons_dir)
         self._songs: list[Song] = []
         self._setup_autoexpanded = False     # Audio & display section opened itself once for a problem
+        self._heard_sound = False            # the mic has picked up sound since it was (re)opened
+        self._check_sig = None               # last checklist shown; the card is rebuilt only when it changes
+        # Gain can change on every arrow-key step; the file is written once the operator stops.
+        self._gain_save_timer = QTimer(self, singleShot=True, interval=600, timeout=self._save_settings)
 
         self.setStyleSheet(QSS)
         central = QWidget()
@@ -825,8 +831,8 @@ class OperatorWindow(QMainWindow):
         outer.addWidget(self._build_toolbar())
 
         body = QHBoxLayout()
-        body.setContentsMargins(10, 8, 10, 8)
-        body.setSpacing(8)
+        body.setContentsMargins(SPACE.gap, SPACE.md, SPACE.gap, SPACE.md)
+        body.setSpacing(SPACE.gap)
         body.addWidget(self._build_transcript_panel(), 3)
         body.addWidget(self._build_queue_panel(), 3)
         live_page = QWidget()
@@ -842,11 +848,11 @@ class OperatorWindow(QMainWindow):
         preview_scroll.setWidget(self.shared_preview)
         preview_dock = QWidget()
         pd = QVBoxLayout(preview_dock)
-        pd.setContentsMargins(0, 8, 10, 8)
+        pd.setContentsMargins(0, SPACE.md, SPACE.gap, SPACE.md)
         pd.setSpacing(0)
         pd.addWidget(preview_scroll)
         self._tabs = QTabWidget()
-        self._tabs.addTab(live_page, "Live (verses)")
+        self._tabs.addTab(live_page, "Verses")
         self._tabs.addTab(self._build_songs_tab(), "Songs & sermon")
         self._tabs.addTab(self._build_media_tab(), "Media")
         from . import fftools
@@ -855,6 +861,8 @@ class OperatorWindow(QMainWindow):
         self.settings_page.changed.connect(self._on_setting_changed)
         self._tabs.addTab(self.settings_page, "Settings")
         self._settings_index = self._tabs.count() - 1
+        for i in range(self._tabs.count()):       # Ctrl+1 to Ctrl+4 switch tabs (see _build_shortcuts)
+            self._tabs.setTabToolTip(i, f"{self._tabs.tabText(i)} (Ctrl+{i + 1})")
         middle = QHBoxLayout()
         middle.setContentsMargins(0, 0, 0, 0)
         middle.setSpacing(0)
@@ -872,6 +880,7 @@ class OperatorWindow(QMainWindow):
         self.btn_source_mic.toggled.connect(self._on_source_toggle)
         self.btn_source_dev.toggled.connect(self._on_source_toggle)
         self.btn_setup.toggled.connect(self._on_setup_toggle)
+        self.gain.valueChanged.connect(self._on_gain_changed)
         self.btn_approve.clicked.connect(self.approve_selected)
         self.btn_reject.clicked.connect(self.reject_selected)
         self.btn_hold.clicked.connect(self.hold_selected)
@@ -940,8 +949,8 @@ class OperatorWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("toolbar")
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(SPACE.panel_x, SPACE.md, SPACE.panel_x, SPACE.md)
+        lay.setSpacing(SPACE.md)
         lay.addWidget(_brand_mark(30))
         lay.addWidget(_label("RevelateTW", "title"))
         lay.addStretch(1)
@@ -979,6 +988,19 @@ class OperatorWindow(QMainWindow):
         frame, lay = self._panel("Sermon Transcription", "")
         self.transcript_badge = _label("0 detected", "badge")
         frame.layout().itemAt(0).layout().insertWidget(2, self.transcript_badge)
+        # "Getting ready" card: shown until the first words are transcribed (see _update_checklist).
+        self.checklist = QFrame()
+        self.checklist.setObjectName("checklist")
+        cl = QVBoxLayout(self.checklist)
+        cl.setContentsMargins(SPACE.xl, SPACE.lg, SPACE.xl, SPACE.lg)
+        cl.setSpacing(SPACE.md)
+        self.check_title = _label("Getting ready", "checkTitle")
+        cl.addWidget(self.check_title)
+        self.check_rows = QVBoxLayout()
+        self.check_rows.setSpacing(SPACE.sm)
+        cl.addLayout(self.check_rows)
+        cl.addWidget(_label(SUBLINE, "sub", wrap=True))
+        lay.addWidget(self.checklist)
         self.transcript_box = QVBoxLayout()
         self.transcript_box.setSpacing(8)
         holder = QWidget()
@@ -1167,10 +1189,14 @@ class OperatorWindow(QMainWindow):
         gain_row = QHBoxLayout()
         gain_row.addWidget(_label("Input gain", "fieldLabel"))
         self.gain = QDoubleSpinBox()
-        self.gain.setRange(-60, 20)
+        self.gain.setRange(*INPUT_GAIN_RANGE_DB)
+        self.gain.setDecimals(1)
+        self.gain.setSingleStep(1.0)
         self.gain.setSuffix(" dB")
-        self.gain.setValue(0)
-        self.gain.setToolTip("Input gain")
+        self.gain.setKeyboardTracking(False)          # typing a number applies on Enter, not per digit
+        self.gain.setValue(self.settings.input_gain_db)
+        self.gain.setToolTip("Input gain. Raise it if the level meter stays low while the preacher "
+                             "speaks. Applies immediately and is remembered.")
         gain_row.addWidget(self.gain, 1)
         sb.addLayout(gain_row)
         self.meter = _label("Level: --", "footer")
@@ -1402,8 +1428,8 @@ class OperatorWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName("panel")
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(SPACE.panel_x, SPACE.panel_y, SPACE.panel_x, SPACE.panel_y)
+        lay.setSpacing(SPACE.md)
         head = QHBoxLayout()
         head.addWidget(_label(title, "panelTitle"))
         head.addStretch(1)
@@ -1437,6 +1463,9 @@ class OperatorWindow(QMainWindow):
         # Shortcut keys (B, H, E, arrows, Space) are ignored while any text box has focus,
         # so typing 'bible' in the search never blanks the screen.
 
+        for i in range(4):
+            QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self, activated=lambda i=i: self._goto_tab(i))
+
         for key, fn in [("Return", self.approve_selected), ("Escape", self.reject_selected),
                         ("E", self.edit_selected), ("H", self.hold_selected),
                         ("Down", lambda: self._move(1)), ("Up", lambda: self._move(-1)),
@@ -1445,6 +1474,10 @@ class OperatorWindow(QMainWindow):
                         ("O", self.toggle_output),
                         ("/", self.focus_search)]:
             QShortcut(QKeySequence(key), self, activated=guard(fn))
+
+    def _goto_tab(self, index: int) -> None:
+        if 0 <= index < self._tabs.count() and self._tabs.isTabEnabled(index):
+            self._tabs.setCurrentIndex(index)
 
     def _typing(self) -> bool:
         fw = QApplication.focusWidget()
@@ -1558,7 +1591,8 @@ class OperatorWindow(QMainWindow):
         last_exc = None
         for dev in candidates:
             try:
-                self.live.start_mic(dev, gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
+                self.live.start_mic(dev, gain_db=self.settings.input_gain_db,
+                                    gate_db=self.settings.noise_gate_db, tap=self.audio_mon.feed)
                 opened = dev
                 break
             except Exception as exc:  # device busy, unplugged, or unsupported
@@ -1581,6 +1615,7 @@ class OperatorWindow(QMainWindow):
         self._mic_on = True
         self._mic_dev = opened
         self._capture_error = ""
+        self._heard_sound = False                 # a new input has to prove it hears sound
         if opened is not chosen:
             _log.warning("configured input %r unavailable, using %r", chosen.name, opened.name)
             self.source_status.setText(f"{chosen.name} unavailable, using default input: {opened.name}")
@@ -2135,6 +2170,8 @@ class OperatorWindow(QMainWindow):
                 cfg(model_size=s.model_size, compute_type=s.compute_type, cpu_threads=s.cpu_threads)
         elif key == "noise_gate_db" and self.live is not None and getattr(self.live, "capture", None) is not None:
             self.live.capture.set_gate_threshold(s.noise_gate_db)
+        elif key == "input_gain_db":
+            self._apply_gain(s.input_gain_db)
         elif key == "input_device_name":
             self._select_device_by_name(s.input_device_name)
         elif key == "media_folder":
@@ -2145,6 +2182,22 @@ class OperatorWindow(QMainWindow):
             if hasattr(self, "settings_page") and self.settings_page is not None:
                 self.settings_page.refresh_ffmpeg_status()
         self._save_settings()
+
+    def _on_gain_changed(self, value: float) -> None:
+        """The gain box was changed by the operator: apply it to the running capture now, remember it."""
+        self.settings.input_gain_db = float(value)
+        self._apply_gain(value)
+        self._gain_save_timer.start()            # restarts the 600 ms wait while the value keeps changing
+
+    def _apply_gain(self, value: float) -> None:
+        """Set the gain on the open capture (no restart needed) and make the box show it."""
+        cap = getattr(self.live, "capture", None) if self.live is not None else None
+        if cap is not None:
+            cap.set_gain(float(value))
+        if abs(self.gain.value() - float(value)) > 1e-9:
+            self.gain.blockSignals(True)
+            self.gain.setValue(float(value))
+            self.gain.blockSignals(False)
 
     def _select_device_by_name(self, name: str) -> None:
         for i, d in enumerate(self._devices):
@@ -2989,6 +3042,64 @@ class OperatorWindow(QMainWindow):
             self._setup_autoexpanded = True
             self.btn_setup.setChecked(True)
 
+    def _update_checklist(self) -> None:
+        """Show the "Getting ready" card until the first words are transcribed, and keep it current."""
+        history = getattr(self.pipeline, "history", None)
+        waiting = not history
+        self.checklist.setVisible(waiting)
+        if not waiting:
+            return
+        peak = None
+        if self.live is not None:
+            peak = self.live.meter().get("peak_db")
+        elif self._audio_meter:
+            peak = self._audio_meter().get("peak_db")
+        if self._mic_on and heard_sound(peak):
+            self._heard_sound = True             # latched, so a pause in speech never un-ticks it
+        dev_feed = self._dev and self.btn_source_dev.isChecked()
+        checks = preflight(
+            live_available=self.live is not None and not dev_feed, dev=self._dev, mic_on=self._mic_on,
+            mic_name=self._mic_dev.name if self._mic_dev is not None else "", devices_found=bool(self._devices),
+            capture_error=self._capture_error, sound_heard=self._heard_sound,
+            displays=getattr(self, "_displays", []), target_display=self.display_box.currentIndex(),
+            output_on=self.output.on)
+        sig = tuple(checks)
+        if sig == self._check_sig:
+            return
+        self._check_sig = sig
+        self.check_title.setText(headline(checks))
+        while self.check_rows.count():
+            w = self.check_rows.takeAt(0).widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)             # detach now: deleteLater alone keeps it on the card for one more event-loop turn
+                w.deleteLater()
+        icons = {OK: ("\u2713", "checkOk"), INFO: ("\u2022", "checkInfo")}
+        for c in checks:
+            glyph, name = icons.get(c.state, ("!", "checkWarn"))
+            row = QWidget()
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(SPACE.md)
+            icon = _label(glyph, name)
+            icon.setFixedWidth(18)
+            icon.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            hl.addWidget(icon)
+            hl.addWidget(_label(c.text, "checkText", wrap=True), 1)
+            if c.action:
+                btn = QPushButton(c.action_label)
+                btn.setObjectName("subtle")
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _checked=False, a=c.action: self._on_check_action(a))
+                hl.addWidget(btn)
+            self.check_rows.addWidget(row)
+
+    def _on_check_action(self, action: str) -> None:
+        if action == ACTION_AUDIO_SETUP:
+            self.btn_setup.setChecked(True)
+        elif action == ACTION_TOGGLE_OUTPUT:
+            self.toggle_output()
+
     def _fill_testaments(self) -> None:
         from .navigation import manual_testaments
         self.man_testament.blockSignals(True)
@@ -3091,6 +3202,12 @@ class OperatorWindow(QMainWindow):
                 self.source_status.setText(f"Mic failed at startup: {exc}")
         self._refresh_header_state()
 
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._gain_save_timer.isActive():     # a gain change is still waiting to be written
+            self._gain_save_timer.stop()
+            self._save_settings()
+        super().closeEvent(event)
+
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._timer.stop()               # hidden operator window: no refresh, no clock work
         self._header_timer.stop()
@@ -3187,6 +3304,7 @@ class OperatorWindow(QMainWindow):
             m = self._audio_meter()
             self.meter.setText(f"Peak {m['peak_db']:.0f} dB   RMS {m['rms_db']:.0f} dB")
         self._update_setup_summary()
+        self._update_checklist()
 
     def _has_neighbour(self, delta: int) -> bool:
         live = self.queue.live
