@@ -11,3 +11,6 @@ Public domain. WEB is dedicated to the public domain by its editors.
 - Modifications made for this pack: verses restructured into the RevelateTW pack format; the source's SWORD-style book numbers (10 to 730) mapped to canonical 1 to 66 order; Yoruba book names kept for display. Verse text is unchanged except the source's own whitespace.
 - Share-alike: this pack is a derivative. Any redistribution of a modified copy must also be under CC BY-SA 4.0 with the same credit, and must indicate the changes listed above.
 - Trademark: the Biblica(R) name and mark are not licensed by CC BY-SA. Per the source's notice, a modified or translated derivative must not carry the Biblica(R) trademark, and must state its changes and credit the work as "The original work by Biblica, Inc. is available for free at www.biblica.com and open.bible." The app's credit line above names the work and the license; it does not use the trademark as a product name. Review this with a lawyer before a commercial release.
+
+## ASV.sqlite change (2026-10-28)
+Removed 16 blank verse rows that the source text leaves empty (Matt 17:21, Mark 9:44/46/16:24 range, Luke 17:36, John 7:53 area, and similar). The verse text itself is unchanged. ASV now has 31,086 verses. Source: https://github.com/thiagobodruk/bible (en_asv.json), public domain.

@@ -25,8 +25,25 @@ from .store import VerseStore
 from .theme import Theme
 
 
+def load_store(verses_path: str) -> VerseStore:
+    """Open a verse source: a SQLite pack (bundled translations) or a JSON sample file.
+
+    A default that points at the 9-verse sample is replaced by the full bundled KJV pack when
+    it is present, so the Verses tab lists every chapter and verse instead of a handful.
+    """
+    from .paths import resolve_data_arg, bundled
+    if verses_path == "data/sample_kjv.json":
+        pack = bundled("data", "bible", "KJV.sqlite")
+        if pack.is_file():
+            return VerseStore.open(pack)
+    real = resolve_data_arg(verses_path)
+    if str(real).lower().endswith(".sqlite"):
+        return VerseStore.open(real)
+    return VerseStore.from_json(verses_path)
+
+
 def build(verses_path: str, log_path: str | None = "session_log.jsonl", threshold: int = 60):
-    store = VerseStore.from_json(verses_path)
+    store = load_store(verses_path)
     detector = VerseDetector(store, paraphrase_threshold=threshold)
     queue = ApprovalQueue(log_path=log_path)
     pipeline = DetectionPipeline(detector, queue)
