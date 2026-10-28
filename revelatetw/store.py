@@ -99,6 +99,21 @@ APP_VERSION = "0.2.0"
 _log = _logging.getLogger(__name__)
 
 
+INPUT_GAIN_RANGE_DB = (-60.0, 20.0)   # also the range of the gain box on the Live screen
+
+
+def _clamp_gain(value) -> float:
+    """Gain in dB, limited to INPUT_GAIN_RANGE_DB. Anything that is not a finite number becomes 0 dB."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if v != v or v in (float("inf"), float("-inf")):
+        return 0.0
+    lo, hi = INPUT_GAIN_RANGE_DB
+    return min(hi, max(lo, v))
+
+
 @_dc.dataclass
 class AppSettings:
     """Operator settings, saved as JSON. Unknown keys are ignored; bad values fall back to defaults."""
@@ -119,6 +134,7 @@ class AppSettings:
     input_device_name: str = ""           # remembered by name (indexes change between boots)
     wasapi_loopback: bool = False         # list WASAPI loopback (mixing desk output) devices
     noise_gate_db: float = -45.0          # RMS gate threshold, -80..-10
+    input_gain_db: float = 0.0            # input gain applied to the capture, -60..20 dB
     # Transcription
     model_size: str = "small"             # tiny | base | small | medium | large | large-v3
     yoruba_advisory_dismissed: bool = False  # one-time Yoruba live detection advisory dismissed
@@ -149,6 +165,7 @@ class AppSettings:
         self.input_device_name = str(self.input_device_name or "")
         self.wasapi_loopback = bool(self.wasapi_loopback)
         self.noise_gate_db = min(-10.0, max(-80.0, float(self.noise_gate_db)))
+        self.input_gain_db = _clamp_gain(self.input_gain_db)
         self.model_size = self.model_size if self.model_size in ("tiny", "base", "small", "medium", "large", "large-v3") \
             else d.model_size
         self.yoruba_advisory_dismissed = bool(self.yoruba_advisory_dismissed)
