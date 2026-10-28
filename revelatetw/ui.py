@@ -1710,6 +1710,7 @@ class OperatorWindow(QMainWindow):
         self.settings.bible_translation = tid
         self.settings.clean()
         self.refresh()
+        self._fill_chapters()          # chapter/verse menus follow the chosen translation
         self._refresh_yoruba_advisory()
 
     def _live_detection_on(self) -> bool:
@@ -3118,39 +3119,55 @@ class OperatorWindow(QMainWindow):
         self.man_book.blockSignals(False)
         self._fill_chapters()
 
+    def _menu_store(self):
+        """Verse store for the operator's chosen translation (drives the chapter/verse menus).
+
+        Falls back to the detector's store when the chosen translation has no pack.
+        """
+        tid = self.settings.bible_translation
+        try:
+            store = self._bible_library().store(tid) if tid else None
+        except Exception:
+            store = None
+        return store if store is not None else self._store
+
     def _fill_chapters(self) -> None:
-        if self._store is None:
+        store = self._menu_store()
+        if store is None:
             return
         from .navigation import manual_chapters
         self.man_chapter.blockSignals(True)
         self.man_chapter.clear()
         bid = self.man_book.currentData()
         if bid is not None:
-            for ch in manual_chapters(self._store, bid):
+            for ch in manual_chapters(store, bid):
                 self.man_chapter.addItem(str(ch), ch)
         self.man_chapter.blockSignals(False)
         self._fill_verses()
 
     def _fill_verses(self) -> None:
-        if self._store is None:
+        store = self._menu_store()
+        if store is None:
             return
         from .navigation import manual_verses
         self.man_verse.blockSignals(True)
         self.man_verse.clear()
         bid, ch = self.man_book.currentData(), self.man_chapter.currentData()
         if bid is not None and ch is not None:
-            for v in manual_verses(self._store, bid, ch):
+            for v in manual_verses(store, bid, ch):
                 self.man_verse.addItem(str(v), v)
         self.man_verse.blockSignals(False)
 
     def _project_manual(self) -> None:
-        if self._store is None:
+        store = self._menu_store()
+        if store is None:
             return
         from .navigation import _verse_sugg, candidate_from_suggestion
         bid, ch, v = self.man_book.currentData(), self.man_chapter.currentData(), self.man_verse.currentData()
         if None in (bid, ch, v):
             return
-        c = candidate_from_suggestion(self._store, _verse_sugg(self._store, bid, ch, v), "manual", 100, "manual pick")
+        c = candidate_from_suggestion(store, _verse_sugg(store, bid, ch, v), "manual", 100, "manual pick")
+        c = self._in_selected_translation(c)
         self._add_and_project(c)
 
     # --- rendering ------------------------------------------------------------------------

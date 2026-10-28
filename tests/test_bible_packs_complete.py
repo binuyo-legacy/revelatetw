@@ -32,3 +32,27 @@ def test_asv_has_no_blank_verse_rows():
     conn = sqlite3.connect(os.path.join(PACKS, "ASV.sqlite"))
     assert conn.execute("SELECT COUNT(*) FROM verses WHERE TRIM(text) = ''").fetchone()[0] == 0
     conn.close()
+
+
+def test_menu_store_follows_selected_translation(tmp_path, monkeypatch):
+    """Chapter/verse menus must read the chosen translation's pack, not always KJV."""
+    from revelatetw.bible import BibleLibrary
+    from revelatetw.store import VerseStore
+    from revelatetw.ui import OperatorWindow as MainWindow
+
+    # A tiny Yoruba-only pack: John 1 has 2 verses, no KJV-only chapters.
+    folder = tmp_path / "bible"
+    folder.mkdir()
+    VerseStore.write_pack(folder / "Yoruba.sqlite", {"id": "Yoruba", "name": "Yoruba", "language": "yo",
+                                                    "license": "x"},
+                          [(43, 1, 1, "Ninu ibere..."), (43, 1, 2, "Ohun gbogbo...")])
+    fake = MainWindow.__new__(MainWindow)
+    fake._bible = BibleLibrary(folder=folder, sample_json=tmp_path / "none.json")
+    fake._store = None
+
+    class S:
+        bible_translation = "Yoruba"
+    fake.settings = S()
+    store = MainWindow._menu_store(fake)
+    assert store is not None and store.translation_id == "Yoruba"
+    assert store.verse_numbers(43, 1) == [1, 2]
