@@ -9,7 +9,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from revelatetw.books import BOOKS, BOOK_BY_NAME  # noqa: E402
+from revelatetw.books import BOOKS, name_forms  # noqa: E402
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S  # noqa: E402
 
 BIBLE_DIR = os.path.join(ROOT, "data", "bible")
@@ -32,15 +32,52 @@ def get_verse(translation, book_id, chapter, verse):
         conn.close()
 
 
+def _book_lookup():
+    """Every spelling (full names, abbreviations, '1cor', 'first john') -> book_id."""
+    out = {}
+    for b in BOOKS:
+        for form in name_forms(b.book_id):
+            out[form] = b.book_id
+    return out
+
+
+_BOOK_LOOKUP = _book_lookup()
+
+
+def find_book(text):
+    key = re.sub(r"\s+", " ", text.lower().replace(".", " ")).strip()
+    return _BOOK_LOOKUP.get(key)
+
+
 def parse_reference(text):
-    """'John 3:16' or '1 cor 13:4' -> (book_id, chapter, verse) or None. Exact name match only."""
-    m = re.match(r"^\s*(.+?)\s+(\d+)\s*[:.]\s*(\d+)\s*$", text)
+    """'John 3:16', 'Rom 8:28', '1 cor 13:4', 'ps 23:1-3' -> (book_id, chapter, verse, last_verse).
+    last_verse equals verse for a single verse. Returns None if it cannot be read."""
+    m = re.match(r"^\s*(.+?)\s*(\d+)\s*[:. ]\s*(\d+)\s*(?:[-\u2013]\s*(\d+))?\s*$", text)
     if not m:
         return None
-    book = BOOK_BY_NAME.get(re.sub(r"\s+", " ", m.group(1).lower()))
+    book = find_book(m.group(1))
     if book is None:
         return None
-    return book, int(m.group(2)), int(m.group(3))
+    v1 = int(m.group(3))
+    v2 = int(m.group(4)) if m.group(4) else v1
+    if v2 < v1:
+        return None
+    return book, int(m.group(2)), v1, v2
+
+
+def get_passage(translation, book_id, chapter, v1, v2):
+    """Text for v1..v2 (single verse: plain text; range: verses joined with numbers). None if missing."""
+    parts = []
+    for v in range(v1, v2 + 1):
+        t = get_verse(translation, book_id, chapter, v)
+        if t is None:
+            break
+        parts.append(t)
+    if not parts:
+        return None
+    if v1 == v2:
+        return parts[0]
+    return " ".join(f"{v1 + i} {t}" for i, t in enumerate(parts))
 
 
 QSS = f"""
@@ -132,17 +169,18 @@ def main():
         project.setEnabled(False)
         if not parsed:
             ref.setText("")
-            body.setText("Could not read that reference. Try: John 3:16")
+            body.setText("Could not read that reference. Try: John 3:16 or Rom 8:28")
             return
-        b, ch, v = parsed
+        b, ch, v, v2 = parsed
         t = trans.currentText()
-        text = get_verse(t, b, ch, v)
+        text = get_passage(t, b, ch, v, v2)
         name = BOOKS[b - 1].name
+        shown = f"{ch}:{v}" if v == v2 else f"{ch}:{v}-{v2}"
         if text is None:
             ref.setText("")
-            body.setText(f"{name} {ch}:{v} is not in {t}.")
+            body.setText(f"{name} {shown} is not in {t}.")
             return
-        current["ref"] = f"{name} {ch}:{v} ({t})"
+        current["ref"] = f"{name} {shown} ({t})"
         current["text"] = text
         ref.setText(current["ref"])
         body.setText(text)
