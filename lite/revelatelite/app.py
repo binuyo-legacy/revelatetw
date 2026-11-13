@@ -11,6 +11,7 @@ from .bible import BibleStore, format_reference, parse_reference, book_name, sug
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
 from .servicelist import ServiceList
+from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong
 
 QSS = """
 QWidget {{ background:{bg}; color:{text}; font-size:{body}px; }}
@@ -47,6 +48,10 @@ class Main(QtWidgets.QWidget):
         self.list_path = os.path.join(paths.user_dir(), "service.json")
         self.st = cfg.load(self.settings_path)
         self.services = ServiceList.load(self.list_path)
+        self.songs = SongLibrary(os.path.join(paths.user_dir(), "songs"))
+        self.song_all = self.songs.load_all()
+        self.song = None          # the song open in the Songs tab
+        self.slide = None         # (heading, body, credit): THE one slide the preview shows (verse or song slide)
         self.proj = ProjectionWindow()
         self.preview = PreviewView()
         self.cur = None   # (book, chapter, v1, v2, translation)
@@ -144,6 +149,33 @@ class Main(QtWidgets.QWidget):
         sv.addLayout(side)
         tabs.addTab(sl, "Service list")
 
+        sgw = QtWidgets.QWidget()
+        sgl = QtWidgets.QHBoxLayout(sgw)
+        left = QtWidgets.QVBoxLayout()
+        self.song_search = QtWidgets.QLineEdit()
+        self.song_search.setPlaceholderText("Find a song by title or words")
+        self.song_list = QtWidgets.QListWidget()
+        left.addWidget(self.song_search)
+        left.addWidget(self.song_list, 1)
+        sgl.addLayout(left, 1)
+        mid_s = QtWidgets.QVBoxLayout()
+        cap_s = QtWidgets.QLabel("Slides (click one, or use Up/Down, to see it in the preview)")
+        cap_s.setObjectName("hint")
+        self.slide_list = QtWidgets.QListWidget()
+        mid_s.addWidget(cap_s)
+        mid_s.addWidget(self.slide_list, 1)
+        sgl.addLayout(mid_s, 1)
+        sside = QtWidgets.QVBoxLayout()
+        self.song_new_b, self.song_edit_b, self.song_del_b, self.song_imp_b = (
+            QtWidgets.QPushButton(x) for x in ("New song...", "Edit...", "Delete", "Import..."))
+        for b in (self.song_new_b, self.song_edit_b, self.song_del_b, self.song_imp_b):
+            sside.addWidget(b)
+        sside.addStretch(1)
+        sgl.addLayout(sside)
+        self.song_edit_b.setEnabled(False)
+        self.song_del_b.setEnabled(False)
+        tabs.addTab(sgw, "Songs")
+
         sw = QtWidgets.QWidget()
         sg = QtWidgets.QVBoxLayout(sw)
         sr = QtWidgets.QHBoxLayout()
@@ -212,6 +244,7 @@ class Main(QtWidgets.QWidget):
 
         self.refresh_displays()
         self.refresh_service_list()
+        self.refresh_songs()
 
         go.clicked.connect(lambda: self.lookup(self.box.text()))
         self.box.returnPressed.connect(lambda: self.lookup(self.box.text()))
@@ -229,6 +262,13 @@ class Main(QtWidgets.QWidget):
         self.results.itemClicked.connect(self.pick_result)
         sb.clicked.connect(self.do_search)
         self.search_box.returnPressed.connect(self.do_search)
+        self.song_search.textChanged.connect(lambda *_: self.refresh_songs())
+        self.song_list.currentRowChanged.connect(self.pick_song)
+        self.slide_list.currentRowChanged.connect(self.pick_slide)
+        self.song_new_b.clicked.connect(lambda: self.edit_song(None))
+        self.song_edit_b.clicked.connect(lambda: self.edit_song(self.song))
+        self.song_del_b.clicked.connect(self.delete_song)
+        self.song_imp_b.clicked.connect(self.import_songs)
         self.project_b.clicked.connect(self.project)
         self.blank_b.clicked.connect(self.project_off)
         self.proj.offRequested.connect(self.project_off)
@@ -329,9 +369,8 @@ class Main(QtWidgets.QWidget):
     # ---------------- lookup ----------------
     def lookup(self, text, quiet=False):
         parsed = parse_reference(text)
-        self.project_b.setEnabled(False)
+        self._set_slide(None)
         self.cur = None
-        self.preview.show_slide("", "")
         if not parsed:
             self.box.forget_reference()
             self.ref_lbl.setText("")
@@ -351,16 +390,24 @@ class Main(QtWidgets.QWidget):
         self.cur = (b, ch, v1, v2, t)
         self.ref_lbl.setText("%s  (%s)" % (ref, t))
         self.verse_lbl.setText(body)
-        self.preview.show_slide("%s  (%s)" % (ref, t), body, self.bible.short_credit(t))
+        self._set_slide(("%s  (%s)" % (ref, t), body, self.bible.short_credit(t)))
         self.box.set_reference(ref, reference_spans(b, ch, v1, v2),
                                self.box.hasFocus() or self.box.segment() is not None)
         self.st["last_reference"] = ref
         self.credit_lbl.setText(self.bible.credit(t))
-        self.project_b.setEnabled(True)
         if not quiet:
             self.say("")
         self._refresh_live_state()
         self.save_settings()
+
+    def _set_slide(self, slide):
+        """The ONE place the preview content changes (verses and song slides both come through here)."""
+        self.slide = slide
+        if slide:
+            self.preview.show_slide(*slide)
+        else:
+            self.preview.show_slide("", "")
+        self.project_b.setEnabled(bool(slide))
 
     def edit_segment(self, segment, delta):
         """Up/Down on the highlighted book/chapter/verse: keeps the highlight, updates the preview,
@@ -376,9 +423,18 @@ class Main(QtWidgets.QWidget):
 
     def on_translation(self, *_):
         self.st["translation"] = self.tr_name()
+        if self.cur is None and self.song is not None and self.slide:
+            return      # a song slide is showing: a Bible translation change must not replace it
         self.lookup(self.box.text(), quiet=True)
 
     def step(self, delta):
+        if self.cur is None and self.song is not None and self.slide:
+            r = self.slide_list.currentRow() + delta
+            if 0 <= r < self.slide_list.count():
+                self.slide_list.setCurrentRow(r)       # pick_slide updates the preview
+            else:
+                self.say("That is the last slide." if delta > 0 else "That is the first slide.")
+            return
         if not self.cur:
             return
         b, ch, v1, v2, t = self.cur
@@ -421,6 +477,7 @@ class Main(QtWidgets.QWidget):
 
     def add_to_list(self):
         if not self.cur:
+            self.say("The service list holds Bible verses. Look up a verse first.")
             return
         b, ch, v1, v2, t = self.cur
         ok = self.services.add(format_reference(b, ch, v1, v2), t)
@@ -449,15 +506,133 @@ class Main(QtWidgets.QWidget):
             self.trans.blockSignals(False)
             self.lookup(it["ref"])
 
+    # ---------------- songs and lyrics ----------------
+    # Choosing a song or slide only changes the preview (same single preview as verses).
+    def refresh_songs(self, select_id=None):
+        shown = SongLibrary.search(self.song_all, self.song_search.text())
+        self._shown_songs = shown
+        self.song_list.blockSignals(True)
+        self.song_list.clear()
+        for sg in shown:
+            self.song_list.addItem(sg.title + ("  (%s)" % sg.artist if sg.artist else ""))
+        row = -1
+        for i, sg in enumerate(shown):
+            if select_id and sg.id == select_id:
+                row = i
+        if row < 0 and self.song is not None:
+            row = next((i for i, sg in enumerate(shown) if sg.id == self.song.id), -1)
+        if row >= 0:
+            self.song_list.setCurrentRow(row)
+        self.song_list.blockSignals(False)
+        if row < 0:
+            self._fill_slides(None)
+        self.song_edit_b.setEnabled(self.song is not None)
+        self.song_del_b.setEnabled(self.song is not None)
+
+    def _fill_slides(self, song, show=-1):
+        self.song = song
+        self.slide_list.blockSignals(True)
+        self.slide_list.clear()
+        if song:
+            for i, sl in enumerate(song.slides):
+                self.slide_list.addItem("%s: %s" % (sl["label"], sl["lines"][0]))
+            if 0 <= show < len(song.slides):
+                self.slide_list.setCurrentRow(show)
+        self.slide_list.blockSignals(False)
+        self.song_edit_b.setEnabled(song is not None)
+        self.song_del_b.setEnabled(song is not None)
+
+    def pick_song(self, row):
+        if not (0 <= row < len(self._shown_songs)):
+            return
+        self._fill_slides(self._shown_songs[row], 0)
+        self.pick_slide(0)
+
+    def pick_slide(self, row):
+        sg = self.song
+        if sg is None or not (0 <= row < len(sg.slides)):
+            return
+        self.cur = None
+        self.box.forget_reference()
+        self.ref_lbl.setText(sg.slide_ref(row))
+        self.verse_lbl.setText(sg.slide_body(row))
+        self.credit_lbl.setText("")
+        self._set_slide((sg.slide_ref(row), sg.slide_body(row), sg.artist))
+        self.say("")
+        self._refresh_live_state()
+
+    def edit_song(self, song):
+        dlg = SongDialog(self, song)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+        new = dlg.result_song()
+        try:
+            self.songs.save(new)
+        except (OSError, ValueError) as ex:
+            self.say("Could not save the song: %s" % ex)
+            return
+        self.song_all = self.songs.load_all()
+        self.song_search.blockSignals(True)
+        self.song_search.clear()
+        self.song_search.blockSignals(False)
+        self.song = new
+        self.refresh_songs(new.id)
+        self._fill_slides(next((x for x in self.song_all if x.id == new.id), new), 0)
+        self.pick_slide(0)
+        self.say("Song saved.")
+
+    def delete_song(self):
+        sg = self.song
+        if sg is None:
+            return
+        ans = QtWidgets.QMessageBox.question(self, "Delete song", "Delete \"%s\"? This cannot be undone." % sg.title,
+                                             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+        if ans != QtWidgets.QMessageBox.Yes:
+            return
+        self.songs.delete(sg.id)
+        self.song_all = self.songs.load_all()
+        self.song = None
+        self.refresh_songs()
+        self.say("Song deleted. The preview is unchanged.")
+
+    def import_songs(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import songs", "", "Songs and lyrics (*.rtsong *.txt)")
+        if path:
+            self.import_song_file(path)
+
+    def import_song_file(self, path):
+        try:
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                text = f.read()
+            if path.lower().endswith(".rtsong"):
+                new = import_rtsong(text)
+            else:
+                title = os.path.splitext(os.path.basename(path))[0]
+                slides = split_lyrics(text)
+                if not slides:
+                    raise ValueError("no lyrics found in this file")
+                new = [Song(title, "", slides)]
+            have = {x.title.lower() for x in self.song_all}
+            for sg in new:                       # never overwrite: a same-title song becomes 'Title (2)'
+                base, n = sg.title, 2
+                while sg.title.lower() in have:
+                    sg.title = "%s (%d)" % (base, n)
+                    n += 1
+                have.add(sg.title.lower())
+                self.songs.save(sg)
+        except (OSError, ValueError) as ex:
+            self.say("Could not import: %s" % ex)
+            return 0
+        self.song_all = self.songs.load_all()
+        self.refresh_songs()
+        self.say("Imported %d song%s." % (len(new), "" if len(new) == 1 else "s"))
+        return len(new)
+
     # ---------------- projection ----------------
     # Safety rule: Enter, Left/Right/Up/Down, Next/Previous, translation and look changes only
     # change the in-app preview. The full-screen display changes ONLY in project() and project_off().
     def _preview_pair(self):
-        if not self.cur:
-            return None
-        b, ch, v1, v2, t = self.cur
-        return ("%s  (%s)" % (format_reference(b, ch, v1, v2), t), self.bible.passage(t, b, ch, v1, v2),
-                self.bible.short_credit(t))
+        return self.slide
 
     def _refresh_live_state(self):
         live = self.proj.live and self.proj.isVisible()
@@ -523,6 +698,53 @@ class Main(QtWidgets.QWidget):
         self.proj.close()
         self.bible.close()
         e.accept()
+
+
+class SongDialog(QtWidgets.QDialog):
+    """New song / edit song: title, artist and pasted lyrics. Slides are cut automatically."""
+
+    def __init__(self, parent, song=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit song" if song else "New song")
+        self._song = song
+        lay = QtWidgets.QVBoxLayout(self)
+        self.title_e = QtWidgets.QLineEdit(song.title if song else "")
+        self.title_e.setPlaceholderText("Song title")
+        self.artist_e = QtWidgets.QLineEdit(song.artist if song else "")
+        self.artist_e.setPlaceholderText("Artist (optional)")
+        self.lyrics_e = QtWidgets.QPlainTextEdit(lyrics_text(song.slides) if song else "")
+        self.lyrics_e.setPlaceholderText("Paste or type the lyrics.\nLeave a blank line between slides.\n"
+                                         "Put [Verse 1], [Chorus] on its own line to name a slide.")
+        self.info = QtWidgets.QLabel("")
+        self.info.setObjectName("hint")
+        self.msg = QtWidgets.QLabel("")
+        self.msg.setObjectName("hint")
+        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel)
+        self.save_b = btns.button(QtWidgets.QDialogButtonBox.Save)
+        for w_ in (self.title_e, self.artist_e, self.lyrics_e, self.info, self.msg, btns):
+            lay.addWidget(w_)
+        btns.accepted.connect(self._ok)
+        btns.rejected.connect(self.reject)
+        self.lyrics_e.textChanged.connect(self._count)
+        self._count()
+        self.resize(520, 520)
+
+    def _count(self):
+        n = len(split_lyrics(self.lyrics_e.toPlainText()))
+        self.info.setText("%d slide%s" % (n, "" if n == 1 else "s"))
+
+    def _ok(self):
+        if not self.title_e.text().strip():
+            self.msg.setText("Give the song a title.")
+            return
+        if not split_lyrics(self.lyrics_e.toPlainText()):
+            self.msg.setText("Add some lyrics first.")
+            return
+        self.accept()
+
+    def result_song(self):
+        return Song(self.title_e.text(), self.artist_e.text(), split_lyrics(self.lyrics_e.toPlainText()),
+                    self._song.id if self._song else "")
 
 
 def main(argv=None):
