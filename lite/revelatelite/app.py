@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, paths, settings as cfg
+from . import __version__, background as bgm, paths, settings as cfg
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
@@ -221,7 +221,55 @@ class Main(QtWidgets.QWidget):
         og.addRow("", self.bold_cb)
         og.addRow("Custom colours", cb)
         og.addRow("", self.show_ref_cb)
-        tabs.addTab(ow, "Look and screen")
+        # --- background: solid colour, gradient, or a picture ---
+        self.bgkind_cb = QtWidgets.QComboBox()
+        for k, label in bgm.KINDS:
+            self.bgkind_cb.addItem(label, k)
+        self.bgkind_cb.setCurrentIndex(max(self.bgkind_cb.findData(self.st["bg_kind"]), 0))
+        self.g1_b = QtWidgets.QPushButton("Colour 1...")
+        self.g2_b = QtWidgets.QPushButton("Colour 2...")
+        self.gswap_b = QtWidgets.QPushButton("Swap")
+        gb = QtWidgets.QHBoxLayout()
+        for w_ in (self.g1_b, self.g2_b, self.gswap_b):
+            gb.addWidget(w_)
+        self.gdir_cb = QtWidgets.QComboBox()
+        for k, label in bgm.DIRECTIONS:
+            self.gdir_cb.addItem(label, k)
+        self.gdir_cb.setCurrentIndex(max(self.gdir_cb.findData(self.st["grad_direction"]), 0))
+        self.img_b = QtWidgets.QPushButton("Choose picture...")
+        self.imgx_b = QtWidgets.QPushButton("Remove picture")
+        ib = QtWidgets.QHBoxLayout()
+        ib.addWidget(self.img_b)
+        ib.addWidget(self.imgx_b)
+        self.imgmode_cb = QtWidgets.QComboBox()
+        for k, label in bgm.IMAGE_MODES:
+            self.imgmode_cb.addItem(label, k)
+        self.imgmode_cb.setCurrentIndex(max(self.imgmode_cb.findData(self.st["image_mode"]), 0))
+        self.imgdim_sp = QtWidgets.QSpinBox()
+        self.imgdim_sp.setRange(0, bgm.DIM_MAX)
+        self.imgdim_sp.setSingleStep(10)
+        self.imgdim_sp.setSuffix(" %")
+        self.imgdim_sp.setValue(self.st["image_dim"])
+        self.imgdim_sp.setToolTip("Darkens the picture so the words stay easy to read.")
+        self.img_lbl = QtWidgets.QLabel("")
+        self.img_lbl.setObjectName("hint")
+        self.img_lbl.setWordWrap(True)
+        og.addRow("Background", self.bgkind_cb)
+        og.addRow("Gradient colours", gb)
+        og.addRow("Gradient direction", self.gdir_cb)
+        og.addRow("Picture", ib)
+        og.addRow("Picture size", self.imgmode_cb)
+        og.addRow("Darken picture", self.imgdim_sp)
+        og.addRow("", self.img_lbl)
+        note = QtWidgets.QLabel("Changes show in the preview first. Click Project to send them to the screen.")
+        note.setObjectName("hint")
+        note.setWordWrap(True)
+        og.addRow("", note)
+        sc = QtWidgets.QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QtWidgets.QFrame.NoFrame)
+        sc.setWidget(ow)
+        tabs.addTab(sc, "Settings")
         leftc.addWidget(tabs, 1)
 
 
@@ -263,6 +311,7 @@ class Main(QtWidgets.QWidget):
         self.credit_lbl.setWordWrap(True)
         lay.addWidget(self.credit_lbl)
 
+        self._sync_bg_controls()
         self.refresh_displays()
         self.refresh_service_list()
         self.refresh_songs()
@@ -314,6 +363,15 @@ class Main(QtWidgets.QWidget):
         self.fg_b.clicked.connect(lambda: self.pick_color("text_color"))
         self.reset_b.clicked.connect(self.reset_colors)
         self.display_cb.currentIndexChanged.connect(self._style_changed)
+        self.bgkind_cb.currentIndexChanged.connect(self._bg_changed)
+        self.gdir_cb.currentIndexChanged.connect(self._bg_changed)
+        self.imgmode_cb.currentIndexChanged.connect(self._bg_changed)
+        self.imgdim_sp.valueChanged.connect(self._bg_changed)
+        self.g1_b.clicked.connect(lambda: self.pick_grad("grad_color1"))
+        self.g2_b.clicked.connect(lambda: self.pick_grad("grad_color2"))
+        self.gswap_b.clicked.connect(self.swap_grad)
+        self.img_b.clicked.connect(self.choose_image)
+        self.imgx_b.clicked.connect(self.remove_image)
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
@@ -340,7 +398,7 @@ class Main(QtWidgets.QWidget):
 
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
-                self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"])
+                self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st))
         self._style_args = args
         self.preview.set_style(*args)
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again
@@ -354,6 +412,74 @@ class Main(QtWidgets.QWidget):
         if c.isValid():
             self.st[key] = c.name()
             self._style_changed()
+
+    # ---- background (preview only until Project) ----
+    def pick_grad(self, key):
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.st[key]), self, "Choose a colour")
+        if c.isValid():
+            self.st[key] = c.name()
+            self._bg_changed()
+
+    def swap_grad(self):
+        self.st["grad_color1"], self.st["grad_color2"] = self.st["grad_color2"], self.st["grad_color1"]
+        self._bg_changed()
+
+    def choose_image(self, path=None):
+        if not path:
+            start = os.path.dirname(self.st["bg_image"]) if self.st["bg_image"] else ""
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Choose a background picture", start, "Pictures (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if not path:
+            return
+        ok, msg = bgm.check_image_file(path)
+        if ok:
+            msg = bgm.load_image(path)[1]
+        if msg:
+            self.img_lbl.setText(msg)
+            self.say(msg)
+            return          # keep the old background; a bad file is never accepted
+        self.st["bg_image"] = path
+        self.bgkind_cb.blockSignals(True)
+        self.bgkind_cb.setCurrentIndex(self.bgkind_cb.findData("image"))
+        self.bgkind_cb.blockSignals(False)
+        self._bg_changed()
+
+    def remove_image(self):
+        self.st["bg_image"] = ""
+        if self.st["bg_kind"] == "image":
+            self.bgkind_cb.blockSignals(True)
+            self.bgkind_cb.setCurrentIndex(self.bgkind_cb.findData("color"))
+            self.bgkind_cb.blockSignals(False)
+        self._bg_changed()
+
+    def _bg_changed(self, *_):
+        self.st["bg_kind"] = self.bgkind_cb.currentData()
+        self.st["grad_direction"] = self.gdir_cb.currentData()
+        self.st["image_mode"] = self.imgmode_cb.currentData()
+        self.st["image_dim"] = self.imgdim_sp.value()
+        self._sync_bg_controls()
+        self._style_changed()
+
+    def _sync_bg_controls(self):
+        kind = self.st["bg_kind"]
+        for w_ in (self.g1_b, self.g2_b, self.gswap_b, self.gdir_cb):
+            w_.setEnabled(kind == "gradient")
+        for w_ in (self.imgmode_cb, self.imgdim_sp):
+            w_.setEnabled(kind == "image")
+        self.img_b.setEnabled(True)
+        self.imgx_b.setEnabled(bool(self.st["bg_image"]))
+        for b, key in ((self.g1_b, "grad_color1"), (self.g2_b, "grad_color2")):
+            col = self.st[key]
+            b.setStyleSheet("border-left:14px solid %s;" % col)
+        self.bg_b.setEnabled(kind == "color")
+        msg = ""
+        if self.st["bg_image"]:
+            msg = bgm.image_problem(self.st["bg_image"]) or ("Picture: " + os.path.basename(self.st["bg_image"]))
+            if kind == "image" and bgm.image_problem(self.st["bg_image"]):
+                msg += " (showing the plain colour)"
+        elif kind == "image":
+            msg = "No picture chosen yet. Click Choose picture..."
+        self.img_lbl.setText(msg)
 
     def reset_colors(self):
         self.st["bg_color"] = self.st["text_color"] = ""

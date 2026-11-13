@@ -13,6 +13,13 @@ DEFAULTS = {
     "bold": False,
     "bg_color": "",          # "" = use the theme colour, else "#rrggbb"
     "text_color": "",        # "" = use the theme colour
+    "bg_kind": "color",      # color | gradient | image (see background.py)
+    "grad_color1": "#1e3a8a",
+    "grad_color2": "#0b0f19",
+    "grad_direction": "vertical",   # vertical | horizontal | diagonal_down | diagonal_up
+    "bg_image": "",          # full path of the chosen picture ("" = none)
+    "image_mode": "fill",    # fill | fit | stretch | tile
+    "image_dim": 30,         # percent darkening over a picture, keeps text readable
 }
 
 FONTS = ["Georgia", "Segoe UI", "Arial", "Times New Roman", "Verdana"]  # all ship with Windows 8.1
@@ -70,6 +77,8 @@ def load(path):
             data[k] = ""
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
+    from . import background
+    data.update(background.clean(data))
     return data
 
 

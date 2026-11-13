@@ -1,7 +1,7 @@
 """The projection window: borderless, goes to the extended display, auto-sizes the verse."""
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from . import layout, settings
+from . import background, layout, settings
 
 
 class SlideView(QtWidgets.QWidget):
@@ -21,6 +21,8 @@ class SlideView(QtWidgets.QWidget):
         self.bold = False
         self.bg_color = ""
         self.text_color = ""
+        self.bg_spec = background.spec_from({})
+        self._bgp = background.Painter()
 
     # ---- content ----
     def set_content(self, ref, body, credit=""):
@@ -32,20 +34,27 @@ class SlideView(QtWidgets.QWidget):
         self.live = False
         self.update()
 
-    def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color=""):
+    def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color="", bg_spec=None):
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
         self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
+        self.bg_spec = bg_spec or background.spec_from({})
         self.update()
 
     # ---- drawing ----
     def paintEvent(self, _):
+        kind = self.bg_spec[0]
         bg, fg, refc = settings.resolve_colors(self.theme, self.bg_color, self.text_color)
+        if kind == "gradient":       # text colour follows the average of the two colours
+            bg, fg, refc = settings.resolve_colors(self.theme, background.mix(self.bg_spec[1], self.bg_spec[2]), self.text_color)
+        elif kind == "image" and background.load_image(self.bg_spec[4])[0] is not None:
+            bg, fg, refc = settings.resolve_colors(self.theme, "#0b0f19", self.text_color)
+            bg = self.bg_color if settings.valid_color(self.bg_color) else bg
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.TextAntialiasing)
         if not self.live or not self.body:
             p.fillRect(self.rect(), QtGui.QColor("#000000"))
             return
-        p.fillRect(self.rect(), QtGui.QColor(bg))
+        self._bgp.paint(p, self.rect(), self.bg_spec, bg)
         w, h = self.width(), self.height()
         mx, my = int(w * 0.07), int(h * 0.06)
         area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)

@@ -19,6 +19,13 @@ numbers from the checklist below.
 - Service list: line up verses before the service, reorder, saved automatically.
 - Projection: borderless full-screen window on the extended (second) display, text auto-sized to fit, 3 colour
   styles, text size, show/hide reference. Project (F5) sends the preview to the full-screen display; Project Off (Esc) closes it. Everything else (Enter, arrows, Next/Previous) only changes the preview.
+- **Settings tab** (was "Look and screen"): projector screen, colours, text size, font, bold, show reference, plus the background.
+  Background choices: Solid colour (as before), Gradient (Colour 1, Colour 2, Swap, direction: top to bottom, left to right,
+  two diagonals) or Picture (Choose picture..., Remove picture, size: Fill, Fit, Stretch, Tile, and Darken picture 0-80%).
+  PNG, JPG, BMP or GIF up to 30 MB; bigger pictures are shrunk to at most 1920x1080 while loading to save memory. A damaged,
+  wrong-type or missing picture shows a plain message and the plain colour is used instead (nothing crashes; the choice is kept
+  so the picture comes back if the file returns). All of it is saved in settings.json. The preview and the full-screen display
+  draw the background with the same code, and changes only show in the preview until you click Project.
 - If only one screen is found, the projection opens as a normal window so you can still test.
 - Yoruba verses show the required credit line on screen (CC BY-SA 4.0). KJV/ASV/WEB are public domain.
 - Settings and the service list live in `%APPDATA%\RevelateTWLite`.
