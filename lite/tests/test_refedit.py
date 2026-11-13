@@ -151,6 +151,81 @@ class Keys(unittest.TestCase):
         self.key(w, K.Key_Up)
         self.assertEqual(w.box.text(), "Romans 8:29")
 
+    # ---------- typing flow: inline completion + Left/Right from suggestions ----------
+    def fresh_typing(self):
+        w = self.make()
+        w.box.forget_reference()
+        w.box.clear()
+        return w
+
+    def test_prefix_prefills_book_and_keeps_typed_prefix(self):
+        w = self.fresh_typing()
+        QtTest.QTest.keyClicks(w.box, "joh")
+        self.assertEqual(w.box.text(), "joh" + "n ")      # your own letters stay as typed
+        self.assertEqual(self.sel(w), "n ")                  # only the filled-in tail is selected
+        self.assertEqual(w.box.typed_text(), "joh")
+
+    def test_backspace_removes_suggestion_and_does_not_refill(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "joh")
+        self.key(w, K.Key_Backspace)
+        self.assertEqual(w.box.text(), "joh")
+        self.assertTrue(w.sug_model.stringList())            # suggestions still listed
+
+    def test_right_from_typing_jumps_to_chapter_with_popup_open(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "joh")
+        self.key(w, K.Key_Right)                             # accept John, go to chapter
+        self.assertEqual(w.box.text(), "John 1:1")
+        self.assertEqual(self.sel(w), "1")
+        self.assertEqual(w.box.segment(), "chapter")
+        self.key(w, K.Key_Up)                                # chapter 2
+        self.assertEqual(w.box.text(), "John 2:1")
+        self.key(w, K.Key_Right)
+        self.assertEqual(w.box.segment(), "verse")
+        self.key(w, K.Key_Up)
+        self.assertEqual(w.box.text(), "John 2:2")
+
+    def test_left_from_typing_highlights_book(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "rom")
+        self.key(w, K.Key_Left)
+        self.assertEqual(self.sel(w), "Romans")
+        self.assertEqual(w.cur[0], 45)
+
+    def test_chapter_typed_then_right_goes_to_verse(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "john 3")
+        self.key(w, K.Key_Right)
+        self.assertEqual(w.box.text(), "John 3:1")
+        self.assertEqual(self.sel(w), "1")
+        self.assertEqual(w.box.segment(), "verse")
+
+    def test_typing_on_after_prefill_still_works(self):
+        w = self.fresh_typing()
+        QtTest.QTest.keyClicks(w.box, "john 3:16")
+        self.assertEqual(w.box.text(), "john 3:16")
+        self.assertEqual(w.box.typed_text(), "john 3:16")
+
+    def test_left_right_from_typing_never_projects(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "joh")
+        self.key(w, K.Key_Right); self.key(w, K.Key_Right); self.key(w, K.Key_Up)
+        self.assertFalse(w.proj.live)
+
+    def test_unknown_text_leaves_arrow_keys_alone(self):
+        w = self.fresh_typing()
+        K = QtCore.Qt
+        QtTest.QTest.keyClicks(w.box, "zzz")
+        self.key(w, K.Key_Left)
+        self.assertEqual(w.box.text(), "zzz")
+        self.assertIsNone(w.box.segment())
+
 
 if __name__ == "__main__":
     unittest.main()

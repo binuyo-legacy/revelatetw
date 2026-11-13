@@ -21,15 +21,35 @@ class RefEdit(QtWidgets.QLineEdit):
         self._spans = None       # spans of the reference currently shown
         self._canonical = None   # its text
         self._seg = None         # highlighted part, or None (normal typing)
+        self._erasing = False    # last key was Backspace/Delete: do not re-fill the suggestion
+        self.jumpHandler = None  # app callback: (direction) -> True when it jumped into a part
+
+    def erasing(self):
+        return self._erasing
+
+    def typed_text(self):
+        """What the user actually typed: the text minus a selected, auto-filled tail."""
+        t = self.text()
+        if self.hasSelectedText() and self.selectionEnd() == len(t) and self._seg is None:
+            return t[:self.selectionStart()]
+        return t
+
+    def fill_suggestion(self, full):
+        """Show the suggestion after what was typed, with the filled-in tail selected
+        (typing carries on over it, Backspace removes it, Left/Right accept it)."""
+        typed = self.text()
+        self.setText(full)
+        self.setSelection(len(full), -(len(full) - len(typed)))
+        self._seg = None
 
     def segment(self):
         return self._seg
 
-    def set_reference(self, text, spans, highlight):
+    def set_reference(self, text, spans, highlight, segment=None):
         self._spans, self._canonical = spans, text
         self.setText(text)
         if highlight:
-            self._select(self._seg or "book")
+            self._select(segment or self._seg or "book")
         else:
             self._seg = None
 
@@ -60,6 +80,13 @@ class RefEdit(QtWidgets.QLineEdit):
         key = e.key()
         mods = e.modifiers() & ~_K.KeypadModifier
         plain = mods == _K.NoModifier
+        self._erasing = key in (_K.Key_Backspace, _K.Key_Delete)
+        if plain and key in (_K.Key_Left, _K.Key_Right) and self._seg is None and self.jumpHandler \
+                and self.text() and (self.cursorPosition() == len(self.text()) or self.hasSelectedText()) \
+                and self.text() != self._canonical:
+            # typing mode (suggestions showing): accept what is typed/suggested and jump into a part
+            if self.jumpHandler(1 if key == _K.Key_Right else -1):
+                return
         if plain and key in (_K.Key_Left, _K.Key_Right) and self._seg is None \
                 and self._canonical and self.text() == self._canonical:
             self._select("book" if key == _K.Key_Right else "verse")   # enter highlight mode

@@ -7,7 +7,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, paths, settings as cfg
-from .bible import BibleStore, format_reference, parse_reference, book_name, suggest, reference_spans, adjust_reference
+from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
 from .servicelist import ServiceList
@@ -250,6 +250,7 @@ class Main(QtWidgets.QWidget):
         self.box.returnPressed.connect(lambda: self.lookup(self.box.text()))
         self.box.textEdited.connect(self.show_suggestions)
         self.box.adjustRequested.connect(self.edit_segment)
+        self.box.jumpHandler = self.jump_from_typing
         self.completer.activated[str].connect(self.suggestion_picked)
         self.trans.currentIndexChanged.connect(self.on_translation)
         self.prev_b.clicked.connect(lambda: self.step(-1))
@@ -352,8 +353,47 @@ class Main(QtWidgets.QWidget):
         if items:
             self.completer.setCompletionPrefix(text)
             self.completer.complete()
+            self._inline_fill(text, items)
         else:
             self.completer.popup().hide()
+
+    def _inline_fill(self, typed, items):
+        """Typing a book prefix ('jo') pre-fills the top book ('Job ') with the extra letters
+        selected, so Right/Left can accept it straight away. Never while erasing."""
+        first = items[0]
+        if self.box.erasing() or not first.endswith(" ") or any(c.isdigit() for c in typed):
+            return
+        if first.lower().startswith(typed.lower()) and len(first) > len(typed) \
+                and self.box.text() == typed:
+            self.box.fill_suggestion(typed + first[len(typed):])
+
+    def jump_from_typing(self, direction):
+        """Left/Right while typing: accept the book/chapter being typed (or the filled-in book),
+        show it in the preview only (never projects) and highlight a part. Right = next part,
+        Left = previous. Returns False when the text cannot be read, so the key acts as usual."""
+        t = self.tr_name()
+        typed = self.box.typed_text()
+        full = self.box.text()
+        if not t or not typed.strip():
+            return False
+        if not any(c.isdigit() for c in typed):          # a book is being typed
+            book = find_book(full)
+            if book is None:
+                top = suggest(typed, self.bible, t)
+                book = find_book(top[0]) if top and top[0].endswith(" ") else None
+            if book is None:
+                return False
+            ref, seg = book_name(book), "book"
+        else:
+            if not parse_reference(typed):
+                return False
+            ref = typed
+            seg = "verse" if ":" in typed else "chapter"
+        i = SEGMENTS.index(seg) + direction
+        target = SEGMENTS[max(0, min(len(SEGMENTS) - 1, i))]
+        self.completer.popup().hide()
+        self.lookup(ref, segment=target)
+        return self.cur is not None
 
     def suggestion_picked(self, text):
         """Book or chapter picked: keep typing with the next list. A verse: look it up."""
@@ -367,7 +407,7 @@ class Main(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(0, after)
 
     # ---------------- lookup ----------------
-    def lookup(self, text, quiet=False):
+    def lookup(self, text, quiet=False, segment=None):
         parsed = parse_reference(text)
         self._set_slide(None)
         self.cur = None
@@ -392,7 +432,7 @@ class Main(QtWidgets.QWidget):
         self.verse_lbl.setText(body)
         self._set_slide(("%s  (%s)" % (ref, t), body, self.bible.short_credit(t)))
         self.box.set_reference(ref, reference_spans(b, ch, v1, v2),
-                               self.box.hasFocus() or self.box.segment() is not None)
+                               self.box.hasFocus() or self.box.segment() is not None, segment)
         self.st["last_reference"] = ref
         self.credit_lbl.setText(self.bible.credit(t))
         if not quiet:
