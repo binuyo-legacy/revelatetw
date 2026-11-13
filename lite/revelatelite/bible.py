@@ -143,22 +143,46 @@ def format_reference(book, chapter, v1, v2):
 
 
 class BibleStore:
-    def __init__(self, directory=None):
+    def __init__(self, directory=None, user_directory=None):
+        """directory: bundled packs. user_directory: packs the church imported (None = the default
+        per-user folder, looked up lazily and only if it exists). A bundled pack always wins on a name clash."""
         self.directory = directory or paths.bible_dir()
+        self._user_directory = user_directory
         self._conn = None
         self._open = None
 
+    @property
+    def user_directory(self):
+        return self._user_directory or paths.user_bible_dir()
+
+    def _pack_path(self, translation):
+        for d in (self.directory, self.user_directory):
+            p = os.path.join(d, translation + ".sqlite")
+            if os.path.isfile(p):
+                return p
+        return None
+
     def translations(self):
-        if not os.path.isdir(self.directory):
-            return []
-        return sorted(f[:-7] for f in os.listdir(self.directory) if f.endswith(".sqlite"))
+        found = set()
+        for d in (self.directory, self.user_directory):
+            if os.path.isdir(d):
+                found.update(f[:-7] for f in os.listdir(d) if f.endswith(".sqlite"))
+        return sorted(found)
+
+    def is_user_imported(self, translation):
+        """True only for a pack in the user folder that the importer marked user_imported (never a bundled one)."""
+        p = os.path.join(self.user_directory, translation + ".sqlite")
+        if not os.path.isfile(p) or os.path.isfile(os.path.join(self.directory, translation + ".sqlite")):
+            return False
+        return self.meta(translation, "user_imported") == "1"
 
     def _db(self, translation):
         if self._open != translation:
             self.close()
-            path = os.path.join(self.directory, translation + ".sqlite").replace("\\", "/")
-            if not os.path.isfile(path):
+            path = self._pack_path(translation)
+            if path is None:
                 raise KeyError("no such translation: " + translation)
+            path = path.replace("\\", "/")
             self._conn = sqlite3.connect("file:" + path + "?mode=ro", uri=True)
             self._open = translation
         return self._conn

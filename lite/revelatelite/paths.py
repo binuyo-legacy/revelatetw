@@ -24,3 +24,8 @@ def user_dir():
     path = os.path.join(base, "RevelateTWLite")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def user_bible_dir():
+    """Bibles the church imports itself. Not created until the first import (the program folder may be read-only)."""
+    return os.path.join(user_dir(), "bibles")

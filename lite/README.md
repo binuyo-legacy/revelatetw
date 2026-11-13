@@ -53,6 +53,27 @@ picking, settings and service list files). `python lite\tests\test_poc.py` still
   `app.py` operator window. `settings.py`, `servicelist.py` small JSON files. `paths.py` finds data in source or EXE.
 - `lite/poc.py` the original proof of concept, kept for reference.
 
+## Songs: import and export
+Songs use the same `.rtsong` file as the main RevelateTW, so songs move both ways. Export song / Export all write
+`{"format": "rtsong", "version": 1, "songs": [{"title", "author", "sections": [{"label", "lines"}]}]}`
+(UTF-8, safe Windows file names, written to a temp file then renamed). Import reads `.rtsong`, single-song `.json`
+and plain `.txt` lyrics; a same-title song becomes "Title (2)" and nothing is ever overwritten. Neither import nor
+export touches the preview or the projected screen.
+
+## Add Bible (import your own licensed Bible)
+Press **Add Bible...** next to Look up. Choose a USFM, OSIS (XML) or plain text file. Lite reuses the main app's
+converter (`revelatetw/bible_import.py`) so both editions read these files the same way, and writes the same
+`.sqlite` pack. You see books/chapters/verses and sample verses before saving, then give a name, short code
+(2 to 16 letters/digits) and licence. Packs go in your user folder (created on first import), never replace
+bundled KJV/ASV/WEB/Yoruba, and appear in the translation list at once. Files over 60 MB are refused (a whole Bible
+is a few MB), and only the Python standard library is used. Removing an imported Bible is available in code
+(`bibleconvert.remove`) but has no button yet. Still missing versus main: pasting text, Zefania/other formats the
+main dialog may add, and a remove button.
+
+## Tests
+`python -m pytest lite/tests` (Python 3.8 + PyQt5 5.15.2). Tests that compare with the main app's `song_io` are
+skipped on 3.8 because the main app needs 3.9+. Not yet run on real Windows 8.1 32-bit hardware.
+
 ## Not in Lite (yet)
-Live listening and auto verse detection, songs, theme editor, backgrounds/media, audio routing, NDI/OBS output, importing
-licensed Bibles. Main branch is untouched; all of this is on `poc/lite-pyqt5`.
+Live listening and auto verse detection, theme editor, backgrounds/media, audio routing, NDI/OBS output.
+Main branch is untouched; all of this is on `poc/lite-pyqt5`.

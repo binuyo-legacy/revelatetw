@@ -11,7 +11,7 @@ from .bible import BibleStore, format_reference, parse_reference, book_name, fin
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
 from .servicelist import ServiceList
-from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong
+from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong, import_song_json, export_songs, safe_filename
 
 QSS = """
 QWidget {{ background:{bg}; color:{text}; font-size:{body}px; }}
@@ -108,6 +108,8 @@ class Main(QtWidgets.QWidget):
         self.box = RefEdit(self.st["last_reference"])
         self.box.setPlaceholderText("Type a verse, e.g. John 3:16 or Rom 8:28-30")
         go = QtWidgets.QPushButton("Look up")
+        self.add_bible_b = QtWidgets.QPushButton("Add Bible...")
+        self.add_bible_b.setToolTip("Convert and add your own licensed Bible file (USFM, OSIS or text)")
         self.sug_model = QtCore.QStringListModel(self)
         self.completer = QtWidgets.QCompleter(self.sug_model, self)
         self.completer.setCompletionMode(QtWidgets.QCompleter.UnfilteredPopupCompletion)
@@ -117,6 +119,7 @@ class Main(QtWidgets.QWidget):
         row.addWidget(self.trans)
         row.addWidget(self.box, 1)
         row.addWidget(go)
+        row.addWidget(self.add_bible_b)
         fl.addLayout(row)
         # message line only (errors / hints). The verse text itself lives ONLY in the preview.
         self.verse_lbl = QtWidgets.QLabel("")
@@ -158,12 +161,16 @@ class Main(QtWidgets.QWidget):
         sside = QtWidgets.QVBoxLayout()
         self.song_new_b, self.song_edit_b, self.song_del_b, self.song_imp_b = (
             QtWidgets.QPushButton(x) for x in ("New song...", "Edit...", "Delete", "Import..."))
-        for b in (self.song_new_b, self.song_edit_b, self.song_del_b, self.song_imp_b):
+        self.song_exp_b = QtWidgets.QPushButton("Export song...")
+        self.song_expall_b = QtWidgets.QPushButton("Export all...")
+        for b in (self.song_new_b, self.song_edit_b, self.song_del_b, self.song_imp_b, self.song_exp_b, self.song_expall_b):
             sside.addWidget(b)
         sside.addStretch(1)
         sgl.addLayout(sside)
         self.song_edit_b.setEnabled(False)
         self.song_del_b.setEnabled(False)
+        self.song_exp_b.setEnabled(False)
+        self.song_expall_b.setEnabled(bool(self.song_all))
         tabs.addTab(sgw, "Songs")
 
         sw = QtWidgets.QWidget()
@@ -280,6 +287,9 @@ class Main(QtWidgets.QWidget):
         self.song_edit_b.clicked.connect(lambda: self.edit_song(self.song))
         self.song_del_b.clicked.connect(self.delete_song)
         self.song_imp_b.clicked.connect(self.import_songs)
+        self.song_exp_b.clicked.connect(self.export_song)
+        self.add_bible_b.clicked.connect(self.import_bible)
+        self.song_expall_b.clicked.connect(self.export_all_songs)
         self.project_b.clicked.connect(self.project)
         self.blank_b.clicked.connect(self.project_off)
         self.proj.offRequested.connect(self.project_off)
@@ -578,6 +588,8 @@ class Main(QtWidgets.QWidget):
             self._fill_slides(None)
         self.song_edit_b.setEnabled(self.song is not None)
         self.song_del_b.setEnabled(self.song is not None)
+        self.song_exp_b.setEnabled(self.song is not None)
+        self.song_expall_b.setEnabled(bool(self.song_all))
 
     def _fill_slides(self, song, show=-1):
         self.song = song
@@ -591,6 +603,7 @@ class Main(QtWidgets.QWidget):
         self.slide_list.blockSignals(False)
         self.song_edit_b.setEnabled(song is not None)
         self.song_del_b.setEnabled(song is not None)
+        self.song_exp_b.setEnabled(song is not None)
 
     def pick_song(self, row):
         if not (0 <= row < len(self._shown_songs)):
@@ -646,7 +659,7 @@ class Main(QtWidgets.QWidget):
         self.say("Song deleted. The preview is unchanged.")
 
     def import_songs(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import songs", "", "Songs and lyrics (*.rtsong *.txt)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Import songs", "", "Songs and lyrics (*.rtsong *.json *.txt)")
         if path:
             self.import_song_file(path)
 
@@ -656,6 +669,8 @@ class Main(QtWidgets.QWidget):
                 text = f.read()
             if path.lower().endswith(".rtsong"):
                 new = import_rtsong(text)
+            elif path.lower().endswith(".json"):
+                new = import_song_json(text)
             else:
                 title = os.path.splitext(os.path.basename(path))[0]
                 slides = split_lyrics(text)
@@ -677,6 +692,51 @@ class Main(QtWidgets.QWidget):
         self.refresh_songs()
         self.say("Imported %d song%s." % (len(new), "" if len(new) == 1 else "s"))
         return len(new)
+
+    def export_song(self):
+        if self.song is None:
+            return 0
+        start = os.path.join(self._export_dir(), safe_filename(self.song.title) + ".rtsong")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export song", start, "RevelateTW song (*.rtsong)")
+        return self.export_song_file(path, [self.song]) if path else 0
+
+    def export_all_songs(self):
+        start = os.path.join(self._export_dir(), "RevelateTW songs.rtsong")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export all songs", start, "RevelateTW song (*.rtsong)")
+        return self.export_song_file(path, self.song_all) if path else 0
+
+    def _export_dir(self):
+        d = os.path.join(os.path.expanduser("~"), "Documents")
+        return d if os.path.isdir(d) else os.path.expanduser("~")
+
+    def export_song_file(self, path, songs):
+        """Write songs to a .rtsong file (same format as the main app). Preview and projection are not touched."""
+        try:
+            out = export_songs(songs, path)
+        except (OSError, ValueError) as ex:
+            self.say("Could not export: %s" % ex)
+            return 0
+        self.say("Exported %d song%s to %s" % (len(songs), "" if len(songs) == 1 else "s", out))
+        return len(songs)
+
+    # ---------------- Bible import ----------------
+    def import_bible(self):
+        from .bibleimport import ImportBibleDialog
+        dlg = ImportBibleDialog(self, self.bible.user_directory, self.bible.translations())
+        if dlg.exec_() == QtWidgets.QDialog.Accepted and dlg.imported_code:
+            self.refresh_translations(dlg.imported_code)
+
+    def refresh_translations(self, select=None):
+        """Re-read the pack folders. Does not change what the preview shows."""
+        self.trans.blockSignals(True)
+        self.trans.clear()
+        for t in self.bible.translations():
+            self.trans.addItem(t, t)
+        want = select or self.st["translation"]
+        if want in self.bible.translations():
+            self.trans.setCurrentText(want)
+        self.trans.blockSignals(False)
+        self.say("Added %s. Choose it from the list at the top to use it." % select if select else "Bible list updated.")
 
     # ---------------- projection ----------------
     # Safety rule: Enter, Left/Right/Up/Down, Next/Previous, translation and look changes only

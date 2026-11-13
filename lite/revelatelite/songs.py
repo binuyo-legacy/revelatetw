@@ -200,3 +200,67 @@ def import_rtsong(text):
     if not songs:
         raise ValueError("no songs found in this file")
     return songs
+
+
+# ---------------- export: the same .rtsong file the main RevelateTW writes ----------------
+# Schema copied from revelatetw/song_io.py (main app): {"format": "rtsong", "version": 1,
+# "songs": [{"title", "author" (optional), "sections": [{"label", "lines"}]}]}.
+# A file written here opens in the main app and the other way round.
+EXTENSION = ".rtsong"
+
+
+def song_to_entry(song):
+    entry = {"title": song.title}
+    if song.artist:
+        entry["author"] = song.artist
+    entry["sections"] = [{"label": s["label"], "lines": list(s["lines"])} for s in song.slides]
+    return entry
+
+
+def build_document(songs):
+    return {"format": "rtsong", "version": 1, "songs": [song_to_entry(s) for s in songs]}
+
+
+def safe_filename(title, fallback="song"):
+    """A file-name stem that is safe on Windows (no \\ / : * ? " < > |)."""
+    stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", title or "").strip().rstrip(".")
+    stem = re.sub(r"\s+", " ", stem)[:80].strip()
+    return stem or fallback
+
+
+def export_songs(songs, path):
+    """Write one or many songs to a .rtsong file (written to a temp file first, then swapped in).
+    Returns the path written. Raises ValueError with a plain message."""
+    songs = list(songs)
+    if not songs:
+        raise ValueError("there are no songs to export")
+    for sg in songs:
+        if not sg.slides:
+            raise ValueError("'%s' has no slides, so it cannot be exported" % sg.title)
+    path = str(path)
+    if not path.lower().endswith(EXTENSION):
+        path = os.path.splitext(path)[0] + EXTENSION
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(build_document(songs), f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+    return path
+
+
+def import_song_json(text):
+    """A single song saved by the app as .json ({"format": "revelatetw-song", ...})."""
+    try:
+        data = json.loads(text.lstrip("\ufeff"))
+    except ValueError:
+        raise ValueError("this is not a valid song file")
+    if isinstance(data, dict) and data.get("format") == "rtsong":
+        return import_rtsong(text)
+    if not isinstance(data, dict) or data.get("format") != "revelatetw-song":
+        raise ValueError("this is not a RevelateTW song file")
+    sg = Song.from_dict(data)
+    if not sg.slides:
+        raise ValueError("'%s' has no lyrics" % sg.title)
+    sg.id = uuid.uuid4().hex[:12]     # fresh id: importing never overwrites an existing song file
+    return [sg]
