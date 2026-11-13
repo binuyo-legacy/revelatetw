@@ -39,6 +39,10 @@ QTabBar::tab:selected {{ color:{accent}; border-bottom-color:{accent}; }}
            muted=C.text_muted, cap=T.caption, lt=C.live_on_text, lbg=C.live_on_bg, lb=C.live_on_border)
 
 
+SEARCH_DELAY_MS = 200   # typing pause before live word search runs
+SEARCH_MIN_CHARS = 2
+
+
 class Main(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -280,6 +284,12 @@ class Main(QtWidgets.QWidget):
         self.results.itemClicked.connect(self.pick_result)
         sb.clicked.connect(self.do_search)
         self.search_box.returnPressed.connect(self.do_search)
+        # live search: wait for a short typing pause so a slow PC is not hit on every key
+        self.search_timer = QtCore.QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(SEARCH_DELAY_MS)
+        self.search_timer.timeout.connect(self.do_search)
+        self.search_box.textChanged.connect(self.search_typed)
         self.song_search.textChanged.connect(lambda *_: self.refresh_songs())
         self.song_list.currentRowChanged.connect(self.pick_song)
         self.slide_list.currentRowChanged.connect(self.pick_slide)
@@ -483,6 +493,8 @@ class Main(QtWidgets.QWidget):
 
     def on_translation(self, *_):
         self.st["translation"] = self.tr_name()
+        if self.search_box.text().strip():
+            self.do_search()    # keep the word-search results in the chosen translation
         if self.cur is None and self.song is not None and self.slide:
             return      # a song slide is showing: a Bible translation change must not replace it
         self.lookup(self.box.text(), quiet=True)
@@ -505,12 +517,26 @@ class Main(QtWidgets.QWidget):
         self.lookup(format_reference(nxt[0], nxt[1], nxt[2], nxt[2]))
 
     # ---------------- search ----------------
+    def search_typed(self, *_):
+        """Called on every keystroke: restart the short wait, search when typing pauses."""
+        if not self.search_box.text().strip():
+            self.search_timer.stop()
+            self.results.clear()
+            self.say("Type words to search the Bible.")
+            return
+        self.search_timer.start()
+
     def do_search(self):
+        self.search_timer.stop()
         t = self.tr_name()
         self.results.clear()
-        if not t:
+        q = self.search_box.text().strip()
+        if not t or not q:
             return
-        hits = self.bible.search(t, self.search_box.text(), 60)
+        if len(q) < SEARCH_MIN_CHARS:
+            self.say("Keep typing: at least %d letters." % SEARCH_MIN_CHARS)
+            return
+        hits = self.bible.search(t, q, 60)
         for b, c, v, text in hits:
             ref = format_reference(b, c, v, v)
             it = QtWidgets.QListWidgetItem("%s  %s" % (ref, text[:110]))
