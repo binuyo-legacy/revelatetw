@@ -14,6 +14,7 @@ numbers from the checklist below.
 - Offline Bible lookup from the bundled packs (KJV, ASV, WEB, Yoruba Contemporary). Type `John 3:16`, `rom 8:28-30`,
   `1 cor 13`, `first john 4:8`.
 - Next / previous verse (crosses chapter and book ends). PageDown / PageUp also projects it straight away.
+- Keyboard editing of the box (EasyWorship style): Left / Right move the highlight between Book, Chapter and Verse. Up / Down change the highlighted part (if the screen is live, the projection updates too). Typing replaces the highlighted part and the suggestions still appear. Tab into the box highlights the book.
 - Search by words ("loved world").
 - Service list: line up verses before the service, reorder, saved automatically.
 - Projection: borderless full-screen window on the extended (second) display, text auto-sized to fit, 3 colour

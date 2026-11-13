@@ -7,7 +7,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, paths, settings as cfg
-from .bible import BibleStore, format_reference, parse_reference, book_name, suggest
+from .bible import BibleStore, format_reference, parse_reference, book_name, suggest, reference_spans, adjust_reference
+from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
 from .servicelist import ServiceList
 
@@ -81,7 +82,7 @@ class Main(QtWidgets.QWidget):
             self.trans.addItem(t, t)
         if self.st["translation"] in names:
             self.trans.setCurrentText(self.st["translation"])
-        self.box = QtWidgets.QLineEdit(self.st["last_reference"])
+        self.box = RefEdit(self.st["last_reference"])
         self.box.setPlaceholderText("Type a verse, e.g. John 3:16 or Rom 8:28-30")
         go = QtWidgets.QPushButton("Look up")
         self.sug_model = QtCore.QStringListModel(self)
@@ -213,6 +214,7 @@ class Main(QtWidgets.QWidget):
         go.clicked.connect(lambda: self.lookup(self.box.text()))
         self.box.returnPressed.connect(lambda: self.lookup(self.box.text()))
         self.box.textEdited.connect(self.show_suggestions)
+        self.box.adjustRequested.connect(self.edit_segment)
         self.completer.activated[str].connect(self.suggestion_picked)
         self.trans.currentIndexChanged.connect(self.on_translation)
         self.prev_b.clicked.connect(lambda: self.step(-1))
@@ -325,6 +327,7 @@ class Main(QtWidgets.QWidget):
         self.cur = None
         self.preview.show_slide("", "")
         if not parsed:
+            self.box.forget_reference()
             self.ref_lbl.setText("")
             self.verse_lbl.setText("I could not read that. Try: John 3:16  or  Rom 8:28-30  or  1 Cor 13  (start typing a book name to see suggestions)")
             return
@@ -343,13 +346,28 @@ class Main(QtWidgets.QWidget):
         self.ref_lbl.setText("%s  (%s)" % (ref, t))
         self.verse_lbl.setText(body)
         self.preview.show_slide("%s  (%s)" % (ref, t), body, self.bible.short_credit(t))
-        self.box.setText(ref)
+        self.box.set_reference(ref, reference_spans(b, ch, v1, v2),
+                               self.box.hasFocus() or self.box.segment() is not None)
         self.st["last_reference"] = ref
         self.credit_lbl.setText(self.bible.credit(t))
         self.project_b.setEnabled(True)
         if not quiet:
             self.say("")
         self.save_settings()
+
+    def edit_segment(self, segment, delta):
+        """Up/Down on the highlighted book/chapter/verse: keeps the highlight, updates the preview,
+        and re-projects when the screen is already live (same as the Next/Previous buttons)."""
+        t = self.tr_name()
+        if not self.cur or t is None:
+            return
+        new, msg = adjust_reference(self.bible, t, self.cur[:4], segment, delta)
+        if new is None:
+            self.say(msg)
+            return
+        self.lookup(format_reference(*new))
+        if self.cur and self.proj.live:
+            self.project()
 
     def on_translation(self, *_):
         self.st["translation"] = self.tr_name()

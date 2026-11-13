@@ -244,3 +244,52 @@ class BibleStore:
             "SELECT book_id, chapter, verse, text FROM verses WHERE " + cond +
             " ORDER BY book_id, chapter, verse LIMIT ?", args + [limit]).fetchall()
         return [(b, c, v, clean_text(t)) for b, c, v, t in rows]
+
+
+# ---------------- keyboard segment editing (book / chapter / verse) ----------------
+SEGMENTS = ("book", "chapter", "verse")
+
+
+def reference_spans(book, chapter, v1, v2):
+    """Character spans (start, end) of each part of format_reference(...):
+    'John 3:16' -> book (0,4), chapter (5,6), verse (7,9). A range like '28-30' is one verse part."""
+    text = format_reference(book, chapter, v1, v2)
+    b_end = len(book_name(book))
+    c_end = b_end + 1 + len(str(chapter))
+    return {"book": (0, b_end), "chapter": (b_end + 1, c_end), "verse": (c_end + 1, len(text))}
+
+
+def adjust_reference(store, translation, cur, segment, delta):
+    """Move ONE part of a reference up (+1) or down (-1). cur = (book, chapter, v1, v2).
+    book    -> neighbouring book, chapter 1 verse 1
+    chapter -> neighbouring chapter, same verse number if it exists there, else verse 1
+    verse   -> neighbouring verse (a range becomes a single verse, starting from its first verse)
+    Never wraps and never spills into another part. Returns (new_cur or None, message)."""
+    book, ch, v1, _v2 = cur
+    if segment == "book":
+        nb = book + delta
+        if nb < 1:
+            return None, "That is the first book."
+        if nb > 66:
+            return None, "That is the last book."
+        if store.last_chapter(translation, nb) < 1:
+            return None, "%s is not in %s." % (book_name(nb), translation)
+        return (nb, 1, 1, 1), ""
+    if segment == "chapter":
+        nc = ch + delta
+        last_c = store.last_chapter(translation, book)
+        if nc < 1:
+            return None, "That is chapter 1."
+        if nc > last_c:
+            return None, "%s has only %d chapters." % (book_name(book), last_c)
+        nv = v1 if v1 <= store.last_verse(translation, book, nc) else 1
+        return (book, nc, nv, nv), ""
+    if segment == "verse":
+        nv = v1 + delta
+        last = store.last_verse(translation, book, ch)
+        if nv < 1:
+            return None, "That is verse 1."
+        if nv > last:
+            return None, "%s %d has only %d verses." % (book_name(book), ch, last)
+        return (book, ch, nv, nv), ""
+    return None, ""
