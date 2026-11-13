@@ -195,8 +195,10 @@ class Main(QtWidgets.QWidget):
         self.status = QtWidgets.QLabel("")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
-        self.blank_b = QtWidgets.QPushButton("Black screen (Esc)")
+        self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
+        self.blank_b.setEnabled(False)
         self.project_b = QtWidgets.QPushButton("Project (F5)")
+        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this.")
         self.project_b.setObjectName("primary")
         self.project_b.setEnabled(False)
         bottom.addWidget(self.status, 1)
@@ -224,13 +226,11 @@ class Main(QtWidgets.QWidget):
         self.up_b.clicked.connect(lambda: self.move_item(-1))
         self.down_b.clicked.connect(lambda: self.move_item(1))
         self.service_list.itemClicked.connect(self.pick_item)
-        self.service_list.itemDoubleClicked.connect(lambda _: self.project())
         self.results.itemClicked.connect(self.pick_result)
-        self.results.itemDoubleClicked.connect(lambda _: self.project())
         sb.clicked.connect(self.do_search)
         self.search_box.returnPressed.connect(self.do_search)
         self.project_b.clicked.connect(self.project)
-        self.blank_b.clicked.connect(self.blank)
+        self.blank_b.clicked.connect(self.project_off)
         self.theme_cb.currentIndexChanged.connect(self._style_changed)
         self.size_sp.valueChanged.connect(self._style_changed)
         self.show_ref_cb.stateChanged.connect(self._style_changed)
@@ -240,10 +240,10 @@ class Main(QtWidgets.QWidget):
         self.fg_b.clicked.connect(lambda: self.pick_color("text_color"))
         self.reset_b.clicked.connect(self.reset_colors)
         self.display_cb.currentIndexChanged.connect(self._style_changed)
-        for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.blank)):
+        for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
-        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1, True))
-        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1, True))
+        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
+        QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1))
         self.resize(900, 720)
 
     # ---------------- helpers ----------------
@@ -267,8 +267,11 @@ class Main(QtWidgets.QWidget):
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
                 self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"])
-        self.proj.set_style(*args)
+        self._style_args = args
         self.preview.set_style(*args)
+        if not self.proj.live:      # a live projector keeps its look until Project is clicked again
+            self.proj.set_style(*args)
+        self._refresh_live_state()
 
     def pick_color(self, key):
         cur = cfg.resolve_colors(self.st["theme"], self.st["bg_color"], self.st["text_color"])
@@ -353,11 +356,12 @@ class Main(QtWidgets.QWidget):
         self.project_b.setEnabled(True)
         if not quiet:
             self.say("")
+        self._refresh_live_state()
         self.save_settings()
 
     def edit_segment(self, segment, delta):
         """Up/Down on the highlighted book/chapter/verse: keeps the highlight, updates the preview,
-        and re-projects when the screen is already live (same as the Next/Previous buttons)."""
+        and never touches the full-screen display (only the Project button does that)."""
         t = self.tr_name()
         if not self.cur or t is None:
             return
@@ -366,16 +370,12 @@ class Main(QtWidgets.QWidget):
             self.say(msg)
             return
         self.lookup(format_reference(*new))
-        if self.cur and self.proj.live:
-            self.project()
 
     def on_translation(self, *_):
         self.st["translation"] = self.tr_name()
         self.lookup(self.box.text(), quiet=True)
-        if self.proj.live and self.cur:
-            self.project()
 
-    def step(self, delta, project_now=False):
+    def step(self, delta):
         if not self.cur:
             return
         b, ch, v1, v2, t = self.cur
@@ -384,8 +384,6 @@ class Main(QtWidgets.QWidget):
             self.say("That is the end of the Bible." if delta > 0 else "That is the start of the Bible.")
             return
         self.lookup(format_reference(nxt[0], nxt[1], nxt[2], nxt[2]))
-        if project_now or self.proj.live:
-            self.project()
 
     # ---------------- search ----------------
     def do_search(self):
@@ -449,34 +447,64 @@ class Main(QtWidgets.QWidget):
             self.lookup(it["ref"])
 
     # ---------------- projection ----------------
-    def project(self):
+    # Safety rule: Enter, Left/Right/Up/Down, Next/Previous, translation and look changes only
+    # change the in-app preview. The full-screen display changes ONLY in project() and project_off().
+    def _preview_pair(self):
         if not self.cur:
-            return
+            return None
         b, ch, v1, v2, t = self.cur
-        body = self.bible.passage(t, b, ch, v1, v2)
-        ref = "%s  (%s)" % (format_reference(b, ch, v1, v2), t)
-        self.proj.set_content(ref, body, self.bible.short_credit(t))
+        return ("%s  (%s)" % (format_reference(b, ch, v1, v2), t), self.bible.passage(t, b, ch, v1, v2),
+                self.bible.short_credit(t))
+
+    def _refresh_live_state(self):
+        live = self.proj.live and self.proj.isVisible()
+        self.preview.on_air = live
+        self.preview.update()
+        self.blank_b.setEnabled(live)
+        if not live:
+            self.live_badge.setText("")
+            self.live_badge.setStyleSheet("")
+            return
+        pair = self._preview_pair()
+        same = bool(pair) and (pair[0], pair[1]) == (self.proj.ref, self.proj.body) \
+            and getattr(self, "_style_args", None) == self._sent_style
+        self.live_badge.setText("LIVE" if same else "LIVE (preview not sent yet)")
+        self.live_badge.setStyleSheet(
+            "color:%s; background:%s; border:1px solid %s; border-radius:4px; padding:3px 8px; font-weight:bold;"
+            % (C.live_on_text, C.live_on_bg, C.live_on_border))
+
+    _sent_style = None
+
+    def project(self):
+        """Send exactly what the preview shows (text and look) to the full-screen display."""
+        pair = self._preview_pair()
+        if not pair:
+            return
+        ref, body, credit = pair
+        args = getattr(self, "_style_args", None)
+        if args:
+            self.proj.set_style(*args)
+            self._sent_style = args
+        self.proj.set_content(ref, body, credit)
         if not self.proj.isVisible():
             idx, ext = self.proj.open_on(self.st["display"], self)
             if not ext:
                 self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
-        self.preview.on_air = True
-        self.preview.update()
-        self.live_badge.setText("LIVE")
-        self.live_badge.setStyleSheet(
-            "color:%s; background:%s; border:1px solid %s; border-radius:4px; padding:3px 8px; font-weight:bold;"
-            % (C.live_on_text, C.live_on_bg, C.live_on_border))
+        self._refresh_live_state()
         if self.status.text().startswith("Only one"):
             return
         self.say("On screen: " + ref)
 
-    def blank(self):
+    def project_off(self):
+        """Close the full-screen display. Preview, selection, service list and settings stay as they are."""
         self.proj.blank()
-        self.preview.on_air = False
-        self.preview.update()
-        self.live_badge.setText("")
-        self.live_badge.setStyleSheet("")
-        self.say("Screen is black.")
+        self.proj.hide()
+        self._sent_style = None
+        self._refresh_live_state()
+        self.proj.set_style(*self._style_args)
+        self.say("Projection is off. Your preview is unchanged.")
+
+    blank = project_off   # old name
 
     def closeEvent(self, e):
         self.proj.close()

@@ -109,12 +109,15 @@ class Keys(unittest.TestCase):
         self.assertEqual(w.box.text(), "John 4:15")
         self.assertEqual(self.sel(w), "4")
 
-    def test_live_projection_follows_edit(self):
+    def test_live_projection_does_not_follow_edit(self):
         w = self.make()
         K = QtCore.Qt
         w.project()
         self.assertTrue(w.proj.live)
         self.key(w, K.Key_Right); self.key(w, K.Key_Right); self.key(w, K.Key_Up)
+        self.assertIn("John 3:17", w.preview.ref)       # preview moved
+        self.assertIn("John 3:16", w.proj.ref)          # projector did not
+        w.project()                                     # explicit click applies it
         self.assertIn("John 3:17", w.proj.ref)
         w.proj.close()
 

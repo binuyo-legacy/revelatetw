@@ -18,7 +18,7 @@ numbers from the checklist below.
 - Search by words ("loved world").
 - Service list: line up verses before the service, reorder, saved automatically.
 - Projection: borderless full-screen window on the extended (second) display, text auto-sized to fit, 3 colour
-  styles, text size, show/hide reference. Black screen button (Esc). Project (F5).
+  styles, text size, show/hide reference. Project (F5) sends the preview to the full-screen display; Project Off (Esc) closes it. Everything else (Enter, arrows, Next/Previous) only changes the preview.
 - If only one screen is found, the projection opens as a normal window so you can still test.
 - Yoruba verses show the required credit line on screen (CC BY-SA 4.0). KJV/ASV/WEB are public domain.
 - Settings and the service list live in `%APPDATA%\RevelateTWLite`.
