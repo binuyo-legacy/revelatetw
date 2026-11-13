@@ -126,12 +126,29 @@ class PreviewView(SlideView):
 
 
 class ProjectionWindow(SlideView):
+    offRequested = QtCore.pyqtSignal()       # Esc pressed while this window has the keyboard
+    projectRequested = QtCore.pyqtSignal()   # F5 pressed while this window has the keyboard
+    closedByUser = QtCore.pyqtSignal()       # window closed some other way (Alt+F4, taskbar)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RevelateTW Lite - Projection")
         self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint)
         self.resize(960, 540)
         self.setCursor(QtCore.Qt.BlankCursor)
+
+    # ---- keys: the full-screen window takes the keyboard, so Esc/F5 must work here too ----
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.offRequested.emit()
+        elif e.key() == QtCore.Qt.Key_F5:
+            self.projectRequested.emit()
+        else:
+            super().keyPressEvent(e)
+
+    def closeEvent(self, e):
+        e.accept()
+        self.closedByUser.emit()
 
     # ---- placing on a monitor ----
     def screen_rects(self):

@@ -109,6 +109,46 @@ class PreviewQt(unittest.TestCase):
         w.proj.close()
         w.close()
 
+    def test_esc_and_f5_work_from_the_projector_window(self):
+        from PyQt5 import QtCore, QtGui, QtTest
+        w = self.make()
+        w.lookup("Rom 8:28")
+        w.project()
+        self.assertTrue(w.proj.isVisible())
+        w.lookup("John 3:16")
+        QtTest.QTest.keyClick(w.proj, QtCore.Qt.Key_F5)
+        self.assertIn("John 3:16", w.proj.ref)
+        QtTest.QTest.keyClick(w.proj, QtCore.Qt.Key_Escape)
+        self.assertFalse(w.proj.isVisible())
+        self.assertIn("John 3:16", w.preview.ref)
+        self.assertFalse(w.blank_b.isEnabled())
+        w.close()
+
+    def test_closing_projector_window_resets_live_state(self):
+        w = self.make()
+        w.lookup("Rom 8:28")
+        w.add_to_list()
+        w.project()
+        w.proj.close()
+        self.assertFalse(w.proj.live)
+        self.assertFalse(w.preview.on_air)
+        self.assertEqual(w.live_badge.text(), "")
+        self.assertFalse(w.blank_b.isEnabled())
+        self.assertIn("Romans 8:28", w.preview.ref)
+        self.assertEqual(len(w.services.items), 1)
+        w.project()
+        self.assertTrue(w.proj.isVisible())
+        w.proj.close()
+        w.close()
+
+    def test_project_without_verse_says_so_and_status_resets(self):
+        w = self.make()
+        w.lookup("Nope 9:9")
+        w.project()
+        self.assertIn("Look up a verse", w.status.text())
+        self.assertFalse(w.proj.isVisible())
+        w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

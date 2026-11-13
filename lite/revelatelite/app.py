@@ -231,6 +231,9 @@ class Main(QtWidgets.QWidget):
         self.search_box.returnPressed.connect(self.do_search)
         self.project_b.clicked.connect(self.project)
         self.blank_b.clicked.connect(self.project_off)
+        self.proj.offRequested.connect(self.project_off)
+        self.proj.projectRequested.connect(self.project)
+        self.proj.closedByUser.connect(self._projector_closed)
         self.theme_cb.currentIndexChanged.connect(self._style_changed)
         self.size_sp.valueChanged.connect(self._style_changed)
         self.show_ref_cb.stateChanged.connect(self._style_changed)
@@ -479,6 +482,7 @@ class Main(QtWidgets.QWidget):
         """Send exactly what the preview shows (text and look) to the full-screen display."""
         pair = self._preview_pair()
         if not pair:
+            self.say("Look up a verse first, then press Project.")
             return
         ref, body, credit = pair
         args = getattr(self, "_style_args", None)
@@ -486,14 +490,15 @@ class Main(QtWidgets.QWidget):
             self.proj.set_style(*args)
             self._sent_style = args
         self.proj.set_content(ref, body, credit)
+        windowed = False
         if not self.proj.isVisible():
             idx, ext = self.proj.open_on(self.st["display"], self)
-            if not ext:
-                self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
+            windowed = not ext
         self._refresh_live_state()
-        if self.status.text().startswith("Only one"):
-            return
-        self.say("On screen: " + ref)
+        if windowed:
+            self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
+        else:
+            self.say("On screen: " + ref)
 
     def project_off(self):
         """Close the full-screen display. Preview, selection, service list and settings stay as they are."""
@@ -506,7 +511,15 @@ class Main(QtWidgets.QWidget):
 
     blank = project_off   # old name
 
+    def _projector_closed(self):
+        """Projector window closed by Alt+F4 or similar: treat it like Project Off."""
+        self.proj.live = False
+        self._sent_style = None
+        self._refresh_live_state()
+        self.say("Projection window closed. Your preview is unchanged.")
+
     def closeEvent(self, e):
+        self.proj.closedByUser.disconnect()
         self.proj.close()
         self.bible.close()
         e.accept()
