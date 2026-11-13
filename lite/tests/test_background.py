@@ -212,6 +212,36 @@ class QtSide(unittest.TestCase):
         self.assertEqual(w.st["bg_kind"], "image")
         w.close()
 
+    def test_font_groups_and_persistence(self):
+        self.assertEqual(len(settings.FONTS), len(set(settings.FONTS)))
+        self.assertGreaterEqual(len(settings.FONTS), 20)
+        self.assertIn("Georgia", settings.FONTS)
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "s.json")
+        settings.save(p, dict(settings.DEFAULTS, font_family="Impact"))
+        self.assertEqual(settings.load(p)["font_family"], "Impact")
+        settings.save(p, dict(settings.DEFAULTS, font_family="Not A Font"))
+        self.assertEqual(settings.load(p)["font_family"], "Georgia")
+        lite_app.Main._installed_fonts = staticmethod(lambda: ["Arial", "Impact", "Consolas", "Georgia"])
+        w = self.make()
+        items = [w.font_cb.itemText(i) for i in range(w.font_cb.count())]
+        self.assertNotIn("Cambria", items)       # not installed here, so not offered
+        heads = [t for t in items if t.startswith("-- ")]
+        self.assertTrue(heads)
+        self.assertIn("Georgia", items)
+        i = w.font_cb.findText(heads[0])
+        self.assertFalse(w.font_cb.model().item(i).flags() & QtCore.Qt.ItemIsEnabled)
+        pick = next(t for t in items if not t.startswith("-- ") and t != "Georgia")
+        w.font_cb.setCurrentIndex(w.font_cb.findText(pick))
+        self.assertEqual(w.st["font_family"], pick)
+        self.assertEqual((w.preview.font_family, w.proj.font_family), (pick, pick))
+        d = self.dir
+        w.close()
+        lite_app.paths.user_dir = lambda: d      # restart in the same settings folder
+        w = lite_app.Main()
+        self.assertEqual(w.font_cb.currentText(), pick)
+        w.close()
+
     def test_big_image_is_capped_and_cached(self):
         d = tempfile.mkdtemp()
         big = os.path.join(d, "big.png")

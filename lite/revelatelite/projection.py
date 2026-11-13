@@ -92,6 +92,8 @@ class SlideView(QtWidgets.QWidget):
 
     def _body_font(self, size):
         f = QtGui.QFont(self.font_family or "Georgia")
+        if hasattr(f, "setFamilies"):      # Qt 5.13+: a missing font falls back to Georgia, then Arial
+            f.setFamilies([self.font_family or "Georgia", "Georgia", "Arial"])
         f.setPixelSize(size)
         f.setBold(self.bold)
         return f

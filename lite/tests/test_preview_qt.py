@@ -29,6 +29,7 @@ class PreviewQt(unittest.TestCase):
         return lite_app.Main()
 
     def test_preview_follows_lookup_and_style(self):
+        lite_app.Main._installed_fonts = staticmethod(lambda: ["Arial", "Georgia"])
         w = self.make()
         w.show()
         self.assertTrue(w.preview.body)

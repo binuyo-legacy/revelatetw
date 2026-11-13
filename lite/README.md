@@ -26,6 +26,9 @@ numbers from the checklist below.
   wrong-type or missing picture shows a plain message and the plain colour is used instead (nothing crashes; the choice is kept
   so the picture comes back if the file returns). All of it is saved in settings.json. The preview and the full-screen display
   draw the background with the same code, and changes only show in the preview until you click Project.
+  Font picker is grouped (easy to read, clean, big and bold, decorative, fixed width) and lists only fonts that ship with
+  Windows 8.1 and are installed on that PC; nothing to download. A missing font falls back to Georgia, then Arial. The choice is
+  saved, and the preview and full-screen display use the same font.
   If a picture is bright enough that white text would be hard to read, Settings shows a hint to raise Darken picture.
   Tiled and scaled copies are cached per picture, so repainting does not redo work on a 2 GB PC.
 - If only one screen is found, the projection opens as a normal window so you can still test.

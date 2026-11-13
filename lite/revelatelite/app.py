@@ -202,8 +202,7 @@ class Main(QtWidgets.QWidget):
         self.size_sp.setSuffix(" %")
         self.size_sp.setValue(self.st["font_scale"])
         self.font_cb = QtWidgets.QComboBox()
-        self.font_cb.addItems(cfg.FONTS)
-        self.font_cb.setCurrentText(self.st["font_family"])
+        self._fill_fonts()
         self.bold_cb = QtWidgets.QCheckBox("Bold text")
         self.bold_cb.setChecked(self.st["bold"])
         self.bg_b = QtWidgets.QPushButton("Background colour...")
@@ -395,6 +394,26 @@ class Main(QtWidgets.QWidget):
         k = self.display_cb.findData(self.st["display"])
         self.display_cb.setCurrentIndex(max(k, 0))
         self.display_cb.blockSignals(False)
+
+    @staticmethod
+    def _installed_fonts():
+        return QtGui.QFontDatabase().families()
+
+    def _fill_fonts(self):
+        """Grouped font list. Only fonts really installed on this PC are offered (Georgia always stays)."""
+        have = {f.lower() for f in self._installed_fonts()}
+        self.font_cb.clear()
+        model = self.font_cb.model()
+        for title, names in cfg.FONT_GROUPS:
+            ok = [n for n in names if n.lower() in have or n == "Georgia"]
+            if not ok:
+                continue
+            self.font_cb.addItem("-- " + title + " --")
+            model.item(self.font_cb.count() - 1).setFlags(QtCore.Qt.NoItemFlags)   # heading, cannot be picked
+            for n in ok:
+                self.font_cb.addItem(n)
+        k = self.font_cb.findText(self.st["font_family"])
+        self.font_cb.setCurrentIndex(k if k >= 0 else self.font_cb.findText("Georgia"))
 
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),

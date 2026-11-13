@@ -22,7 +22,19 @@ DEFAULTS = {
     "image_dim": 30,         # percent darkening over a picture, keeps text readable
 }
 
-FONTS = ["Georgia", "Segoe UI", "Arial", "Times New Roman", "Verdana"]  # all ship with Windows 8.1
+# Fonts that ship with Windows 8.1 (nothing to download), grouped for the Settings picker.
+# Georgia stays first: it is the default and the safe fallback.
+FONT_GROUPS = [
+    ("Easy to read (serif)", ["Georgia", "Times New Roman", "Cambria", "Palatino Linotype", "Book Antiqua",
+                              "Bookman Old Style", "Century Schoolbook", "Constantia", "Garamond"]),
+    ("Clean (sans-serif)", ["Segoe UI", "Segoe UI Semibold", "Segoe UI Light", "Arial", "Verdana", "Tahoma",
+                           "Trebuchet MS", "Calibri", "Candara", "Corbel", "Lucida Sans Unicode",
+                           "Franklin Gothic Medium"]),
+    ("Big and bold", ["Arial Black", "Impact"]),
+    ("Decorative", ["Segoe Script", "Gabriola", "Comic Sans MS"]),
+    ("Fixed width", ["Consolas", "Courier New"]),
+]
+FONTS = [f for _, names in FONT_GROUPS for f in names]
 
 
 def valid_color(c):
