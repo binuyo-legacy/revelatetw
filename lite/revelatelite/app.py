@@ -7,7 +7,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, paths, settings as cfg
-from .bible import BibleStore, format_reference, parse_reference, book_name
+from .bible import BibleStore, format_reference, parse_reference, book_name, suggest
 from .projection import ProjectionWindow
 from .servicelist import ServiceList
 
@@ -83,6 +83,12 @@ class Main(QtWidgets.QWidget):
         self.box = QtWidgets.QLineEdit(self.st["last_reference"])
         self.box.setPlaceholderText("Type a verse, e.g. John 3:16 or Rom 8:28-30")
         go = QtWidgets.QPushButton("Look up")
+        self.sug_model = QtCore.QStringListModel(self)
+        self.completer = QtWidgets.QCompleter(self.sug_model, self)
+        self.completer.setCompletionMode(QtWidgets.QCompleter.UnfilteredPopupCompletion)
+        self.completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self.completer.setMaxVisibleItems(8)
+        self.box.setCompleter(self.completer)
         row.addWidget(self.trans)
         row.addWidget(self.box, 1)
         row.addWidget(go)
@@ -180,6 +186,8 @@ class Main(QtWidgets.QWidget):
 
         go.clicked.connect(lambda: self.lookup(self.box.text()))
         self.box.returnPressed.connect(lambda: self.lookup(self.box.text()))
+        self.box.textEdited.connect(self.show_suggestions)
+        self.completer.activated[str].connect(self.suggestion_picked)
         self.trans.currentIndexChanged.connect(self.on_translation)
         self.prev_b.clicked.connect(lambda: self.step(-1))
         self.next_b.clicked.connect(lambda: self.step(1))
@@ -240,6 +248,28 @@ class Main(QtWidgets.QWidget):
         except OSError:
             pass
 
+    # ---------------- typing suggestions ----------------
+    def show_suggestions(self, text):
+        t = self.tr_name()
+        items = suggest(text, self.bible, t) if t else []
+        self.sug_model.setStringList(items)
+        if items:
+            self.completer.setCompletionPrefix(text)
+            self.completer.complete()
+        else:
+            self.completer.popup().hide()
+
+    def suggestion_picked(self, text):
+        """Book or chapter picked: keep typing with the next list. A verse: look it up."""
+        def after():
+            self.box.setText(text)
+            if text.endswith(" ") or text.endswith(":"):
+                self.box.setFocus()
+                self.show_suggestions(text)
+            else:
+                self.lookup(text)
+        QtCore.QTimer.singleShot(0, after)
+
     # ---------------- lookup ----------------
     def lookup(self, text, quiet=False):
         parsed = parse_reference(text)
@@ -247,7 +277,7 @@ class Main(QtWidgets.QWidget):
         self.cur = None
         if not parsed:
             self.ref_lbl.setText("")
-            self.verse_lbl.setText("I could not read that. Try: John 3:16  or  Rom 8:28-30  or  1 Cor 13")
+            self.verse_lbl.setText("I could not read that. Try: John 3:16  or  Rom 8:28-30  or  1 Cor 13  (start typing a book name to see suggestions)")
             return
         b, ch, v1, v2 = parsed
         t = self.tr_name()

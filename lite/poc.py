@@ -96,6 +96,10 @@ QLabel#status {{ color:{C.text_muted}; background:transparent; }}
 
 
 def main():
+    if "--old-poc" not in sys.argv:  # the real Lite app replaces this proof of concept
+        sys.path.insert(0, os.path.join(ROOT, "lite"))
+        from revelatelite.app import main as lite_main
+        return lite_main()
     from PyQt5 import QtCore, QtGui, QtWidgets
     app = QtWidgets.QApplication(sys.argv)
     app.setStyleSheet(QSS)

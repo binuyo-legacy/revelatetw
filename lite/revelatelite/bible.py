@@ -46,15 +46,17 @@ def find_book(text):
     return _BOOK_LOOKUP.get(key)
 
 
-_REF = re.compile(r"^\s*(.+?)\s*(\d+)\s*(?:[:. ]\s*(\d+)\s*(?:[-\u2013]\s*(\d+))?)?\s*$")
+_REF = re.compile(r"^\s*(.+?)\s*(\d+)\s*(?:[:. ]\s*(\d*)\s*(?:[-\u2013]\s*(\d+))?)?\s*$")
 
 
 def parse_reference(text):
     """'John 3:16', 'rom 8:28', '1 cor 13:4', 'ps 23:1-3', 'John 3' -> (book, chapter, v1, v2).
-    A chapter alone means verse 1. Returns None when it cannot be read."""
+    A chapter alone means verse 1; a book name alone ('John') means chapter 1 verse 1.
+    Returns None when it cannot be read."""
     m = _REF.match(text or "")
     if not m:
-        return None
+        book = find_book(text or "")
+        return (book, 1, 1, 1) if book else None
     book = find_book(m.group(1))
     if book is None:
         return None
@@ -64,6 +66,75 @@ def parse_reference(text):
     if v2 < v1 or chapter < 1 or v1 < 1:
         return None
     return book, chapter, v1, v2
+
+
+def _norm(text):
+    return re.sub(r"\s+", " ", text.lower().replace(".", " ")).strip()
+
+
+def suggest_books(prefix, limit=8):
+    """Book names whose spelling starts with what was typed ('jo' -> Job, Joel, John...)."""
+    key = _norm(prefix)
+    if not key:
+        return []
+    first, rest = [], []
+    for b in BOOKS:
+        if b.name.lower().startswith(key):
+            first.append(b.name)
+        elif any(f.startswith(key) for f in name_forms(b.book_id)):
+            rest.append(b.name)
+    return (first + rest)[:limit]
+
+
+_PARTIAL = re.compile(r"^\s*(.*?)\s*(\d+)\s*(?::\s*(\d*))?\s*$")
+
+
+def suggest(text, store=None, translation=None, limit=8):
+    """Typing help. Returns strings to show in a drop-down while the user types.
+      'jo'        -> book names ('Job ', 'Joel ', 'John ', ...)
+      'john'      -> chapters ('John 1:', 'John 2:', ...)
+      'john 3'    -> chapters starting with 3 ('John 3:')
+      'john 3:1'  -> verses ('John 3:1', 'John 3:10', ...)
+    A suggestion ending in ' ' is a book (keep typing), ending in ':' a chapter, otherwise a
+    complete verse. Chapter/verse counts come from the selected translation; without one,
+    no numbers are offered."""
+    text = text or ""
+    if not text.strip():
+        return []
+    m = _PARTIAL.match(text)
+    if not m:
+        book = find_book(text)
+        if book is None:
+            return [n + " " for n in suggest_books(text, limit)]
+        return _chapters(book, "", store, translation, limit)
+    book = find_book(m.group(1))
+    if book is None:
+        return []
+    if m.group(3) is None and ":" not in text:
+        return _chapters(book, m.group(2), store, translation, limit)
+    if store is None or translation is None:
+        return []
+    ch = int(m.group(2))
+    typed = m.group(3) or ""
+    out = []
+    for v in range(1, store.last_verse(translation, book, ch) + 1):
+        if str(v).startswith(typed):
+            out.append("%s %d:%d" % (book_name(book), ch, v))
+            if len(out) >= max(limit, 200):
+                break
+    return out
+
+
+def _chapters(book, typed, store, translation, limit):
+    if store is None or translation is None:
+        return []
+    out = []
+    for c in range(1, store.last_chapter(translation, book) + 1):
+        if str(c).startswith(typed):
+            out.append("%s %d:" % (book_name(book), c))
+            if len(out) >= max(limit, 200):
+                break
+    return out
 
 
 def format_reference(book, chapter, v1, v2):

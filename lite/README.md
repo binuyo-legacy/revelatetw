@@ -10,6 +10,7 @@ and screenshot-checked on Linux (peak memory about 62 MB there). Please run it o
 numbers from the checklist below.
 
 ## What it does
+- Typing suggestions: start typing a book (`jo`), pick with Up/Down + Enter, then pick a chapter, then a verse. `John` alone opens John 1:1.
 - Offline Bible lookup from the bundled packs (KJV, ASV, WEB, Yoruba Contemporary). Type `John 3:16`, `rom 8:28-30`,
   `1 cor 13`, `first john 4:8`.
 - Next / previous verse (crosses chapter and book ends). PageDown / PageUp also projects it straight away.
@@ -43,7 +44,7 @@ Not yet run on Windows. If it fails, send the last 20 lines.
 5. Task Manager memory while running.
 
 ## Tests (no PyQt needed)
-`python lite\tests\test_lite.py` (22 tests: reference parsing, verse/range/step/search, all four packs, display
+`python lite\tests\test_lite.py` (31 tests: reference parsing, verse/range/step/search, all four packs, display
 picking, settings and service list files). `python lite\tests\test_poc.py` still runs the old proof of concept.
 
 ## Files

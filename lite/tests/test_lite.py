@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from revelatelite import layout, settings  # noqa: E402
-from revelatelite.bible import BibleStore, clean_text, format_reference, parse_reference  # noqa: E402
+from revelatelite.bible import BibleStore, clean_text, format_reference, parse_reference, suggest, suggest_books  # noqa: E402
 from revelatelite.servicelist import ServiceList  # noqa: E402
 
 B = BibleStore()
@@ -26,8 +26,17 @@ class Parse(unittest.TestCase):
     def test_chapter_only_means_verse_one(self):
         self.assertEqual(parse_reference("John 3"), (43, 3, 1, 1))
 
+    def test_book_alone_is_chapter_one_verse_one(self):
+        self.assertEqual(parse_reference("John"), (43, 1, 1, 1))
+        self.assertEqual(parse_reference("  john "), (43, 1, 1, 1))
+        self.assertEqual(parse_reference("1 john"), (62, 1, 1, 1))
+        self.assertEqual(parse_reference("rom"), (45, 1, 1, 1))
+
+    def test_trailing_colon_from_suggestions(self):
+        self.assertEqual(parse_reference("John 3:"), (43, 3, 1, 1))
+
     def test_bad(self):
-        for bad in ("", "Nope 1:1", "John 3:18-16", "John 0:1", "John", None):
+        for bad in ("", "Nope 1:1", "John 3:18-16", "John 0:1", "Nope", None):
             self.assertIsNone(parse_reference(bad), bad)
 
     def test_format(self):
@@ -145,6 +154,47 @@ class Files(unittest.TestCase):
         sl.save(p)
         self.assertEqual([i["ref"] for i in ServiceList.load(p).items], ["Ps 23:1", "Rom 8:28"])
         self.assertEqual(ServiceList.load(os.path.join(d, "none.json")).items, [])
+
+
+class Suggest(unittest.TestCase):
+    def test_book_prefix(self):
+        self.assertEqual(set(suggest_books("jo")), {"Job", "Joel", "John", "Jonah", "Joshua"})
+        self.assertIn("1 John", suggest_books("1 jo"))
+        self.assertEqual(suggest_books(""), [])
+
+    def test_partial_book(self):
+        self.assertEqual(suggest("joh", B, "KJV"), ["John "])
+        self.assertIn("1 John ", suggest("1 joh", B, "KJV"))
+
+    def test_bare_book_offers_chapters(self):
+        got = suggest("John", B, "KJV")
+        self.assertEqual(got[0], "John 1:")
+        self.assertEqual(len(got), 21)
+        self.assertEqual(suggest("jn", B, "KJV")[0], "John 1:")
+
+    def test_chapter_prefix(self):
+        self.assertEqual(suggest("john 2", B, "KJV"), ["John 2:", "John 20:", "John 21:"])
+        self.assertEqual(suggest("psalms 11", B, "KJV")[0], "Psalms 11:")
+        self.assertIn("Psalms 119:", suggest("ps 11", B, "KJV"))
+
+    def test_verses(self):
+        got = suggest("john 3:", B, "KJV")
+        self.assertEqual(got[0], "John 3:1")
+        self.assertEqual(len(got), 36)
+        self.assertEqual(suggest("john 3:16", B, "KJV"), ["John 3:16"])
+        self.assertIn("John 3:10", suggest("john 3:1", B, "KJV"))
+        self.assertNotIn("John 3:20", suggest("john 3:1", B, "KJV"))
+
+    def test_every_suggestion_is_readable(self):
+        for typed in ("joh", "John", "john 3", "john 3:", "1 cor 13:"):
+            for s_ in suggest(typed, B, "KJV"):
+                self.assertIsNotNone(parse_reference(s_), s_)
+
+    def test_nonsense(self):
+        self.assertEqual(suggest("", B, "KJV"), [])
+        self.assertEqual(suggest("zzz", B, "KJV"), [])
+        self.assertEqual(suggest("zzz 3", B, "KJV"), [])
+        self.assertEqual(suggest("John", None, None), [])
 
 
 if __name__ == "__main__":
