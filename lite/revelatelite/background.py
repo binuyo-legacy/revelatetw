@@ -125,7 +125,7 @@ def image_rects(mode, iw, ih, w, h):
 
 
 # ---------------- Qt side ----------------
-_cache = {"key": None, "image": None, "msg": ""}
+_cache = {"key": None, "image": None, "msg": "", "gen": 0, "lum": 0}
 
 
 def load_image(path):
@@ -155,8 +155,29 @@ def load_image(path):
             img = img.convertToFormat(QtGui.QImage.Format_RGB32)
     except Exception:  # never let a bad file take the app down
         img, msg = None, "That picture could not be opened. Using the plain colour instead."
-    _cache.update(key=key, image=img, msg=msg)
+    lum = 0
+    if img is not None:
+        try:   # average brightness from a tiny copy (cheap), used for the readability hint
+            t = img.scaled(16, 9, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.FastTransformation)
+            vals = [QtGui.QColor(t.pixel(x, y)) for x in range(16) for y in range(9)]
+            lum = sum(0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue() for c in vals) / len(vals)
+        except Exception:
+            lum = 0
+    _cache.update(key=key, image=img, msg=msg, gen=_cache["gen"] + 1, lum=lum)
     return img, msg
+
+
+def too_bright_hint(lum, dim):
+    """Plain-language warning when a bright picture (after darkening) would make white text hard to read."""
+    if lum * (1 - dim / 100.0) > 150:
+        return "This picture is bright, so white text may be hard to read. Raise Darken picture."
+    return ""
+
+
+def image_hint(path, dim):
+    """Brightness hint for the picture at path ('' if none or unreadable)."""
+    img, _ = load_image(path)
+    return too_bright_hint(_cache["lum"], dim) if img is not None else ""
 
 
 def image_problem(path):
@@ -172,6 +193,8 @@ class Painter:
     def __init__(self):
         self._scaled = None
         self._scaled_key = None
+        self._tile = None
+        self._tile_key = None
 
     def paint(self, p, rect, spec, base_color):
         """Draw the background of `spec` into rect. base_color ('#rrggbb') is the solid colour and
@@ -198,7 +221,10 @@ class Painter:
                 tw, th = fit_size(img.width(), img.height(), TILE_MAX, TILE_MAX)
                 tile = self._get_scaled(img, (tw, th), "tile", lambda: img.scaled(
                     tw, th, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.FastTransformation))
-            p.drawTiledPixmap(rect, QtGui.QPixmap.fromImage(tile))
+            tkey = (_cache["gen"], tile.width(), tile.height())
+            if self._tile_key != tkey:      # convert once, not on every repaint
+                self._tile, self._tile_key = QtGui.QPixmap.fromImage(tile), tkey
+            p.drawTiledPixmap(rect, self._tile)
         else:
             src, dst = image_rects(mode, img.width(), img.height(), w, h)
             crop = QtCore.QRect(*src)
@@ -209,7 +235,7 @@ class Painter:
             p.fillRect(rect, QtGui.QColor(0, 0, 0, int(255 * dim / 100)))
 
     def _get_scaled(self, img, size, tag, make):
-        key = (id(img), size, tag)
+        key = (_cache["gen"], size, tag)   # gen changes with every new picture (id() can be reused)
         if self._scaled_key != key:
             self._scaled = make()
             self._scaled_key = key

@@ -26,6 +26,8 @@ numbers from the checklist below.
   wrong-type or missing picture shows a plain message and the plain colour is used instead (nothing crashes; the choice is kept
   so the picture comes back if the file returns). All of it is saved in settings.json. The preview and the full-screen display
   draw the background with the same code, and changes only show in the preview until you click Project.
+  If a picture is bright enough that white text would be hard to read, Settings shows a hint to raise Darken picture.
+  Tiled and scaled copies are cached per picture, so repainting does not redo work on a 2 GB PC.
 - If only one screen is found, the projection opens as a normal window so you can still test.
 - Yoruba verses show the required credit line on screen (CC BY-SA 4.0). KJV/ASV/WEB are public domain.
 - Settings and the service list live in `%APPDATA%\RevelateTWLite`.

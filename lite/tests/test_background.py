@@ -187,6 +187,31 @@ class QtSide(unittest.TestCase):
         self.assertEqual(w.st["bg_kind"], "image")       # setting kept, so restoring the file brings it back
         w.close()
 
+    def test_bright_picture_hint_and_tile_repaint(self):
+        self.assertEqual(bg.too_bright_hint(10, 30), "")
+        self.assertIn("bright", bg.too_bright_hint(250, 30))
+        self.assertEqual(bg.too_bright_hint(250, 80), "")
+        w = self.make()
+        png = os.path.join(self.dir, "white.png")
+        make_png(png, 100, 100, 0xFFFFFFFF)
+        w.choose_image(png)
+        w.imgdim_sp.setValue(0)
+        self.assertIn("bright", w.img_lbl.text())
+        w.imgdim_sp.setValue(80)
+        self.assertNotIn("bright", w.img_lbl.text())
+        # a different picture with the same size must not reuse the old scaled copy
+        png2 = os.path.join(self.dir, "red.png")
+        make_png(png2, 100, 100, 0xFFFF0000)
+        w.imgdim_sp.setValue(0)
+        w.imgmode_cb.setCurrentIndex(w.imgmode_cb.findData("tile"))
+        self.grab(w.preview)
+        w.choose_image(png2)
+        im = self.grab(w.preview)
+        self.assertGreater(im.pixelColor(310, 170).red(), 200)
+        self.assertLess(im.pixelColor(310, 170).green(), 80)
+        self.assertEqual(w.st["bg_kind"], "image")
+        w.close()
+
     def test_big_image_is_capped_and_cached(self):
         d = tempfile.mkdtemp()
         big = os.path.join(d, "big.png")

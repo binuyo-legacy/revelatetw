@@ -477,6 +477,10 @@ class Main(QtWidgets.QWidget):
             msg = bgm.image_problem(self.st["bg_image"]) or ("Picture: " + os.path.basename(self.st["bg_image"]))
             if kind == "image" and bgm.image_problem(self.st["bg_image"]):
                 msg += " (showing the plain colour)"
+            if kind == "image" and not bgm.image_problem(self.st["bg_image"]):
+                hint = bgm.image_hint(self.st["bg_image"], self.st["image_dim"])
+                if hint:
+                    msg += "\n" + hint
         elif kind == "image":
             msg = "No picture chosen yet. Click Choose picture..."
         self.img_lbl.setText(msg)
