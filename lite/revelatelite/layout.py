@@ -31,3 +31,8 @@ def fit_font_size(fits, lo, hi):
         else:
             hi = mid - 1
     return best
+
+
+def height_for_width(w):
+    """16:9 preview height for a given width."""
+    return int(round(w * 9 / 16))

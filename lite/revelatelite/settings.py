@@ -9,7 +9,40 @@ DEFAULTS = {
     "show_reference": True,
     "display": -1,           # -1 = automatic (first screen that is not the main one)
     "last_reference": "John 3:16",
+    "font_family": "Georgia",  # verse font
+    "bold": False,
+    "bg_color": "",          # "" = use the theme colour, else "#rrggbb"
+    "text_color": "",        # "" = use the theme colour
 }
+
+FONTS = ["Georgia", "Segoe UI", "Arial", "Times New Roman", "Verdana"]  # all ship with Windows 8.1
+
+
+def valid_color(c):
+    """True for '#rrggbb' only (no Qt needed)."""
+    return (isinstance(c, str) and len(c) == 7 and c[0] == "#"
+            and all(ch in "0123456789abcdefABCDEF" for ch in c[1:]))
+
+
+def resolve_colors(theme, bg_color="", text_color=""):
+    """(background, text, reference colour). Custom colours override the theme.
+    The reference colour stays readable: theme colour, or the text colour when the background was changed."""
+    bg, fg, refc = THEMES.get(theme, THEMES["navy"])
+    if valid_color(bg_color):
+        bg = bg_color
+        if not valid_color(text_color) and bg_color.lower() != THEMES.get(theme, THEMES["navy"])[0]:
+            fg = best_text_on(bg)
+            refc = fg
+    if valid_color(text_color):
+        fg = text_color
+        refc = text_color if valid_color(bg_color) else refc
+    return bg, fg, refc
+
+
+def best_text_on(bg):
+    """White or near-black, whichever reads better on bg ('#rrggbb')."""
+    r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
+    return "#0b0f19" if (0.299 * r + 0.587 * g + 0.114 * b) > 150 else "#f8fafc"
 
 THEMES = {  # name -> (background, text, reference colour); same palette as the main app
     "navy": ("#0b0f19", "#f8fafc", "#facc15"),
@@ -30,6 +63,11 @@ def load(path):
     except (OSError, ValueError):
         pass
     data["font_scale"] = max(50, min(200, data["font_scale"]))
+    if data["font_family"] not in FONTS:
+        data["font_family"] = "Georgia"
+    for k in ("bg_color", "text_color"):
+        if data[k] and not valid_color(data[k]):
+            data[k] = ""
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
     return data

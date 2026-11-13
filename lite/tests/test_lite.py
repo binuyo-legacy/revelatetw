@@ -197,5 +197,36 @@ class Suggest(unittest.TestCase):
         self.assertEqual(suggest("John", None, None), [])
 
 
+
+class PreviewStyle(unittest.TestCase):
+    def test_height_for_width_is_16_9(self):
+        self.assertEqual(layout.height_for_width(320), 180)
+        self.assertEqual(layout.height_for_width(1280), 720)
+
+    def test_theme_colours_by_default(self):
+        self.assertEqual(settings.resolve_colors("navy"), settings.THEMES["navy"])
+        self.assertEqual(settings.resolve_colors("nope"), settings.THEMES["navy"])
+
+    def test_custom_background_picks_readable_text(self):
+        bg, fg, ref = settings.resolve_colors("navy", "#ffffff", "")
+        self.assertEqual((bg, fg), ("#ffffff", "#0b0f19"))
+        self.assertEqual(ref, fg)
+        self.assertEqual(settings.resolve_colors("gold", "#000000", "")[1], "#f8fafc")
+
+    def test_custom_text_colour(self):
+        bg, fg, ref = settings.resolve_colors("navy", "", "#00ff00")
+        self.assertEqual((bg, fg), (settings.THEMES["navy"][0], "#00ff00"))
+
+    def test_bad_colours_ignored(self):
+        self.assertEqual(settings.resolve_colors("navy", "red", "#12"), settings.THEMES["navy"])
+
+    def test_settings_validate_new_keys(self):
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "s.json")
+        settings.save(p, dict(settings.DEFAULTS, font_family="Comic", bg_color="oops", text_color="#abcdef", bold=True))
+        s = settings.load(p)
+        self.assertEqual((s["font_family"], s["bg_color"], s["text_color"], s["bold"]), ("Georgia", "", "#abcdef", True))
+        self.assertEqual(settings.load(os.path.join(d, "missing.json"))["font_family"], "Georgia")
+
 if __name__ == "__main__":
     unittest.main()

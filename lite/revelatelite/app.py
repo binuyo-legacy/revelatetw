@@ -8,7 +8,7 @@ from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, paths, settings as cfg
 from .bible import BibleStore, format_reference, parse_reference, book_name, suggest
-from .projection import ProjectionWindow
+from .projection import PreviewView, ProjectionWindow
 from .servicelist import ServiceList
 
 QSS = """
@@ -47,6 +47,7 @@ class Main(QtWidgets.QWidget):
         self.st = cfg.load(self.settings_path)
         self.services = ServiceList.load(self.list_path)
         self.proj = ProjectionWindow()
+        self.preview = PreviewView()
         self.cur = None   # (book, chapter, v1, v2, translation)
         self._build()
         self._apply_style()
@@ -107,7 +108,17 @@ class Main(QtWidgets.QWidget):
         self.verse_lbl.setTextInteractionFlags(QtCore.Qt.NoTextInteraction)
         cl.addWidget(self.ref_lbl)
         cl.addWidget(self.verse_lbl, 1)
-        lay.addWidget(card, 2)
+        mid = QtWidgets.QHBoxLayout()
+        mid.addWidget(card, 1)
+        pv = QtWidgets.QVBoxLayout()
+        pv.setSpacing(4)
+        cap = QtWidgets.QLabel("Live preview (what the screen shows)")
+        cap.setObjectName("hint")
+        pv.addWidget(cap)
+        pv.addWidget(self.preview)
+        pv.addStretch(1)
+        mid.addLayout(pv, 1)
+        lay.addLayout(mid, 2)
 
         nav = QtWidgets.QHBoxLayout()
         self.prev_b = QtWidgets.QPushButton("< Previous verse")
@@ -156,18 +167,33 @@ class Main(QtWidgets.QWidget):
         self.size_sp.setSingleStep(10)
         self.size_sp.setSuffix(" %")
         self.size_sp.setValue(self.st["font_scale"])
+        self.font_cb = QtWidgets.QComboBox()
+        self.font_cb.addItems(cfg.FONTS)
+        self.font_cb.setCurrentText(self.st["font_family"])
+        self.bold_cb = QtWidgets.QCheckBox("Bold text")
+        self.bold_cb.setChecked(self.st["bold"])
+        self.bg_b = QtWidgets.QPushButton("Background colour...")
+        self.fg_b = QtWidgets.QPushButton("Text colour...")
+        self.reset_b = QtWidgets.QPushButton("Reset colours")
+        cb = QtWidgets.QHBoxLayout()
+        for w_ in (self.bg_b, self.fg_b, self.reset_b):
+            cb.addWidget(w_)
         self.show_ref_cb = QtWidgets.QCheckBox("Show verse reference on screen")
         self.show_ref_cb.setChecked(self.st["show_reference"])
         og.addRow("Projector screen", self.display_cb)
         og.addRow("Colours", self.theme_cb)
         og.addRow("Text size", self.size_sp)
+        og.addRow("Font", self.font_cb)
+        og.addRow("", self.bold_cb)
+        og.addRow("Custom colours", cb)
         og.addRow("", self.show_ref_cb)
-        tabs.addTab(ow, "Screen")
+        tabs.addTab(ow, "Look and screen")
         lay.addWidget(tabs, 3)
 
         bottom = QtWidgets.QHBoxLayout()
         self.status = QtWidgets.QLabel("")
         self.status.setObjectName("status")
+        self.status.setWordWrap(True)
         self.blank_b = QtWidgets.QPushButton("Black screen (Esc)")
         self.project_b = QtWidgets.QPushButton("Project (F5)")
         self.project_b.setObjectName("primary")
@@ -206,12 +232,17 @@ class Main(QtWidgets.QWidget):
         self.theme_cb.currentIndexChanged.connect(self._style_changed)
         self.size_sp.valueChanged.connect(self._style_changed)
         self.show_ref_cb.stateChanged.connect(self._style_changed)
+        self.font_cb.currentIndexChanged.connect(self._style_changed)
+        self.bold_cb.stateChanged.connect(self._style_changed)
+        self.bg_b.clicked.connect(lambda: self.pick_color("bg_color"))
+        self.fg_b.clicked.connect(lambda: self.pick_color("text_color"))
+        self.reset_b.clicked.connect(self.reset_colors)
         self.display_cb.currentIndexChanged.connect(self._style_changed)
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.blank)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1, True))
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1, True))
-        self.resize(760, 780)
+        self.resize(900, 720)
 
     # ---------------- helpers ----------------
     def tr_name(self):
@@ -232,13 +263,30 @@ class Main(QtWidgets.QWidget):
         self.display_cb.blockSignals(False)
 
     def _apply_style(self):
-        self.proj.set_style(self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked())
+        args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
+                self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"])
+        self.proj.set_style(*args)
+        self.preview.set_style(*args)
+
+    def pick_color(self, key):
+        cur = cfg.resolve_colors(self.st["theme"], self.st["bg_color"], self.st["text_color"])
+        start = QtGui.QColor(cur[0] if key == "bg_color" else cur[1])
+        c = QtWidgets.QColorDialog.getColor(start, self, "Choose a colour")
+        if c.isValid():
+            self.st[key] = c.name()
+            self._style_changed()
+
+    def reset_colors(self):
+        self.st["bg_color"] = self.st["text_color"] = ""
+        self._style_changed()
 
     def _style_changed(self, *_):
         self.st["theme"] = self.theme_cb.currentText()
         self.st["font_scale"] = self.size_sp.value()
         self.st["show_reference"] = self.show_ref_cb.isChecked()
         self.st["display"] = self.display_cb.currentData()
+        self.st["font_family"] = self.font_cb.currentText()
+        self.st["bold"] = self.bold_cb.isChecked()
         self._apply_style()
         self.save_settings()
 
@@ -275,6 +323,7 @@ class Main(QtWidgets.QWidget):
         parsed = parse_reference(text)
         self.project_b.setEnabled(False)
         self.cur = None
+        self.preview.show_slide("", "")
         if not parsed:
             self.ref_lbl.setText("")
             self.verse_lbl.setText("I could not read that. Try: John 3:16  or  Rom 8:28-30  or  1 Cor 13  (start typing a book name to see suggestions)")
@@ -293,6 +342,7 @@ class Main(QtWidgets.QWidget):
         self.cur = (b, ch, v1, v2, t)
         self.ref_lbl.setText("%s  (%s)" % (ref, t))
         self.verse_lbl.setText(body)
+        self.preview.show_slide("%s  (%s)" % (ref, t), body, self.bible.short_credit(t))
         self.box.setText(ref)
         self.st["last_reference"] = ref
         self.credit_lbl.setText(self.bible.credit(t))
@@ -392,6 +442,8 @@ class Main(QtWidgets.QWidget):
             idx, ext = self.proj.open_on(self.st["display"], self)
             if not ext:
                 self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
+        self.preview.on_air = True
+        self.preview.update()
         self.live_badge.setText("LIVE")
         self.live_badge.setStyleSheet(
             "color:%s; background:%s; border:1px solid %s; border-radius:4px; padding:3px 8px; font-weight:bold;"
@@ -402,6 +454,8 @@ class Main(QtWidgets.QWidget):
 
     def blank(self):
         self.proj.blank()
+        self.preview.on_air = False
+        self.preview.update()
         self.live_badge.setText("")
         self.live_badge.setStyleSheet("")
         self.say("Screen is black.")

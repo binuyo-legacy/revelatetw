@@ -4,11 +4,12 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from . import layout, settings
 
 
-class ProjectionWindow(QtWidgets.QWidget):
+class SlideView(QtWidgets.QWidget):
+    """Draws one slide. Used by BOTH the projector window and the small in-app preview,
+    so the preview is exactly what the audience sees (everything scales with the height)."""
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("RevelateTW Lite - Projection")
-        self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint)
         self.ref = ""
         self.body = ""
         self.credit = ""
@@ -16,8 +17,10 @@ class ProjectionWindow(QtWidgets.QWidget):
         self.theme = "navy"
         self.scale = 100
         self.show_ref = True
-        self.resize(960, 540)
-        self.setCursor(QtCore.Qt.BlankCursor)
+        self.font_family = "Georgia"
+        self.bold = False
+        self.bg_color = ""
+        self.text_color = ""
 
     # ---- content ----
     def set_content(self, ref, body, credit=""):
@@ -29,9 +32,106 @@ class ProjectionWindow(QtWidgets.QWidget):
         self.live = False
         self.update()
 
-    def set_style(self, theme, scale, show_ref):
+    def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color=""):
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
+        self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
         self.update()
+
+    # ---- drawing ----
+    def paintEvent(self, _):
+        bg, fg, refc = settings.resolve_colors(self.theme, self.bg_color, self.text_color)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+        if not self.live or not self.body:
+            p.fillRect(self.rect(), QtGui.QColor("#000000"))
+            return
+        p.fillRect(self.rect(), QtGui.QColor(bg))
+        w, h = self.width(), self.height()
+        mx, my = int(w * 0.07), int(h * 0.06)
+        area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)
+        ref_h = 0
+        if self.show_ref and self.ref:
+            f = QtGui.QFont("Segoe UI", 10)
+            f.setBold(True)
+            f.setPixelSize(max(14, int(h * 0.055 * self.scale / 100)))
+            p.setFont(f)
+            p.setPen(QtGui.QColor(refc))
+            ref_h = QtGui.QFontMetrics(f).height() + int(h * 0.02)
+            p.drawText(QtCore.QRect(area.x(), area.y() + area.height() - ref_h + int(h * 0.02),
+                                    area.width(), ref_h), QtCore.Qt.AlignCenter, self.ref)
+        text_area = QtCore.QRect(area.x(), area.y(), area.width(), area.height() - ref_h)
+        flags = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
+
+        def fits(size):
+            f = self._body_font(size)
+            r = QtGui.QFontMetrics(f).boundingRect(0, 0, text_area.width(), 100000, flags, self.body)
+            return r.height() <= text_area.height()
+
+        top = int(h * 0.12 * self.scale / 100)
+        size = layout.fit_font_size(fits, 14, max(16, top))
+        p.setFont(self._body_font(size))
+        p.setPen(QtGui.QColor(fg))
+        p.drawText(text_area, flags, self.body)
+        if self.credit:
+            f2 = QtGui.QFont("Segoe UI")
+            f2.setPixelSize(max(11, int(h * 0.02)))
+            p.setFont(f2)
+            p.setPen(QtGui.QColor(fg))
+            p.setOpacity(0.55)
+            p.drawText(QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
+                       QtCore.Qt.AlignCenter, self.credit)
+
+    def _body_font(self, size):
+        f = QtGui.QFont(self.font_family or "Georgia")
+        f.setPixelSize(size)
+        f.setBold(self.bold)
+        return f
+
+    def resizeEvent(self, e):
+        self.update()
+        super().resizeEvent(e)
+
+
+class PreviewView(SlideView):
+    """Small 16:9 preview inside the operator window. Always shows the selected verse
+    (even when the projector is black), with a red frame while it is live."""
+
+    def __init__(self):
+        super().__init__()
+        self.on_air = False
+        self.setMinimumSize(320, 180)
+        sp = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return layout.height_for_width(w)
+
+    def sizeHint(self):
+        return QtCore.QSize(400, layout.height_for_width(400))
+
+    def show_slide(self, ref, body, credit=""):
+        self.ref, self.body, self.credit = ref, body, credit
+        self.live = bool(body)
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QtGui.QPainter(self)
+        p.setPen(QtGui.QPen(QtGui.QColor("#ef4444" if self.on_air else "#334155"), 3 if self.on_air else 1))
+        p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+
+class ProjectionWindow(SlideView):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("RevelateTW Lite - Projection")
+        self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint)
+        self.resize(960, 540)
+        self.setCursor(QtCore.Qt.BlankCursor)
 
     # ---- placing on a monitor ----
     def screen_rects(self):
@@ -61,54 +161,3 @@ class ProjectionWindow(QtWidgets.QWidget):
             self.showNormal()   # only one screen: do not cover the operator window
             self.resize(960, 540)
         return idx, ext
-
-    # ---- drawing ----
-    def paintEvent(self, _):
-        bg, fg, refc = settings.THEMES.get(self.theme, settings.THEMES["navy"])
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.TextAntialiasing)
-        if not self.live or not self.body:
-            p.fillRect(self.rect(), QtGui.QColor("#000000"))
-            return
-        p.fillRect(self.rect(), QtGui.QColor(bg))
-        w, h = self.width(), self.height()
-        mx, my = int(w * 0.07), int(h * 0.06)
-        area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)
-        ref_h = 0
-        if self.show_ref and self.ref:
-            f = QtGui.QFont("Segoe UI", 10)
-            f.setBold(True)
-            f.setPixelSize(max(14, int(h * 0.055 * self.scale / 100)))
-            p.setFont(f)
-            p.setPen(QtGui.QColor(refc))
-            ref_h = QtGui.QFontMetrics(f).height() + int(h * 0.02)
-            p.drawText(QtCore.QRect(area.x(), area.y() + area.height() - ref_h + int(h * 0.02),
-                                    area.width(), ref_h), QtCore.Qt.AlignCenter, self.ref)
-        text_area = QtCore.QRect(area.x(), area.y(), area.width(), area.height() - ref_h)
-        flags = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
-
-        def fits(size):
-            f = QtGui.QFont("Georgia")
-            f.setPixelSize(size)
-            r = QtGui.QFontMetrics(f).boundingRect(0, 0, text_area.width(), 100000, flags, self.body)
-            return r.height() <= text_area.height()
-
-        top = int(h * 0.12 * self.scale / 100)
-        size = layout.fit_font_size(fits, 14, max(16, top))
-        f = QtGui.QFont("Georgia")
-        f.setPixelSize(size)
-        p.setFont(f)
-        p.setPen(QtGui.QColor(fg))
-        p.drawText(text_area, flags, self.body)
-        if self.credit:
-            f2 = QtGui.QFont("Segoe UI")
-            f2.setPixelSize(max(11, int(h * 0.02)))
-            p.setFont(f2)
-            p.setPen(QtGui.QColor(fg))
-            p.setOpacity(0.55)
-            p.drawText(QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
-                       QtCore.Qt.AlignCenter, self.credit)
-
-    def resizeEvent(self, e):
-        self.update()
-        super().resizeEvent(e)
