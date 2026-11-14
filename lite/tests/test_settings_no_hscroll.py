@@ -96,6 +96,45 @@ class SettingsNoHScroll(unittest.TestCase):
         self.assertEqual(before, (w.tv_frame.width(), w.tv_frame.height()))
         w.close()
 
+    def test_screen_effect_label_is_plain(self):
+        w = self.make()
+        form = w.settings_scroll.widget().layout()
+        labels = [form.itemAt(r, 0).widget().text() for r in range(form.rowCount())
+                  if form.itemAt(r, 0) is not None and form.itemAt(r, 0).widget() is not None]
+        self.assertIn("Screen effect", labels)
+        self.assertFalse(any("Next / Previous" in t or "(Next" in t for t in labels))
+        # The Next/Previous hint still lives on the switch checkbox tooltip, not the label.
+        self.assertIn("Next / Previous", w.tsw_cb.toolTip())
+        w.close()
+
+    def test_controls_start_right_after_labels_with_small_gap(self):
+        w = self.make()
+        sc = w.settings_scroll
+        page = sc.widget()
+        form = page.layout()
+        gap = form.horizontalSpacing()
+        self.assertGreaterEqual(gap, 8)
+        self.assertLessEqual(gap, 16)
+        pairs = 0
+        for r in range(form.rowCount()):
+            lab, fld = form.itemAt(r, 0), form.itemAt(r, 1)
+            if lab is None or fld is None or lab.widget() is None or fld.widget() is None:
+                continue
+            label, field = lab.widget(), fld.widget()
+            self.assertEqual(label.width(), field.x() - label.x() - gap, label.text())
+            self.assertLessEqual(field.x() + field.width(), sc.viewport().width())
+            pairs += 1
+        self.assertGreaterEqual(pairs, 10)
+        w.close()
+
+    def test_label_column_not_stretched_by_wide_fields(self):
+        w = self.make(1920, 900)
+        self.assertLessEqual(w.tfx_cb.x(), 180)
+        vw = w.settings_scroll.viewport().width()
+        self.assertLessEqual(w.tfx_cb.x() + w.tfx_cb.width(), vw)
+        self.assertGreater(w.tfx_cb.width(), 200)
+        w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

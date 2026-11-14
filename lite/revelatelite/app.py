@@ -309,7 +309,7 @@ class Main(QtWidgets.QWidget):
         self.tfx_lbl = QtWidgets.QLabel("")
         self.tfx_lbl.setObjectName("hint")
         self.tfx_lbl.setWordWrap(True)
-        og.addRow("Screen effect (Next / Previous)", self.tfx_cb)
+        og.addRow("Screen effect", self.tfx_cb)
         og.addRow("Effect direction", self.tdir_cb)
         self.pon_cb, self.poff_cb = QtWidgets.QComboBox(), QtWidgets.QComboBox()
         for cb, key, tip in ((self.pon_cb, "proj_on_effect", "Effect when Project turns the full-screen display on."),
@@ -671,7 +671,11 @@ class Main(QtWidgets.QWidget):
         """Keep the Settings page narrow enough for its column (vertical scrolling only).
         Long labels used to set a wide minimum width; now the form wraps a long label above its
         field when needed, drop-downs may shrink (the full choice still shows in the list and
-        tooltip) and long check-box / button texts keep their full text as a tooltip."""
+        tooltip) and long check-box / button texts keep their full text as a tooltip.
+        The label column size is sized to the longest label, not to the gallery
+        or wide field, so controls start right after the labels with one small
+        gap instead of a wide blank column (Settings column only)."""
+        LABEL_GAP = 12   # small consistent space between the labels and their controls
         def shrink(root):
             for cb in root.findChildren(QtWidgets.QComboBox):
                 cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -680,6 +684,21 @@ class Main(QtWidgets.QWidget):
                 if isinstance(lay, QtWidgets.QFormLayout):
                     lay.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
                     lay.setLabelAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                    lay.setHorizontalSpacing(LABEL_GAP)
+                    lay.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+                    # Largest label in this form (bare string labels become QLabels). Pinning
+                    # every label to that width stops the label column stretching past the
+                    # longest label, which left a wide blank column before the controls.
+                    longest = 0
+                    for row in range(lay.rowCount()):
+                        item = lay.itemAt(row, 0)
+                        if item is not None and item.widget() is not None:
+                            longest = max(longest, item.widget().sizeHint().width())
+                    if longest:
+                        for row in range(lay.rowCount()):
+                            item = lay.itemAt(row, 0)
+                            if item is not None and item.widget() is not None:
+                                item.widget().setFixedWidth(longest)
         shrink(page)
 
     def _build_song_custom(self):
