@@ -17,6 +17,7 @@ DEFAULTS = {
     "outline_color": "",     # "" = automatic (dark outline on light text, light on dark text), else "#rrggbb"
     "outline_px": 3,         # thickness 1..10 (scales with screen height, so preview matches the projector)
     "song_theme": "standard",  # song slide template (songthemes.py); Bible verses never use it
+    "song_custom": {},       # per-template song look overrides {template: {field: value}} (songthemes.py)
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -142,6 +143,7 @@ def load(path):
         data["theme"] = "navy"
     from . import background, songthemes, transitions
     data["song_theme"] = songthemes.clean(data["song_theme"])
+    data["song_custom"] = songthemes.clean_custom(data["song_custom"])
     data.update(background.clean(data))
     data.update(transitions.clean(data))
     return data

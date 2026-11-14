@@ -68,3 +68,83 @@ def footer_text(meta):
 
 SAMPLE_META = ("Way Maker", "Sinach", "Chorus", 2, 8)
 SAMPLE_BODY = "Way maker, miracle worker\nPromise keeper, light in the darkness"
+
+
+# ---------------------------------------------------------------------------------------------
+# Customising a template. The five presets above never change. Each template keeps its own small
+# dict of overrides (settings key "song_custom"); resolve() lays them over the preset. Songs only.
+# ---------------------------------------------------------------------------------------------
+COLOR_FIELDS = ("text", "accent", "tag", "dim", "bg1", "bg2")
+CHOICES = {
+    "bg_kind": ("solid", "linear", "radial"),
+    "frame": ("none", "single", "bar", "card"),
+    "align": ("left", "center", "right"),
+    "valign": ("top", "middle", "bottom"),
+}
+BOOL_FIELDS = ("show_label", "show_footer", "show_count", "upper", "shadow", "two_tone", "divider", "pill", "bold")
+SCALE_MIN, SCALE_MAX = 50, 150
+FIELD_NAMES = COLOR_FIELDS + tuple(CHOICES) + BOOL_FIELDS + ("scale", "font")
+
+
+def _is_color(c):
+    return (isinstance(c, str) and len(c) == 7 and c[0] == "#"
+            and all(ch in "0123456789abcdefABCDEF" for ch in c[1:]))
+
+
+def clean_overrides(raw):
+    """Keep only valid override fields (bad values are dropped, so the preset value shows)."""
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    from . import settings
+    for k, v in raw.items():
+        if k in COLOR_FIELDS and _is_color(v):
+            out[k] = v.lower()
+        elif k in CHOICES and v in CHOICES[k]:
+            out[k] = v
+        elif k in BOOL_FIELDS and isinstance(v, bool):
+            out[k] = v
+        elif k == "scale" and isinstance(v, int) and not isinstance(v, bool):
+            out[k] = max(SCALE_MIN, min(SCALE_MAX, v))
+        elif k == "font" and isinstance(v, str) and (v == "" or v in settings.FONTS):
+            out[k] = v
+    return out
+
+
+def clean_custom(raw):
+    """{template key: overrides}. Unknown templates ('standard' too) and empty entries are dropped."""
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if k in TEMPLATES:
+                o = clean_overrides(v)
+                if o:
+                    out[k] = o
+    return out
+
+
+def copy_custom(custom):
+    return {k: dict(v) for k, v in (custom or {}).items()}
+
+
+def resolve(key, custom=None):
+    """The template as drawn: preset + this template's overrides. None for 'standard'."""
+    if key not in TEMPLATES:
+        return None
+    base = TEMPLATES[key]
+    t = dict(base)
+    kind, c1, c2 = base["bg"]
+    t.update(bg_kind=kind, bg1=c1, bg2=c2, align="left" if base["frame"] == "bar" else "center", valign="middle",
+             scale=100, font="", bold=True, show_label=True, show_footer=True, show_count=bool(base["pill"]), upper=True)
+    t.update(clean_overrides((custom or {}).get(key)))
+    t["bg"] = (t["bg_kind"], t["bg1"], t["bg2"])
+    return t
+
+
+def changed_fields(key, custom=None):
+    """Names of the fields that differ from the preset (used for 'Customised' and Reset)."""
+    if key not in TEMPLATES:
+        return []
+    ov = clean_overrides((custom or {}).get(key))
+    base = resolve(key, None)
+    return [f for f, v in ov.items() if base.get(f) != v]

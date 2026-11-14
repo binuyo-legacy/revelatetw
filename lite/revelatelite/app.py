@@ -245,6 +245,7 @@ class Main(QtWidgets.QWidget):
         self.song_theme_lbl.setWordWrap(True)
         og.addRow("Song slide style", self.song_theme_lw)
         og.addRow("", self.song_theme_lbl)
+        og.addRow("", self._build_song_custom())
         og.addRow("Colours", self.theme_cb)
         og.addRow("Text size", self.size_sp)
         og.addRow("Font", self.font_cb)
@@ -486,18 +487,165 @@ class Main(QtWidgets.QWidget):
         k = self.font_cb.findText(self.st["font_family"])
         self.font_cb.setCurrentIndex(k if k >= 0 else self.font_cb.findText("Georgia"))
 
+    # ---- song style customiser (songs only; Bible verse settings are never touched from here) ----
+    SONG_COLORS = (("text", "Words colour..."), ("accent", "Highlight (1st line, bar)..."), ("tag", "Section colour..."),
+                   ("dim", "Title colour..."), ("bg1", "Background 1..."), ("bg2", "Background 2..."))
+    SONG_CHECKS = (("show_label", "Show section name (Verse, Chorus...)"), ("upper", "Section name in CAPITALS"),
+                   ("show_footer", "Show song title and artist"), ("show_count", "Show slide count (2/8)"),
+                   ("two_tone", "First line in highlight colour"), ("divider", "Thin divider line"),
+                   ("pill", "Rounded tags"), ("shadow", "Soft shadow behind words"), ("bold", "Bold words"))
+
+    def _build_song_custom(self):
+        gb = QtWidgets.QGroupBox("Customise the selected song style (songs only, Bible verses are not affected)")
+        f = QtWidgets.QFormLayout(gb)
+        self.sc_hint = QtWidgets.QLabel("")
+        self.sc_hint.setObjectName("hint")
+        self.sc_hint.setWordWrap(True)
+        f.addRow(self.sc_hint)
+        self.sc_color_b = {}
+        grid = QtWidgets.QGridLayout()
+        for i, (k, label) in enumerate(self.SONG_COLORS):
+            b = QtWidgets.QPushButton(label)
+            self.sc_color_b[k] = b
+            grid.addWidget(b, i // 3, i % 3)
+        f.addRow("Colours", grid)
+        self.sc_bg_cb = QtWidgets.QComboBox()
+        for k, lab in (("solid", "Plain colour (Background 1)"), ("linear", "Two-colour fade"), ("radial", "Soft glow in the middle")):
+            self.sc_bg_cb.addItem(lab, k)
+        self.sc_frame_cb = QtWidgets.QComboBox()
+        for k, lab in (("none", "No frame"), ("single", "Thin rounded frame"), ("bar", "Bar on the left"), ("card", "Soft card behind words")):
+            self.sc_frame_cb.addItem(lab, k)
+        self.sc_align_cb = QtWidgets.QComboBox()
+        for k, lab in (("left", "Left"), ("center", "Centre"), ("right", "Right")):
+            self.sc_align_cb.addItem(lab, k)
+        self.sc_valign_cb = QtWidgets.QComboBox()
+        for k, lab in (("top", "Top"), ("middle", "Middle"), ("bottom", "Bottom")):
+            self.sc_valign_cb.addItem(lab, k)
+        self.sc_scale_sp = QtWidgets.QSpinBox()
+        self.sc_scale_sp.setRange(songthemes.SCALE_MIN, songthemes.SCALE_MAX)
+        self.sc_scale_sp.setSingleStep(10)
+        self.sc_scale_sp.setSuffix(" %")
+        self.sc_scale_sp.setToolTip("Makes the words of this song style bigger or smaller. Long verses still shrink to fit.")
+        self.sc_font_cb = QtWidgets.QComboBox()
+        self.sc_font_cb.addItem("Same as Settings font", "")
+        for n in cfg.FONTS:
+            self.sc_font_cb.addItem(n, n)
+        f.addRow("Background type", self.sc_bg_cb)
+        f.addRow("Frame", self.sc_frame_cb)
+        f.addRow("Words across", self.sc_align_cb)
+        f.addRow("Words up/down", self.sc_valign_cb)
+        f.addRow("Words size", self.sc_scale_sp)
+        f.addRow("Words font", self.sc_font_cb)
+        self.sc_check = {}
+        for k, lab in self.SONG_CHECKS:
+            c = QtWidgets.QCheckBox(lab)
+            self.sc_check[k] = c
+            f.addRow("", c)
+        self.sc_reset_b = QtWidgets.QPushButton("Reset this style to its original look")
+        f.addRow("", self.sc_reset_b)
+        self._sc_widgets = (list(self.sc_color_b.values()) + [self.sc_bg_cb, self.sc_frame_cb, self.sc_align_cb, self.sc_valign_cb,
+                                                              self.sc_scale_sp, self.sc_font_cb, self.sc_reset_b]
+                            + list(self.sc_check.values()))
+        for k, b in self.sc_color_b.items():
+            b.clicked.connect(lambda _=False, k=k: self._sc_pick_color(k))
+        for cb_, k in ((self.sc_bg_cb, "bg_kind"), (self.sc_frame_cb, "frame"), (self.sc_align_cb, "align"),
+                       (self.sc_valign_cb, "valign"), (self.sc_font_cb, "font")):
+            cb_.currentIndexChanged.connect(lambda _=0, cb_=cb_, k=k: self._sc_set(k, cb_.currentData()))
+        self.sc_scale_sp.valueChanged.connect(lambda v: self._sc_set("scale", int(v)))
+        for k, c in self.sc_check.items():
+            c.toggled.connect(lambda v, k=k: self._sc_set(k, bool(v)))
+        self.sc_reset_b.clicked.connect(self._sc_reset)
+        self._sc_sync()
+        return gb
+
+    def _sc_key(self):
+        k = self.st["song_theme"]
+        return k if k in songthemes.TEMPLATES else None
+
+    def _sc_sync(self):
+        """Show the selected template's current values in the controls (no changes are stored)."""
+        key = self._sc_key()
+        self._sc_loading = True
+        try:
+            for w_ in self._sc_widgets:
+                w_.setEnabled(key is not None)
+            if key is None:
+                self.sc_hint.setText("Standard uses your normal Settings look, so there is nothing to customise here. "
+                                     "Pick one of the other song styles above, then change it below.")
+                for b in self.sc_color_b.values():
+                    b.setStyleSheet("")
+                return
+            t = songthemes.resolve(key, self.st["song_custom"])
+            n = len(songthemes.changed_fields(key, self.st["song_custom"]))
+            self.sc_hint.setText("Editing: %s%s. Changes show in the preview first; click Project to send them to the screen."
+                                 % (t["name"], " (customised)" if n else " (original look)"))
+            for k, b in self.sc_color_b.items():
+                b.setStyleSheet("border-left:14px solid %s;" % t[k])
+            for cb_, k in ((self.sc_bg_cb, "bg_kind"), (self.sc_frame_cb, "frame"), (self.sc_align_cb, "align"),
+                           (self.sc_valign_cb, "valign"), (self.sc_font_cb, "font")):
+                cb_.setCurrentIndex(max(cb_.findData(t[k]), 0))
+            self.sc_scale_sp.setValue(t["scale"])
+            for k, c in self.sc_check.items():
+                c.setChecked(bool(t[k]))
+            self.sc_reset_b.setEnabled(n > 0)
+            self.sc_color_b["bg2"].setEnabled(t["bg_kind"] != "solid")
+        finally:
+            self._sc_loading = False
+
+    def _sc_set(self, field, value):
+        key = self._sc_key()
+        if key is None or getattr(self, "_sc_loading", False):
+            return
+        ov = dict(self.st["song_custom"].get(key, {}))
+        ov[field] = value
+        self._sc_store(key, ov)
+
+    def _sc_store(self, key, ov):
+        """Keep only values that differ from the original preset, then redraw the preview (never the live screen)."""
+        base = songthemes.resolve(key, None)
+        ov = {f: v for f, v in songthemes.clean_overrides(ov).items() if base.get(f) != v}
+        custom = songthemes.copy_custom(self.st["song_custom"])
+        if ov:
+            custom[key] = ov
+        else:
+            custom.pop(key, None)
+        self.st["song_custom"] = custom
+        self._sc_sync()
+        self._refresh_song_icon(key)
+        self._apply_style()
+        self.save_settings()
+
+    def _sc_pick_color(self, field):
+        key = self._sc_key()
+        if key is None:
+            return
+        cur = songthemes.resolve(key, self.st["song_custom"])[field]
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Choose a colour")
+        if c.isValid():
+            self._sc_set(field, c.name())
+
+    def _sc_reset(self):
+        key = self._sc_key()
+        if key is not None:
+            self._sc_store(key, {})
+
+    def _song_icon(self, k):
+        v = SlideView()
+        v.set_style("navy", 100, True, self.st["font_family"], self.st["bold"], self.st["bg_color"], self.st["text_color"],
+                    bgm.spec_from(self.st), False, "", 3, k, self.st["song_custom"])
+        v.set_content("x", songthemes.SAMPLE_BODY, "", songthemes.SAMPLE_META)
+        return QtGui.QIcon(v.snapshot(QtCore.QSize(320, 180)).scaled(160, 90, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+
+    def _refresh_song_icon(self, key):
+        if key in songthemes.KEYS:
+            self.song_theme_lw.item(songthemes.KEYS.index(key)).setIcon(self._song_icon(key))
+
     def _fill_song_themes(self):
         """Gallery of the song templates, each with a small picture drawn by the same code as the projector."""
         self.song_theme_lw.blockSignals(True)
         self.song_theme_lw.clear()
         for k in songthemes.KEYS:
-            v = SlideView()
-            v.set_style("navy", 100, True, self.st["font_family"], self.st["bold"], self.st["bg_color"], self.st["text_color"],
-                        bgm.spec_from(self.st), False, "", 3, k)
-            v.set_content("x", songthemes.SAMPLE_BODY, "", songthemes.SAMPLE_META)
-            it = QtWidgets.QListWidgetItem(QtGui.QIcon(v.snapshot(QtCore.QSize(320, 180)).scaled(160, 90, QtCore.Qt.KeepAspectRatio,
-                                                                                                    QtCore.Qt.SmoothTransformation)),
-                                           songthemes.label(k))
+            it = QtWidgets.QListWidgetItem(self._song_icon(k), songthemes.label(k))
             it.setData(QtCore.Qt.UserRole, k)
             self.song_theme_lw.addItem(it)
         self.song_theme_lw.setCurrentRow(max(songthemes.KEYS.index(self.st["song_theme"]), 0))
@@ -509,13 +657,14 @@ class Main(QtWidgets.QWidget):
             return
         self.st["song_theme"] = songthemes.KEYS[row]
         self.song_theme_lbl.setText(songthemes.blurb(self.st["song_theme"]))
+        self._sc_sync()
         self._apply_style()
         self.save_settings()
 
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
                 self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st),
-                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"], self.st["song_theme"])
+                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"], self.st["song_theme"], songthemes.copy_custom(self.st["song_custom"]))
         self._style_args = args
         self.preview.set_style(*args)
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again
