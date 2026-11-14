@@ -359,14 +359,14 @@ class Main(QtWidgets.QWidget):
         rightc = QtWidgets.QVBoxLayout()
         rightc.setSpacing(4)
         body.addLayout(rightc, 2)
-        cap = QtWidgets.QLabel("Live preview (what the screen shows)")
+        cap = QtWidgets.QLabel("Preview")
         cap.setObjectName("hint")
         self.ref_lbl = QtWidgets.QLabel("")
         self.ref_lbl.setObjectName("ref")
         rightc.addWidget(cap)
         self.tv_frame = theme.TvFrame(self.preview)   # cosmetic bezel only; the preview inside is unchanged
         rightc.addWidget(self.tv_frame)
-        pcap = QtWidgets.QLabel("Programs (live output on the projector screen, view only)")
+        pcap = QtWidgets.QLabel("Program")
         pcap.setObjectName("hint")
         rightc.addWidget(pcap)
         self.programs = ProgramsView(self.proj)       # mirror of the real projector window; never edited

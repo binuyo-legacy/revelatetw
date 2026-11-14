@@ -155,5 +155,22 @@ class PreviewQt(unittest.TestCase):
         w.close()
 
 
+    def test_display_box_headings_are_preview_and_program(self):
+        w = self.make()
+        w.show()
+        hints = [l.text() for l in w.findChildren(QtWidgets.QLabel)
+                 if l.objectName() == "hint"]
+        self.assertIn("Preview", hints)
+        self.assertIn("Program", hints)
+        for old in ("Live preview (what the screen shows)",
+                    "Programs (live output on the projector screen, view only)",
+                    "Programs"):
+            self.assertNotIn(old, hints)
+        self.assertLess(hints.index("Preview"), hints.index("Program"))
+        self.assertEqual(w.tv_frame.size(), w.programs_frame.size())
+        w.close()
+
+
+
 if __name__ == "__main__":
     unittest.main()
