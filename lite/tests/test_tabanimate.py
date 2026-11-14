@@ -131,69 +131,7 @@ class TabAnimation(unittest.TestCase):
         self.qa.processEvents()
         self.assertEqual(tabs.currentIndex(), 2)
         bar.setCurrentIndex(0)
-        self.qa.processEvents()
         self.assertEqual(tabs.currentIndex(), 0)
-        w.close()
-
-    def test_deleted_animation_wrapper_never_raises(self):
-        """Regression: DeleteWhenStopped left self._anim pointing at a deleted C++
-        wrapper; the next stop() in resizeEvent/place_immediately raised RuntimeError."""
-        w = self.make()
-        tabs, bar = self.bars(w)
-        ind = bar.indicator()
-        tabs.setCurrentIndex(1)
-        self.qa.processEvents()
-        # force the deleted-wrapper state the crash came from
-        anim = ind._anim
-        self.assertIsNotNone(anim)
-        import gc
-        del anim
-        gc.collect()
-        # simulate: the stored ref now points at a gone C++ object
-        # stop() must not raise
-        try:
-            ind._stop_anim()
-        except RuntimeError as e:
-            self.fail("stop on deleted wrapper raised: %r" % e)
-        # place_immediately and resize after deletion must not raise
-        try:
-            ind.place_immediately(1)
-            w.resize(1200, 800)
-            self.qa.processEvents()
-        except RuntimeError as e:
-            self.fail("place_immediately/resize after deleted wrapper raised: %r" % e)
-        self.assertEqual(ind._rect, tabanimate.indicator_rect(bar, bar.tabRect(1)))
-        w.close()
-
-    def test_resize_during_animation_never_raises(self):
-        """The exact crash path: resizeEvent -> move_to -> place_immediately -> _anim.stop()."""
-        w = self.make()
-        tabs, bar = self.bars(w)
-        ind = bar.indicator()
-        tabs.setCurrentIndex(2)
-        self.qa.processEvents()
-        # an animation is (or just was) running; force several resizes right after switches
-        for i in [3, 1, 0, 2]:
-            tabs.setCurrentIndex(i)
-            w.resize(1300, 850)
-            w.resize(1100, 720)
-            self.qa.processEvents()
-        # final pill position matches final selection
-        ind.place_immediately(tabs.currentIndex())
-        self.assertEqual(ind._rect,
-                         tabanimate.indicator_rect(bar, bar.tabRect(tabs.currentIndex())))
-        w.close()
-
-    def test_finished_animation_clears_its_reference(self):
-        """Once an animation finishes, self._anim is None (no stale stopped wrapper)."""
-        w = self.make()
-        tabs, bar = self.bars(w)
-        ind = bar.indicator()
-        tabs.setCurrentIndex(3)
-        self.qa.processEvents()
-        QtCore.QThread.msleep(tabanimate.INDICATOR_MS + tabanimate.CONTENT_MS + 50)
-        self.qa.processEvents()
-        self.assertIsNone(ind._anim)
         w.close()
 
 

@@ -69,25 +69,6 @@ class TabIndicator(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.hide()
 
-    # -- animation lifetime -------------------------------------------------
-    # DeleteWhenStopped let Qt delete the C++ animation on finish while the
-    # Python reference stayed in self._anim, so the next stop() raised
-    # RuntimeError. Animations are now Python-owned: no DeleteWhenStopped,
-    # and every stop goes through _stop_anim which drops the ref first and
-    # swallows RuntimeError for a wrapper already deleted with its target.
-    def _forget_anim(self):
-        self._anim = None
-
-    def _stop_anim(self):
-        anim = self._anim
-        self._anim = None
-        if anim is None:
-            return
-        try:
-            anim.stop()
-        except RuntimeError:
-            pass
-
     # -- placement ------------------------------------------------------------
     def animate_to(self, index):
         """Slide to tab index. Falls back to an instant jump when it cannot animate."""
@@ -107,14 +88,12 @@ class TabIndicator(QtWidgets.QWidget):
             self.update()
             return
         if self._anim is not None:
-            self._stop_anim()
-        anim = QtCore.QPropertyAnimation(self, b"pillRect", self,
-                                         startValue=start, endValue=target,
-                                         duration=INDICATOR_MS,
-                                         easingCurve=QtCore.QEasingCurve.OutCubic)
-        self._anim = anim
-        anim.finished.connect(self._forget_anim)
-        anim.start()
+            self._anim.stop()
+        self._anim = QtCore.QPropertyAnimation(self, b"pillRect", self,
+                                                startValue=start, endValue=target,
+                                                duration=INDICATOR_MS,
+                                                easingCurve=QtCore.QEasingCurve.OutCubic)
+        self._anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
 
     def place_immediately(self, index):
         """Snap to tab index without animating (used for the first tab and on resize)."""
@@ -125,7 +104,8 @@ class TabIndicator(QtWidgets.QWidget):
             self.update()
             return
         if self._anim is not None:
-            self._stop_anim()
+            self._anim.stop()
+            self._anim = None
         self._rect = QtCore.QRect(indicator_rect(self._bar, r))
         self.setGeometry(self._bar.geometry())
         self.show()
@@ -209,18 +189,13 @@ class ContentFade:
         self._running = True
         # finishing the animation (or an early finish() call) restores the page
         self._anim.finished.connect(self.finish)
-        # Python-owned: no DeleteWhenStopped, so finish() can always stop it safely
-        self._anim.start()
+        self._anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
 
     def finish(self):
         """Restore the page exactly as it was. Safe to call any number of times."""
-        anim = self._anim
-        self._anim = None
-        if anim is not None:
-            try:
-                anim.stop()
-            except RuntimeError:  # wrapper deleted with its effect meanwhile
-                pass
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
         self._running = False
         if self._effect is not None:
             # Removing the effect returns the page to its prior appearance.

@@ -116,21 +116,14 @@ class Main(QtWidgets.QWidget):
         tabs = tabanimate.AnimatedTabWidget()
         self.service_list = QtWidgets.QListWidget()
         sl = QtWidgets.QWidget()
-        sv = QtWidgets.QVBoxLayout(sl)
-        sv.setSpacing(6)
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.service_list, 1)
+        sv = QtWidgets.QHBoxLayout(sl)
+        sv.addWidget(self.service_list, 1)
         side = QtWidgets.QVBoxLayout()
         self.up_b, self.down_b, self.rm_b = (QtWidgets.QPushButton(x) for x in ("Move up", "Move down", "Remove"))
         for b in (self.up_b, self.down_b, self.rm_b):
             side.addWidget(b)
         side.addStretch(1)
-        top.addLayout(side)
-        sv.addLayout(top, 1)
-        # Quick controls (Service list): the same settings as the Settings tab, kept in
-        # sync. Changing one here updates Settings and saves exactly the same way.
-        self.qsvc, self.qsvc_tfx, self.qsvc_ms, self.qsvc_dir, self.qsvc_display = self._build_quick_bar(songs=False)
-        sv.addWidget(self.qsvc)
+        sv.addLayout(side)
         tabs.addTab(sl, "Service list")
 
         sw = QtWidgets.QWidget()
@@ -175,9 +168,6 @@ class Main(QtWidgets.QWidget):
         self.song_del_b.setEnabled(False)
         self.song_exp_b.setEnabled(False)
         self.song_expall_b.setEnabled(bool(self.song_all))
-        # Quick controls (Songs): transition + song style + display, same settings/sync.
-        self.qsong, self.qsong_tfx, self.qsong_ms, self.qsong_dir, self.qsong_display, self.qsong_theme = self._build_quick_bar(songs=True)
-        sg.addWidget(self.qsong)
         tabs.addTab(sgw, "Songs")
 
         ow = QtWidgets.QWidget()
@@ -431,15 +421,7 @@ class Main(QtWidgets.QWidget):
         for sig in (self.tfx_cb.currentIndexChanged, self.tdir_cb.currentIndexChanged, self.tms_sp.valueChanged,
                     self.tonoff_cb.stateChanged, self.tsw_cb.stateChanged):
             sig.connect(self._transition_changed)
-        for tfx, ms, dirc in ((self.qsvc_tfx, self.qsvc_ms, self.qsvc_dir), (self.qsong_tfx, self.qsong_ms, self.qsong_dir)):
-            tfx.currentIndexChanged.connect(self._quick_transition_changed)
-            ms.valueChanged.connect(self._quick_transition_changed)
-            dirc.currentIndexChanged.connect(self._quick_transition_changed)
-        self.qsvc_display.currentIndexChanged.connect(self._quick_display_changed)
-        self.qsong_display.currentIndexChanged.connect(self._quick_display_changed)
-        self.qsong_theme.currentIndexChanged.connect(self._quick_song_theme_changed)
         self._sync_transition_controls()
-        self._sync_quick_bars()
         self._sync_outline()
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
@@ -455,17 +437,15 @@ class Main(QtWidgets.QWidget):
         self.status.setText(msg)
 
     def refresh_displays(self):
-        for cb_ in (self.display_cb, self.qsvc_display, self.qsong_display):
-            cb_.blockSignals(True)
-            cb_.clear()
-            cb_.addItem("Automatic (second screen if plugged in)", -1)
-            for i, s in enumerate(QtWidgets.QApplication.screens()):
-                g = s.geometry()
-                cb_.addItem("Screen %d: %dx%d" % (i + 1, g.width(), g.height()), i)
-            k = cb_.findData(self.st["display"])
-            cb_.setCurrentIndex(max(k, 0))
-            cb_.blockSignals(False)
-        self._sync_quick_bars()
+        self.display_cb.blockSignals(True)
+        self.display_cb.clear()
+        self.display_cb.addItem("Automatic (second screen if plugged in)", -1)
+        for i, s in enumerate(QtWidgets.QApplication.screens()):
+            g = s.geometry()
+            self.display_cb.addItem("Screen %d: %dx%d" % (i + 1, g.width(), g.height()), i)
+        k = self.display_cb.findData(self.st["display"])
+        self.display_cb.setCurrentIndex(max(k, 0))
+        self.display_cb.blockSignals(False)
 
     @staticmethod
     def _installed_fonts():
@@ -660,7 +640,6 @@ class Main(QtWidgets.QWidget):
         self._sc_sync()
         self._apply_style()
         self.save_settings()
-        self._sync_quick_bars()
 
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
@@ -671,120 +650,6 @@ class Main(QtWidgets.QWidget):
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again
             self.proj.set_style(*args)
         self._refresh_live_state()
-
-    # ---------------- quick controls (Service list and Songs tabs) ----------------
-    # Compact cards mirroring Settings controls. They share the same settings keys and
-    # save path, and refresh_displays()/sync methods keep every copy in sync. Tab order
-    # and the vertical Move up / song-action stacks are unchanged; one short row sits
-    # underneath so nothing is displaced horizontally next to the preview.
-    def _build_quick_bar(self, songs=False):
-        card = QtWidgets.QFrame()
-        card.setObjectName("card")
-        lay = QtWidgets.QHBoxLayout(card)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(6)
-
-        tfx = QtWidgets.QComboBox()
-        for k, label, _d in trn.EFFECTS:
-            tfx.addItem(label, k)
-        tfx.setToolTip("Screen effect. Same choice as Settings > Screen effect.")
-        ms = QtWidgets.QSpinBox()
-        ms.setRange(0, trn.MS_MAX)
-        ms.setSingleStep(trn.MS_STEP)
-        ms.setSuffix(" ms")
-        ms.setToolTip("Effect speed. 0 = instant.")
-        dirc = QtWidgets.QComboBox()
-        for k, label in trn.DIRECTIONS:
-            dirc.addItem(label, k)
-        dirc.setToolTip("Effect direction (for Wipe, Slide, Blinds, Open, Diagonal).")
-        cap_res = QtWidgets.QLabel("Screen")
-        cap_res.setToolTip("Projector screen selection (Project opens it there).")
-        disp = QtWidgets.QComboBox()
-        disp.setToolTip("Projector screen. Changing it takes effect on the next Project.")
-        disp.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
-        lay.addWidget(QtWidgets.QLabel("Transition"))
-        lay.addWidget(tfx, 1)
-        lay.addWidget(ms)
-        lay.addWidget(dirc, 1)
-        lay.addWidget(cap_res)
-        lay.addWidget(disp, 1)
-        if songs:
-            stheme = QtWidgets.QComboBox()
-            for k in songthemes.KEYS:
-                stheme.addItem(songthemes.label(k), k)
-            stheme.setToolTip("Song slide style. Same choice as Settings > Song slide style.")
-            lay.addWidget(QtWidgets.QLabel("Song style"))
-            lay.addWidget(stheme, 2)
-        return (card, tfx, ms, dirc, disp, stheme) if songs else (card, tfx, ms, dirc, disp)
-
-    def _sync_quick_bars(self):
-        """Push the current settings values into every quick bar and Settings control (no save)."""
-        for tfx, ms, dirc, disp, stheme in ((self.qsvc_tfx, self.qsvc_ms, self.qsvc_dir, self.qsvc_display, None),
-                                             (self.qsong_tfx, self.qsong_ms, self.qsong_dir, self.qsong_display, self.qsong_theme)):
-            for w_ in (tfx, ms, dirc, disp, stheme):
-                if w_ is not None:
-                    w_.blockSignals(True)
-            tfx.setCurrentIndex(max(tfx.findData(self.st["transition_effect"]), 0))
-            ms.setValue(self.st["transition_ms"])
-            dirc.setCurrentIndex(max(dirc.findData(self.st["transition_dir"]), 0))
-            disp.setCurrentIndex(max(disp.findData(self.st["display"]), 0))
-            if stheme is not None:
-                stheme.setCurrentIndex(max(stheme.findData(self.st["song_theme"]), 0))
-            eff = tfx.currentData()
-            dirc.setEnabled(eff in trn.DIRECTED)
-            ms.setEnabled(eff != "cut")
-            for w_ in (tfx, ms, dirc, disp, stheme):
-                if w_ is not None:
-                    w_.blockSignals(False)
-        # keep the Settings-tab copies agreeing (same settings, so both show the truth)
-        for cb_, key in ((self.tfx_cb, "transition_effect"), (self.tdir_cb, "transition_dir")):
-            cb_.blockSignals(True)
-            cb_.setCurrentIndex(max(cb_.findData(self.st[key]), 0))
-            cb_.blockSignals(False)
-        self.tms_sp.blockSignals(True)
-        self.tms_sp.setValue(self.st["transition_ms"])
-        self.tms_sp.blockSignals(False)
-        self.display_cb.blockSignals(True)
-        self.display_cb.setCurrentIndex(max(self.display_cb.findData(self.st["display"]), 0))
-        self.display_cb.blockSignals(False)
-
-    def _quick_transition_changed(self, *_):
-        """A quick bar moved: copy its values to Settings, save, and sync the other bar."""
-        src = self.sender()
-        # find which bar changed
-        pairs = [(self.qsvc_tfx, self.qsvc_ms, self.qsvc_dir), (self.qsong_tfx, self.qsong_ms, self.qsong_dir)]
-        for tfx, ms, dirc in pairs:
-            if src in (tfx, ms, dirc):
-                self.st["transition_effect"] = tfx.currentData()
-                self.st["transition_ms"] = ms.value()
-                self.st["transition_dir"] = dirc.currentData()
-                break
-        self._sync_quick_bars()
-        self._sync_transition_controls()
-        self.save_settings()
-
-    def _quick_display_changed(self, *_):
-        src = self.sender()
-        if src in (self.qsvc_display, self.qsong_display):
-            self.st["display"] = src.currentData()
-        else:
-            self.st["display"] = self.display_cb.currentData()
-        self._sync_quick_bars()
-        self.save_settings()
-
-    def _quick_song_theme_changed(self, *_):
-        k = self.qsong_theme.currentData()
-        if k in songthemes.KEYS:
-            self.st["song_theme"] = k
-            self.song_theme_lbl.setText(songthemes.blurb(k))
-            # keep the Settings gallery on the same row without firing its handler twice
-            self.song_theme_lw.blockSignals(True)
-            self.song_theme_lw.setCurrentRow(songthemes.KEYS.index(k))
-            self.song_theme_lw.blockSignals(False)
-            self._sc_sync()
-            self._apply_style()
-            self.save_settings()
-            self._sync_quick_bars()
 
     def _text_color_now(self):
         """The text colour actually drawn right now (theme, custom, or the auto pick for a gradient)."""
@@ -897,7 +762,6 @@ class Main(QtWidgets.QWidget):
         self.st["font_scale"] = self.size_sp.value()
         self.st["show_reference"] = self.show_ref_cb.isChecked()
         self.st["display"] = self.display_cb.currentData()
-        self._sync_quick_bars()
         self.st["font_family"] = self.font_cb.currentText()
         self.st["bold"] = self.bold_cb.isChecked()
         self.st["outline_on"] = self.outline_cb.isChecked()
@@ -923,7 +787,6 @@ class Main(QtWidgets.QWidget):
         self.st["transition_onoff"] = self.tonoff_cb.isChecked()
         self.st["transition_switch"] = self.tsw_cb.isChecked()
         self._sync_transition_controls()
-        self._sync_quick_bars()
         self.save_settings()
 
     def _sync_transition_controls(self):
