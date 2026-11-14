@@ -82,6 +82,18 @@ class Shared(unittest.TestCase):
         w.st["transition_ms"] = 0      # these tests are about content, so screen changes are instant (see test_transitions.py)
         return w
 
+    def test_lower_tab_order_is_service_search_words_songs_settings(self):
+        w = self.make()
+        tabs = w.findChild(QtWidgets.QTabWidget)
+        names = [tabs.tabText(i) for i in range(tabs.count())]
+        self.assertEqual(names, ["Service list", "Search words", "Songs", "Settings"])
+        # each tab still holds its own widget
+        self.assertIsNotNone(w.service_list)
+        self.assertIsNotNone(w.search_box)
+        self.assertIsNotNone(w.song_list)
+        self.assertEqual(tabs.currentIndex(), 0)   # default stays first: Service list
+        w.close()
+
     def test_songs_listed_and_slide_goes_to_the_same_preview(self):
         w = self.make()
         self.assertEqual(w.song_list.count(), 1)
