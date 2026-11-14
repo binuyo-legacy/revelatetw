@@ -1115,7 +1115,9 @@ class Main(QtWidgets.QWidget):
         return self.cur is not None
 
     def suggestion_picked(self, text):
-        """Book or chapter picked: keep typing with the next list. A verse: look it up."""
+        """Book or chapter picked: keep typing with the next list. A verse: look it up.
+        After a committed pick the box is left focused with the whole reference
+        selected, so the next keystroke starts a fresh search (no double-click)."""
         def after():
             self.box.setText(text)
             if text.endswith(" ") or text.endswith(":"):
@@ -1123,6 +1125,7 @@ class Main(QtWidgets.QWidget):
                 self.show_suggestions(text)
             else:
                 self.lookup(text)
+                self.box.select_all_for_replacement()
         QtCore.QTimer.singleShot(0, after)
 
     # ---------------- lookup ----------------
@@ -1189,7 +1192,16 @@ class Main(QtWidgets.QWidget):
             self.do_search()    # keep the word-search results in the chosen translation
         if self.cur is None and self.song is not None and self.slide:
             return      # a song slide is showing: a Bible translation change must not replace it
-        self.lookup(self.box.text(), quiet=True)
+        frame_ref = self.box.text()
+        self.lookup(frame_ref, quiet=True)
+        # The operator just picked a translation: put the cursor in the reference
+        # box with the whole reference selected, ready to type a new search.
+        # Only when the box holds a committed reference; a half-typed search or a
+        # song slide keeps the focus where the operator left it. When a song slide
+        # is showing, the pick only retargets future lookups: the box is not
+        # focused, so the operator's place is not disturbed.
+        if self.cur is not None and self.box.text() == frame_ref and self.box.text().strip():
+            self.box.select_all_for_replacement()
 
     def step(self, delta):
         before = self.slide

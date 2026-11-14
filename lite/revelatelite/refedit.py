@@ -5,6 +5,16 @@ While a part is highlighted:
   Up / Down      previous / next value of the highlighted part (the app applies it)
   type / Delete  replaces the highlighted part and goes back to normal typing + suggestions
 (Esc is left alone: it is the app's black-screen key.) Plain PyQt5 only.
+
+Focus/selection contract (what the operator sees):
+  * Clicking the translation box (or any programmatic focus from the app, when the
+    reference is a committed verse) focuses this box with the whole reference
+    selected, so the next typed character replaces it. No double-click needed.
+  * While typing, nothing re-selects on its own: the cursor and the suggestion
+    popup stay put until an explicit commit (Enter, picking a suggestion, or
+    Left/Right jumping into a part). Only then is a single part re-highlighted.
+  * Mouse clicks inside the box keep their normal meaning (place the cursor where
+    clicked); only the translation pick re-arms the full selection.
 """
 from PyQt5 import QtCore, QtWidgets
 
@@ -22,6 +32,7 @@ class RefEdit(QtWidgets.QLineEdit):
         self._canonical = None   # its text
         self._seg = None         # highlighted part, or None (normal typing)
         self._erasing = False    # last key was Backspace/Delete: do not re-fill the suggestion
+        self._select_all_on_focus = False  # armed by the app (e.g. translation picked)
         self.jumpHandler = None  # app callback: (direction) -> True when it jumped into a part
 
     def erasing(self):
@@ -56,6 +67,27 @@ class RefEdit(QtWidgets.QLineEdit):
     def forget_reference(self):
         self._spans = self._canonical = self._seg = None
 
+    def select_all_for_replacement(self):
+        """Focus the box and select the whole reference, so typing replaces it.
+
+        Armed once and consumed by the next focus/keypress: if the box already has
+        focus, select right away. Never fires on its own while the operator types.
+        """
+        self._select_all_on_focus = True
+        if self.hasFocus():
+            self._consume_select_all()
+        else:
+            self.setFocus()
+
+    def _consume_select_all(self):
+        self._select_all_on_focus = False
+        if self.text():
+            self._seg = None
+            self.selectAll()
+            comp = self.completer()
+            if comp is not None:
+                comp.popup().hide()
+
     def _select(self, seg):
         if not self._spans or seg not in self._spans or self.text() != self._canonical:
             self._seg = None
@@ -69,10 +101,23 @@ class RefEdit(QtWidgets.QLineEdit):
 
     def focusInEvent(self, e):
         super().focusInEvent(e)
-        if e.reason() in (_K.TabFocusReason, _K.BacktabFocusReason, _K.ShortcutFocusReason):
+        if self._select_all_on_focus:
+            self._consume_select_all()
+        elif self._seg is None and self._canonical and self.text() == self._canonical:
+            # A committed reference on focus is always shown selected, so typing
+            # replaces it. A following mouse press still places the cursor where
+            # clicked; while a part is highlighted (arrow navigation) that stays.
+            self.selectAll()
+            comp = self.completer()
+            if comp is not None:
+                comp.popup().hide()
+        elif e.reason() in (_K.TabFocusReason, _K.BacktabFocusReason, _K.ShortcutFocusReason):
             self._select(self._seg or "book")
 
     def mousePressEvent(self, e):
+        # A real click places the cursor where clicked; only the translation
+        # pick (or an explicit app focus call) arms the full selection.
+        self._select_all_on_focus = False
         self._seg = None
         super().mousePressEvent(e)
 
@@ -82,9 +127,12 @@ class RefEdit(QtWidgets.QLineEdit):
         plain = mods == _K.NoModifier
         self._erasing = key in (_K.Key_Backspace, _K.Key_Delete)
         if plain and key in (_K.Key_Left, _K.Key_Right) and self._seg is None and self.jumpHandler \
-                and self.text() and (self.cursorPosition() == len(self.text()) or self.hasSelectedText()) \
-                and self.text() != self._canonical:
-            # typing mode (suggestions showing): accept what is typed/suggested and jump into a part
+                and self.text() and self.text() != self._canonical:
+            # typing mode (suggestions showing, or a part just typed such as the
+            # chapter number): accept what is typed/suggested and jump into a part.
+            # The cursor position does not matter here: after completing a part the
+            # highlight must come back with the arrows, never a bare cursor that
+            # only a double-click could fix.
             if self.jumpHandler(1 if key == _K.Key_Right else -1):
                 return
         if plain and key in (_K.Key_Left, _K.Key_Right) and self._seg is None \
