@@ -1371,12 +1371,22 @@ class Main(QtWidgets.QWidget):
         self.lookup(item.data(QtCore.Qt.UserRole))
 
     # ---------------- service list ----------------
-    def refresh_service_list(self, select=None):
+    def refresh_service_list(self, select=None, activate=False):
+        """Rebuild the service list from the model.
+
+        select: row to highlight (gold). activate: also run the normal
+        selection handler (pick_item) on that row, so the reference box and
+        the shared preview show it. Only an explicit move requests
+        activate=True; add/remove/startup keep their existing behaviour
+        (highlight only, no preview change) to avoid regressions.
+        """
         self.service_list.clear()
         for it in self.services.items:
             self.service_list.addItem("%s  (%s)" % (it["ref"], it["translation"]))
         if select is not None and 0 <= select < self.service_list.count():
             self.service_list.setCurrentRow(select)
+            if activate:
+                self.pick_item(self.service_list.currentItem())
 
     def persist_list(self):
         try:
@@ -1402,7 +1412,11 @@ class Main(QtWidgets.QWidget):
 
     def move_item(self, d):
         r = self.service_list.currentRow()
-        self.refresh_service_list(self.services.move(r, d))
+        new_r = self.services.move(r, d)
+        # the moved item becomes the true current selection: highlight it AND
+        # run it through the normal pick_item pathway (reference box + preview,
+        # preview only, never projects).
+        self.refresh_service_list(new_r, activate=True)
         self.persist_list()
 
     def pick_item(self, _):
