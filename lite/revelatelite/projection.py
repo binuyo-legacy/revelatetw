@@ -513,6 +513,9 @@ class ProjectionWindow(SlideView):
         self.finish_transition()
         self._old_was_live = bool(self.live and self.isVisible())
         old = self.snapshot(self.size()) if self._old_was_live else None
+        view = getattr(self, "mirror_view", None)
+        if view is not None:                       # read the live box size, never a stale one
+            self.mirror_size = QtCore.QSize(view.width(), view.height())
         msize = QtCore.QSize(self.mirror_size)
         m_old = None
         if plan.animated:
@@ -558,6 +561,23 @@ class ProjectionWindow(SlideView):
                 tx["old"] = QtGui.QPixmap(self.size())
                 tx["old"].fill(QtGui.QColor("#000000"))
         super().resizeEvent(e)
+
+    def refit_mirror_pictures(self):
+        """Programs box changed size while a transition is running: redraw its pictures at the new size."""
+        tx = self._tx
+        ms = self.mirror_size
+        if tx is None or tx.get("m_new") is None or not ms.isValid() or ms.width() <= 0 or ms.height() <= 0:
+            return
+        if tx["m_new"].size() == ms:
+            return
+        tx["m_new"] = self.snapshot(ms)
+        if tx.get("m_old") is not None and tx["m_old"].size() != ms:
+            if self._old_was_live:
+                tx["m_old"] = tx["m_old"].scaled(ms, QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+            else:
+                tx["m_old"] = QtGui.QPixmap(ms)
+                tx["m_old"].fill(QtGui.QColor("#000000"))
+        tx["m_size"] = ms
 
     def _tx_step(self, v):
         if self._tx is not None:
@@ -778,7 +798,9 @@ class ProgramsView(QtWidgets.QWidget):
 
     def _sync_size(self):
         """Tell the projector how big this box is, so transitions are drawn for THIS box (Programs only)."""
+        self.proj.mirror_view = self
         self.proj.mirror_size = QtCore.QSize(self.width(), self.height())
+        self.proj.refit_mirror_pictures()
 
     def _on_frame(self):
         self.update()

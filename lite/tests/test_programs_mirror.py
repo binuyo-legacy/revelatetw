@@ -481,3 +481,93 @@ class ProgramsTransitionNoFlash(ProgramsMirror):
         self.qa.processEvents()
         self.assertEqual(w.preview.snapshot(sz).toImage(), before)
         w.proj.finish_transition()
+
+
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class ProgramsContinuousNext(ProgramsTransitionNoFlash):
+    """Pressing Next / Previous over and over while live: every Programs frame stays box-shaped."""
+
+    def go_live(self, eff):
+        w = self.setup_anim(eff, ms=1500)
+        w.lookup("John 3:16")
+        w.st["transition_ms"] = 0
+        w.project()
+        self.qa.processEvents()
+        w.st["transition_ms"] = 1500
+        return w
+
+    def check_frames(self, w, label):
+        tx = w.proj._tx
+        if tx is None:
+            self.assertFalse(self.bars_at(w), label)
+            return
+        self.assertEqual(tx["m_old"].size(), w.programs.size(), label)
+        self.assertEqual(tx["m_new"].size(), w.programs.size(), label)
+        self.assertEqual(tx["old"].size(), w.proj.size(), label)      # projector stays native
+        self.assertEqual(tx["new"].size(), w.proj.size(), label)
+        self.assertFalse(self.bars_at(w), label + " first")
+        for pr in (0.0, 0.25, 0.5, 0.75, 1.0):
+            tx["p"] = pr
+            w.proj.update()
+            self.qa.processEvents()
+            self.assertFalse(self.bars_at(w), "%s p=%s" % (label, pr))
+
+    def test_repeated_next_every_frame_box_shaped(self):
+        for eff in ("fade", "dissolve", "wipe", "slide", "checkerboard"):
+            w = self.go_live(eff)
+            bodies = set()
+            for i in range(6):
+                w.next_b.click()
+                w.project()
+                self.qa.processEvents()
+                self.assertTrue(w.proj.isVisible(), eff)
+                bodies.add(w.proj.body)
+                self.check_frames(w, "%s next %d" % (eff, i))
+            self.assertGreater(len(bodies), 1, eff)               # it really moved through verses
+            w.proj.finish_transition()
+            self.qa.processEvents()
+            self.assertFalse(self.bars_at(w), eff)
+            self.assertTrue(self.center_matches(w), eff)
+            self.tearDown()
+
+    def test_next_then_previous_mixed(self):
+        w = self.go_live("slide")
+        for i, b in enumerate((w.next_b, w.next_b, w.prev_b, w.next_b, w.prev_b, w.prev_b)):
+            b.click()
+            w.project()
+            self.qa.processEvents()
+            self.check_frames(w, "mixed %d" % i)
+
+    def test_next_interrupting_running_transition_never_flashes(self):
+        w = self.go_live("dissolve")
+        seen = []
+        w.proj.frameChanged.connect(lambda: seen.append(self.bars_at(w)))
+        for _ in range(5):
+            w.next_b.click()             # no finish in between: each Next interrupts the last
+            w.project()
+            self.qa.processEvents()
+        self.assertTrue(seen)
+        self.assertFalse(any(seen))
+        w.proj.finish_transition()
+
+    def test_song_slides_next_box_shaped(self):
+        w = self.go_live("wipe")
+        for i in range(3):
+            w._set_slide(("Title - Verse %d" % i, "Line one\nLine two", ""), ("Title", "Artist", "Verse %d" % i, i + 1, 3))
+            w.project()
+            self.qa.processEvents()
+            self.check_frames(w, "song %d" % i)
+
+    def test_next_projector_native_and_tv_unchanged(self):
+        w = self.go_live("dissolve")
+        pw, ph = w.proj.width(), w.proj.height()
+        w.next_b.click()
+        w.project()
+        w.proj._tx["p"] = 0.5
+        a = img_of(lambda p, r: w.proj.render_frame(p, r), pw, ph)
+        w.programs.resize(500, 220)
+        self.qa.processEvents()
+        b = img_of(lambda p, r: w.proj.render_frame(p, r), pw, ph)
+        self.assertEqual(a, b)
+        self.assertEqual((w.proj.width(), w.proj.height()), (pw, ph))
+        w.proj.finish_transition()
