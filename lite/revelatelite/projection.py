@@ -1,6 +1,8 @@
 """The projection window: borderless, goes to the extended display, auto-sizes the verse."""
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+from revelatetw.ui_tokens import COLORS as C
+
 from . import background, layout, settings, songthemes, transitions
 
 
@@ -337,7 +339,7 @@ class PreviewView(SlideView):
     def paintEvent(self, e):
         super().paintEvent(e)
         p = QtGui.QPainter(self)
-        p.setPen(QtGui.QPen(QtGui.QColor("#ef4444" if self.on_air else "#334155"), 3 if self.on_air else 1))
+        p.setPen(QtGui.QPen(QtGui.QColor(C.accent if self.on_air else "#334155"), 3 if self.on_air else 1))
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
 

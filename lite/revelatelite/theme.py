@@ -77,6 +77,23 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; background:none
 QScrollBar::add-page, QScrollBar::sub-page {{ background:transparent; }}
 
 QMessageBox, QDialog {{ background:{bg}; }}
+QDialog#ImportBibleDialog {{ background:{bg}; }}
+QDialog#ImportBibleDialog QFrame#ImportBibleHeader {{ background:{alt}; border:1px solid {bcard}; border-radius:{rad}px; }}
+QDialog#ImportBibleDialog QFrame#ImportBibleHeader QLabel#ImportBibleTitle {{ color:{strong}; font-weight:bold; font-size:{emph}px; }}
+QDialog#ImportBibleDialog QFrame#ImportBibleHeader QLabel#ImportBibleSub {{ color:{muted}; }}
+QDialog#ImportBibleDialog QFrame#ImportBibleSection {{ background:{alt}; border:1px solid {bcard}; border-radius:{rad}px; }}
+QDialog#ImportBibleDialog QFrame#ImportBibleSection QLabel#ImportBibleSectionTitle {{ color:{accent}; font-weight:bold; }}
+QDialog#ImportBibleDialog QLabel#ImportBibleHelp {{ color:{muted}; }}
+QDialog#ImportBibleDialog QLabel#ImportBibleHint {{ color:{muted}; font-size:{cap}px; }}
+QDialog#ImportBibleDialog QLabel#ImportBibleStatus {{ color:{accent}; font-size:{cap}px; font-weight:bold; }}
+QDialog#ImportBibleDialog QPushButton#ImportBibleBrowse {{ background:{accent}; color:{on}; border:1px solid {accent}; font-weight:bold; }}
+QDialog#ImportBibleDialog QPushButton#ImportBibleBrowse:hover {{ background:{acch}; border-color:{acch}; }}
+QDialog#ImportBibleDialog QPlainTextEdit#ImportBibleReport {{ background:{inp}; color:{text}; border:1px solid {bc}; border-radius:{rc}px; padding:6px 8px; selection-background-color:{accent}; selection-color:{on}; }}
+QDialog#ImportBibleDialog QPlainTextEdit#ImportBibleReport:focus {{ border:1px solid {accent}; }}
+QDialog#ImportBibleDialog QLabel#ImportBiblePreview {{ color:{muted}; font-weight:bold; }}
+QDialog#ImportBibleDialog QLineEdit:focus {{ border:1px solid {accent}; }}
+QDialog#ImportBibleDialog QPushButton#ImportBibleCancel {{ background:{raised}; border:1px solid {bc}; }}
+QDialog#ImportBibleDialog QPushButton#ImportBibleCancel:hover {{ border-color:{bh}; background:{rh}; }}
 QMenu {{ background:{alt}; border:1px solid {bc}; padding:4px; }}
 QMenu::item {{ padding:6px 18px; border-radius:4px; }}
 QMenu::item:selected {{ background:{sel}; color:{accent}; }}
@@ -125,7 +142,7 @@ class TvFrame(QtWidgets.QWidget):
         grad.setColorAt(0.0, QtGui.QColor("#2a3346"))
         grad.setColorAt(1.0, QtGui.QColor("#141a27"))
         p.setBrush(QtGui.QBrush(grad))
-        p.setPen(QtGui.QPen(QtGui.QColor("#ef4444" if self.on_air else C.border_hover), 2 if self.on_air else 1))
+        p.setPen(QtGui.QPen(QtGui.QColor(C.accent if self.on_air else C.border_hover), 2 if self.on_air else 1))
         p.drawRoundedRect(r, FRAME_RADIUS, FRAME_RADIUS)
         # thin inner rim around the screen
         m = self.BEZEL - 2
@@ -135,5 +152,5 @@ class TvFrame(QtWidgets.QWidget):
         p.drawRoundedRect(inner, 4, 4)
         # power LED on the chin
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor("#ef4444" if self.on_air else "#475569"))
+        p.setBrush(QtGui.QColor(C.accent if self.on_air else "#475569"))
         p.drawEllipse(QtCore.QPointF(r.center().x(), r.bottom() - 5), 2, 2)
