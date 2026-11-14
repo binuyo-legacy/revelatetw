@@ -16,6 +16,7 @@ DEFAULTS = {
     "outline_on": False,     # draw an outline around the verse text (preview and screen alike)
     "outline_color": "",     # "" = automatic (dark outline on light text, light on dark text), else "#rrggbb"
     "outline_px": 3,         # thickness 1..10 (scales with screen height, so preview matches the projector)
+    "song_theme": "standard",  # song slide template (songthemes.py); Bible verses never use it
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -139,7 +140,8 @@ def load(path):
     data["outline_px"] = max(OUTLINE_MIN, min(OUTLINE_MAX, data["outline_px"]))
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
-    from . import background, transitions
+    from . import background, songthemes, transitions
+    data["song_theme"] = songthemes.clean(data["song_theme"])
     data.update(background.clean(data))
     data.update(transitions.clean(data))
     return data

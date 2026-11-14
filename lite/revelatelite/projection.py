@@ -1,7 +1,7 @@
 """The projection window: borderless, goes to the extended display, auto-sizes the verse."""
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from . import background, layout, settings, transitions
+from . import background, layout, settings, songthemes, transitions
 
 
 class SlideView(QtWidgets.QWidget):
@@ -23,11 +23,13 @@ class SlideView(QtWidgets.QWidget):
         self.text_color = ""
         self.bg_spec = background.spec_from({})
         self.outline_on, self.outline_color, self.outline_px = False, "", 3
+        self.song_theme = songthemes.STANDARD   # used only when the slide is a song slide (meta is not None)
+        self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
 
     # ---- content ----
-    def set_content(self, ref, body, credit=""):
-        self.ref, self.body, self.credit = ref, body, credit
+    def set_content(self, ref, body, credit="", meta=None):
+        self.ref, self.body, self.credit, self.meta = ref, body, credit, meta
         self.live = True
         self.update()
 
@@ -36,7 +38,8 @@ class SlideView(QtWidgets.QWidget):
         self.update()
 
     def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color="", bg_spec=None,
-                  outline_on=False, outline_color="", outline_px=3):
+                  outline_on=False, outline_color="", outline_px=3, song_theme=songthemes.STANDARD):
+        self.song_theme = songthemes.clean(song_theme)
         self.outline_on, self.outline_color, self.outline_px = bool(outline_on), outline_color, outline_px
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
         self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
@@ -70,6 +73,10 @@ class SlideView(QtWidgets.QWidget):
         p.drawText(rect, flags, text)
 
     def _draw(self, p, rect):
+        if self.live and self.body and self.meta is not None and self.song_theme in songthemes.TEMPLATES:
+            p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            return self._draw_song(p, rect, songthemes.TEMPLATES[self.song_theme])
         kind = self.bg_spec[0]
         bg, fg, refc = settings.resolve_colors(self.theme, self.bg_color, self.text_color)
         if kind == "gradient":       # text colour follows the average of the two colours
@@ -117,12 +124,162 @@ class SlideView(QtWidgets.QWidget):
             self._text(p, QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
                        QtCore.Qt.AlignCenter, self.credit, fg, h)
 
-    def _body_font(self, size):
+    # ---- song templates (songs only; verses never come here) ----
+    def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):
+        f = QtGui.QFont(family)
+        f.setPixelSize(max(10, int(h * frac)))
+        f.setBold(bold)
+        if spacing:
+            f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, spacing)
+        return f
+
+    def _paint_song_bg(self, p, rect, t):
+        kind, c1, c2 = t["bg"]
+        w, h = rect.width(), rect.height()
+        if kind == "solid":
+            p.fillRect(rect, QtGui.QColor(c1))
+        elif kind == "radial":
+            p.fillRect(rect, QtGui.QColor(c2))
+            g = QtGui.QRadialGradient(w / 2.0, h * 0.5, max(w, h) * 0.65)
+            g.setColorAt(0, QtGui.QColor(c1))
+            g.setColorAt(1, QtGui.QColor(c2))
+            p.fillRect(rect, QtGui.QBrush(g))
+        else:
+            g = QtGui.QLinearGradient(0, 0, w * 0.4, h)
+            g.setColorAt(0, QtGui.QColor(c1))
+            g.setColorAt(1, QtGui.QColor(c2))
+            p.fillRect(rect, QtGui.QBrush(g))
+
+    def _draw_song(self, p, rect, t):
+        title, artist, section, num, total = self.meta
+        w, h = rect.width(), rect.height()
+        self._paint_song_bg(p, rect, t)
+        txt, acc, lab, dim = (QtGui.QColor(t[k]) for k in ("text", "accent", "tag", "dim"))
+        frame = t["frame"]
+        pad = int(h * 0.075)
+        # frame / decoration
+        if frame == "single":
+            p.setBrush(QtCore.Qt.NoBrush)
+            for inset, alpha, wd in ((0.04, 0.8, 0.004),):
+                c = QtGui.QColor(t["tag"])
+                c.setAlphaF(alpha)
+                p.setPen(QtGui.QPen(c, max(1, h * wd)))
+                m = h * inset
+                p.drawRoundedRect(QtCore.QRectF(m, m, w - 2 * m, h - 2 * m), h * 0.03, h * 0.03)
+            pad = int(h * 0.11)
+        elif frame == "bar":
+            p.fillRect(QtCore.QRect(int(w * 0.06), int(h * 0.12), max(3, int(h * 0.012)), int(h * 0.76)), acc)
+        elif frame == "card":
+            card = QtGui.QColor(255, 255, 255, 28)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 60), max(1, h * 0.002)))
+            p.setBrush(card)
+            p.drawRoundedRect(QtCore.QRectF(w * 0.06, h * 0.17, w * 0.88, h * 0.60), h * 0.04, h * 0.04)
+            p.setBrush(QtCore.Qt.NoBrush)
+        left = int(w * (0.12 if frame == "bar" else 0.0)) + pad
+        inner = QtCore.QRect(left, pad, w - left - pad, h - 2 * pad)
+        # top section label
+        p.setFont(self._sfont(h, 0.032, False, h * 0.008))
+        p.setPen(lab)
+        label_h = int(h * 0.07)
+        top_rect = QtCore.QRect(inner.x(), inner.y(), inner.width(), label_h)
+        align = QtCore.Qt.AlignLeft if frame == "bar" else QtCore.Qt.AlignHCenter
+        if not t["pill"] or frame != "none":
+            if t["pill"] and frame == "card":
+                pass
+            else:
+                p.drawText(top_rect, align | QtCore.Qt.AlignVCenter, section.upper())
+        else:      # sunrise: rounded tag on top
+            fm = QtGui.QFontMetrics(p.font())
+            tw = fm.horizontalAdvance(section.upper()) if hasattr(fm, "horizontalAdvance") else fm.width(section.upper())
+            tag = QtCore.QRectF((w - tw) / 2.0 - h * 0.025, inner.y(), tw + h * 0.05, label_h * 0.85)
+            p.setPen(QtGui.QPen(lab, max(1, h * 0.002)))
+            p.setBrush(QtGui.QColor(0, 0, 0, 50))
+            p.drawRoundedRect(tag, tag.height() / 2, tag.height() / 2)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawText(tag, QtCore.Qt.AlignCenter, section.upper())
+        if t["pill"] and frame == "card":
+            p.setFont(self._sfont(h, 0.032, False, h * 0.008))
+            p.setPen(lab)
+            p.drawText(top_rect, QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter, section.upper())
+        # footer
+        foot_h = int(h * 0.07)
+        foot = QtCore.QRect(inner.x(), inner.bottom() - foot_h, inner.width(), foot_h)
+        if self.show_ref:
+            f = self._sfont(h, 0.03)
+            p.setFont(f)
+            fm = QtGui.QFontMetrics(f)
+            pill = pill_s = songthemes.pill_text(self.meta)
+            if t["pill"] and frame in ("none", "card"):
+                pw = (fm.horizontalAdvance(pill_s) if hasattr(fm, "horizontalAdvance") else fm.width(pill_s)) + int(h * 0.05)
+                pr = QtCore.QRectF(foot.right() - pw, foot.y() + (foot_h - h * 0.05) / 2.0, pw, h * 0.05)
+                p.setPen(QtGui.QPen(QtGui.QColor(t["tag"]), max(1, h * 0.002)))
+                p.setBrush(QtGui.QColor(0, 0, 0, 70))
+                p.drawRoundedRect(pr, pr.height() / 2, pr.height() / 2)
+                p.setBrush(QtCore.Qt.NoBrush)
+                p.setPen(txt)
+                p.drawText(pr, QtCore.Qt.AlignCenter, pill_s)
+            fl = QtCore.Qt.AlignLeft if (t["pill"] or frame == "bar") else QtCore.Qt.AlignHCenter
+            p.setPen(dim)
+            line = title + (" \u00b7 " + artist if artist else "")
+            half = foot.adjusted(0, 0, -int(foot.width() * 0.3) if t["pill"] else 0, 0)
+            p.drawText(half, fl | QtCore.Qt.AlignVCenter, fm.elidedText(line, QtCore.Qt.ElideRight, half.width()))
+        # lyrics
+        gap = int(h * 0.05) if t["divider"] else 0
+        area = QtCore.QRect(inner.x() + (int(w * 0.03) if frame == "card" else 0), inner.y() + label_h + int(h * 0.02),
+                            inner.width() - (int(w * 0.06) if frame == "card" else 0),
+                            inner.height() - label_h - foot_h - int(h * 0.04))
+        lines = self.body.split("\n")
+        blocks = [self.body]
+        if t["two_tone"] and len(lines) > 1:
+            blocks = [lines[0], "\n".join(lines[1:])]
+        flags = (QtCore.Qt.AlignLeft if frame == "bar" else QtCore.Qt.AlignHCenter) | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap
+
+        def heights(size):
+            fm = QtGui.QFontMetrics(self._body_font(size, True))
+            return [fm.boundingRect(0, 0, area.width(), 100000, flags, b).height() for b in blocks]
+
+        def fits(size):
+            hs = heights(size)
+            return sum(hs) + (gap if len(hs) > 1 else int(gap * 0)) <= area.height()
+
+        size = layout.fit_font_size(fits, 14, max(16, int(h * 0.1 * self.scale / 100)))
+        hs = heights(size)
+        total_h = sum(hs) + (gap if len(hs) > 1 else 0)
+        y = area.y() + (area.height() - total_h) // 2
+        p.setFont(self._body_font(size, True))
+        for i, b in enumerate(blocks):
+            r = QtCore.QRect(area.x(), y, area.width(), hs[i])
+            col = txt if i == 0 else acc
+            if t["shadow"]:
+                p.setPen(QtGui.QColor(0, 0, 0, 140))
+                p.drawText(r.translated(0, max(1, int(h * 0.004))), flags, b)
+            p.setPen(col)
+            self._text(p, r, flags, b, col.name(), h)
+            y += hs[i]
+            if i == 0 and len(blocks) > 1:
+                if t["divider"]:
+                    cy = y + gap // 2
+                    g = QtGui.QLinearGradient(w / 2.0 - w * 0.09, 0, w / 2.0 + w * 0.09, 0)
+                    c0 = QtGui.QColor(t["tag"]); c0.setAlpha(0)
+                    c1 = QtGui.QColor(t["tag"])
+                    g.setColorAt(0, c0); g.setColorAt(0.5, c1); g.setColorAt(1, c0)
+                    p.fillRect(QtCore.QRectF(w / 2.0 - w * 0.09, cy, w * 0.18, max(1, h * 0.003)), QtGui.QBrush(g))
+                y += gap
+        if len(blocks) == 1 and t["divider"]:     # one block: divider under the words, inside the free space
+            cy = y + int(h * 0.015)
+            if cy < area.bottom():
+                g = QtGui.QLinearGradient(w / 2.0 - w * 0.09, 0, w / 2.0 + w * 0.09, 0)
+                c0 = QtGui.QColor(t["tag"]); c0.setAlpha(0)
+                c1 = QtGui.QColor(t["tag"])
+                g.setColorAt(0, c0); g.setColorAt(0.5, c1); g.setColorAt(1, c0)
+                p.fillRect(QtCore.QRectF(w / 2.0 - w * 0.09, cy, w * 0.18, max(1, h * 0.003)), QtGui.QBrush(g))
+
+    def _body_font(self, size, bold=None):
         f = QtGui.QFont(self.font_family or "Georgia")
         if hasattr(f, "setFamilies"):      # Qt 5.13+: a missing font falls back to Georgia, then Arial
             f.setFamilies([self.font_family or "Georgia", "Georgia", "Arial"])
         f.setPixelSize(size)
-        f.setBold(self.bold)
+        f.setBold(self.bold if bold is None else (self.bold or bold))
         return f
 
     def resizeEvent(self, e):
@@ -151,8 +308,8 @@ class PreviewView(SlideView):
     def sizeHint(self):
         return QtCore.QSize(400, layout.height_for_width(400))
 
-    def show_slide(self, ref, body, credit=""):
-        self.ref, self.body, self.credit = ref, body, credit
+    def show_slide(self, ref, body, credit="", meta=None):
+        self.ref, self.body, self.credit, self.meta = ref, body, credit, meta
         self.live = bool(body)
         self.update()
 

@@ -6,10 +6,10 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg, transitions as trn
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, transitions as trn
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
-from .projection import PreviewView, ProjectionWindow
+from .projection import PreviewView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
 from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong, import_song_json, export_songs, safe_filename
 
@@ -55,6 +55,7 @@ class Main(QtWidgets.QWidget):
         self.songs = SongLibrary(os.path.join(paths.user_dir(), "songs"))
         self.song_all = self.songs.load_all()
         self.song = None          # the song open in the Songs tab
+        self.slide_meta = None    # song slide details (None for verses)
         self.slide = None         # (heading, body, credit): THE one slide the preview shows (verse or song slide)
         self.proj = ProjectionWindow()
         self.preview = PreviewView()
@@ -229,6 +230,21 @@ class Main(QtWidgets.QWidget):
         self.show_ref_cb = QtWidgets.QCheckBox("Show verse reference on screen")
         self.show_ref_cb.setChecked(self.st["show_reference"])
         og.addRow("Projector screen", self.display_cb)
+        self.song_theme_lw = QtWidgets.QListWidget()
+        self.song_theme_lw.setViewMode(QtWidgets.QListView.IconMode)
+        self.song_theme_lw.setMovement(QtWidgets.QListView.Static)
+        self.song_theme_lw.setResizeMode(QtWidgets.QListView.Adjust)
+        self.song_theme_lw.setIconSize(QtCore.QSize(160, 90))
+        self.song_theme_lw.setSpacing(6)
+        self.song_theme_lw.setWrapping(True)
+        self.song_theme_lw.setFixedHeight(280)
+        self.song_theme_lw.setToolTip("Pick how song slides look. Verses are not affected. Reaches the screen after you press Project.")
+        self._fill_song_themes()
+        self.song_theme_lbl = QtWidgets.QLabel(songthemes.blurb(self.st["song_theme"]))
+        self.song_theme_lbl.setObjectName("hint")
+        self.song_theme_lbl.setWordWrap(True)
+        og.addRow("Song slide style", self.song_theme_lw)
+        og.addRow("", self.song_theme_lbl)
         og.addRow("Colours", self.theme_cb)
         og.addRow("Text size", self.size_sp)
         og.addRow("Font", self.font_cb)
@@ -399,6 +415,7 @@ class Main(QtWidgets.QWidget):
         self.proj.projectRequested.connect(self.project)
         self.proj.closedByUser.connect(self._projector_closed)
         self.theme_cb.currentIndexChanged.connect(self._style_changed)
+        self.song_theme_lw.currentRowChanged.connect(self._song_theme_changed)
         self.size_sp.valueChanged.connect(self._style_changed)
         self.show_ref_cb.stateChanged.connect(self._style_changed)
         self.font_cb.currentIndexChanged.connect(self._style_changed)
@@ -469,10 +486,36 @@ class Main(QtWidgets.QWidget):
         k = self.font_cb.findText(self.st["font_family"])
         self.font_cb.setCurrentIndex(k if k >= 0 else self.font_cb.findText("Georgia"))
 
+    def _fill_song_themes(self):
+        """Gallery of the song templates, each with a small picture drawn by the same code as the projector."""
+        self.song_theme_lw.blockSignals(True)
+        self.song_theme_lw.clear()
+        for k in songthemes.KEYS:
+            v = SlideView()
+            v.set_style("navy", 100, True, self.st["font_family"], self.st["bold"], self.st["bg_color"], self.st["text_color"],
+                        bgm.spec_from(self.st), False, "", 3, k)
+            v.set_content("x", songthemes.SAMPLE_BODY, "", songthemes.SAMPLE_META)
+            it = QtWidgets.QListWidgetItem(QtGui.QIcon(v.snapshot(QtCore.QSize(320, 180)).scaled(160, 90, QtCore.Qt.KeepAspectRatio,
+                                                                                                    QtCore.Qt.SmoothTransformation)),
+                                           songthemes.label(k))
+            it.setData(QtCore.Qt.UserRole, k)
+            self.song_theme_lw.addItem(it)
+        self.song_theme_lw.setCurrentRow(max(songthemes.KEYS.index(self.st["song_theme"]), 0))
+        self.song_theme_lw.blockSignals(False)
+
+    def _song_theme_changed(self, row):
+        """Only stores the choice and redraws the preview. The screen changes after Project."""
+        if not (0 <= row < len(songthemes.KEYS)):
+            return
+        self.st["song_theme"] = songthemes.KEYS[row]
+        self.song_theme_lbl.setText(songthemes.blurb(self.st["song_theme"]))
+        self._apply_style()
+        self.save_settings()
+
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
                 self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st),
-                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"])
+                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"], self.st["song_theme"])
         self._style_args = args
         self.preview.set_style(*args)
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again
@@ -727,12 +770,14 @@ class Main(QtWidgets.QWidget):
         self._refresh_live_state()
         self.save_settings()
 
-    def _set_slide(self, slide):
-        """The ONE place the preview content changes (verses and song slides both come through here)."""
+    def _set_slide(self, slide, meta=None):
+        """The ONE place the preview content changes (verses and song slides both come through here).
+        meta is set for song slides only (title, artist, section, number, total) and picks the song template."""
         self.slide = slide
+        self.slide_meta = meta if slide else None
         self._step_hint = 0
         if slide:
-            self.preview.show_slide(*slide)
+            self.preview.show_slide(*slide, meta=self.slide_meta)
         else:
             self.preview.show_slide("", "")
         self.project_b.setEnabled(bool(slide))
@@ -910,7 +955,7 @@ class Main(QtWidgets.QWidget):
         self.ref_lbl.setText(sg.slide_ref(row))
         self.verse_lbl.setText("")
         self.credit_lbl.setText("")
-        self._set_slide((sg.slide_ref(row), sg.slide_body(row), sg.artist))
+        self._set_slide((sg.slide_ref(row), sg.slide_body(row), sg.artist), songthemes.meta_for(sg, row))
         self.say("")
         self._refresh_live_state()
 
@@ -1074,7 +1119,7 @@ class Main(QtWidgets.QWidget):
             if args:
                 self.proj.set_style(*args)
                 self._sent_style = args
-            self.proj.set_content(ref, body, credit)
+            self.proj.set_content(ref, body, credit, getattr(self, "slide_meta", None))
             if not self.proj.isVisible():
                 idx, ext = self.proj.open_on(self.st["display"], self)
                 windowed.append(not ext)
