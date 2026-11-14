@@ -15,8 +15,14 @@ opacity, no shaders, no GPU effects, so they are fine on a Windows 8.1 32-bit / 
   slide     Push: the old picture slides out while the new one slides in behind it.
   blinds    Eight slats open one after another to uncover the new picture.
   open      The new picture opens from the centre outwards (like doors opening).
+  checkerboard  Squares in a chequer pattern grow to uncover the new picture (two rounds).
+  diagonal  A slanted edge sweeps corner to corner and uncovers the new picture.
+  iris      A circle opens from the middle of the screen and uncovers the new picture.
+  zoom      The old picture zooms out of view while the new one zooms in (cross-fade).
+  mosaic    Small squares of the new picture pop in at scattered places until it is complete.
+  clock     A clock hand sweeps round from 12 o'clock and uncovers the new picture.
 
-Direction (Wipe, Slide, Blinds, Open) is the way the motion travels:
+Direction (Wipe, Slide, Blinds, Open, Diagonal) is the way the motion travels:
   auto = follow Next / Previous (Next travels right to left, Previous left to right),
   or left / right / up / down. Fade and Dissolve have no direction.
 """
@@ -29,9 +35,15 @@ EFFECTS = [
     ("slide", "Slide (push)", "Old picture slides out while the new one slides in."),
     ("blinds", "Blinds", "Slats open one after another to uncover the new picture."),
     ("open", "Open from centre", "The new picture opens from the middle outwards."),
+    ("checkerboard", "Checkerboard", "Squares in a chequer pattern grow to uncover the new picture."),
+    ("diagonal", "Diagonal wipe", "A slanted edge sweeps corner to corner and uncovers the new picture."),
+    ("iris", "Iris (circle)", "A circle opens from the middle and uncovers the new picture."),
+    ("zoom", "Zoom", "The old picture zooms away while the new one zooms in."),
+    ("mosaic", "Mosaic", "Small squares of the new picture pop in at scattered places."),
+    ("clock", "Clock sweep", "A clock hand sweeps round and uncovers the new picture."),
 ]
 EFFECT_KEYS = [k for k, _, _ in EFFECTS]
-DIRECTED = ("wipe", "slide", "blinds", "open")
+DIRECTED = ("wipe", "slide", "blinds", "open", "diagonal")
 
 DIRECTIONS = [
     ("auto", "Follow Next / Previous"),
@@ -190,3 +202,86 @@ def open_rect(direction, w, h, p):
         return ((w - cw) // 2, 0, cw, h)
     ch = int(round(h * p))
     return (0, (h - ch) // 2, w, ch)
+
+
+def checkerboard_rects(w, h, p, cols=8):
+    """Squares of the new picture. Cells of one chequer colour grow from their centres during the
+    first half, the other colour during the second half; everything is covered at p = 1."""
+    p = max(0.0, min(1.0, p))
+    cell = max(1, int(-(-w // cols)))
+    rows = int(-(-h // cell))
+    rects = []
+    for r in range(rows):
+        for c in range(cols):
+            x0, y0 = c * cell, r * cell
+            x1, y1 = min(w, x0 + cell), min(h, y0 + cell)
+            q = min(1.0, p * 2) if (r + c) % 2 == 0 else max(0.0, p * 2 - 1)
+            if q <= 0:
+                continue
+            cw, ch = int(round((x1 - x0) * q)), int(round((y1 - y0) * q))
+            if q >= 1.0:
+                cw, ch = x1 - x0, y1 - y0
+            rects.append((x0 + ((x1 - x0) - cw) // 2, y0 + ((y1 - y0) - ch) // 2, cw, ch))
+    return rects
+
+
+def _clip_halfplane(poly, t):
+    """Keep the part of polygon poly (list of (u, v)) where u + v <= t."""
+    out = []
+    n = len(poly)
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        fa, fb = a[0] + a[1] - t, b[0] + b[1] - t
+        if fa <= 0:
+            out.append(a)
+        if (fa < 0 < fb) or (fb < 0 < fa):
+            k = fa / (fa - fb)
+            out.append((a[0] + k * (b[0] - a[0]), a[1] + k * (b[1] - a[1])))
+    return out
+
+
+def diagonal_polygon(direction, w, h, p):
+    """Corner of the screen the new picture comes from, as a polygon (list of (x, y)).
+    left = from the bottom right, right = from the top left, up = from the bottom left, down = from the top right."""
+    p = max(0.0, min(1.0, p))
+    sx, sy = {"left": (-1, -1), "right": (1, 1), "up": (1, -1), "down": (-1, 1)}.get(direction, (-1, -1))
+    cx, cy = (0 if sx > 0 else w), (0 if sy > 0 else h)
+    t = p * (w + h)
+    if p >= 1.0:
+        return [(0, 0), (w, 0), (w, h), (0, h)]
+    poly = _clip_halfplane([(0, 0), (w, 0), (w, h), (0, h)], t)
+    return [(cx + sx * u, cy + sy * v) for u, v in poly]
+
+
+def iris_circle(w, h, p):
+    """(centre x, centre y, radius) of the circle showing the new picture; covers the screen at p = 1."""
+    p = max(0.0, min(1.0, p))
+    return (w / 2.0, h / 2.0, p * ((w * w + h * h) ** 0.5) / 2.0 + (1 if p >= 1.0 else 0))
+
+
+def zoom_states(p):
+    """((old scale, old opacity), (new scale, new opacity)). Small scale moves only (old 1 -> 1.15,
+    new 0.85 -> 1), cheap to draw on a slow PC."""
+    p = max(0.0, min(1.0, p))
+    return (1.0 + 0.15 * p, 1.0 - p), (0.85 + 0.15 * p, p)
+
+
+def mosaic_rects(w, h, p, cols=16):
+    """Scattered squares of the new picture, in a fixed pseudo-random order (same every time)."""
+    p = max(0.0, min(1.0, p))
+    cell = max(1, int(-(-w // cols)))
+    rows = int(-(-h // cell))
+    n = cols * rows
+    order = sorted(range(n), key=lambda i: (i * 2654435761) % 4294967296)
+    shown = n if p >= 1.0 else int(n * p)
+    rects = []
+    for i in order[:shown]:
+        r, c = divmod(i, cols)
+        x0, y0 = c * cell, r * cell
+        rects.append((x0, y0, min(w, x0 + cell) - x0, min(h, y0 + cell) - y0))
+    return rects
+
+
+def clock_degrees(p):
+    """How far (0..360, clockwise from 12 o'clock) the sweep has gone."""
+    return 360.0 * max(0.0, min(1.0, p))

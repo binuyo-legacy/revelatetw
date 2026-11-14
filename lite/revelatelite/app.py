@@ -208,6 +208,21 @@ class Main(QtWidgets.QWidget):
         self.bg_b = QtWidgets.QPushButton("Background colour...")
         self.fg_b = QtWidgets.QPushButton("Text colour...")
         self.reset_b = QtWidgets.QPushButton("Reset colours")
+        self.outline_cb = QtWidgets.QCheckBox("Outline around text")
+        self.outline_cb.setChecked(self.st["outline_on"])
+        self.outline_b = QtWidgets.QPushButton("Outline colour...")
+        self.outline_auto_b = QtWidgets.QPushButton("Auto")
+        self.outline_auto_b.setToolTip("Pick the outline colour for me (dark outline on light text, light on dark text).")
+        self.outline_sp = QtWidgets.QSpinBox()
+        self.outline_sp.setRange(cfg.OUTLINE_MIN, cfg.OUTLINE_MAX)
+        self.outline_sp.setValue(self.st["outline_px"])
+        self.outline_sp.setToolTip("How thick the outline is (1 thin, 10 thick). Same look on the preview and the screen.")
+        self.outline_lbl = QtWidgets.QLabel("")
+        self.outline_lbl.setObjectName("hint")
+        self.outline_lbl.setWordWrap(True)
+        ob = QtWidgets.QHBoxLayout()
+        for w_ in (self.outline_b, self.outline_auto_b, QtWidgets.QLabel("Thickness"), self.outline_sp):
+            ob.addWidget(w_)
         cb = QtWidgets.QHBoxLayout()
         for w_ in (self.bg_b, self.fg_b, self.reset_b):
             cb.addWidget(w_)
@@ -219,6 +234,9 @@ class Main(QtWidgets.QWidget):
         og.addRow("Font", self.font_cb)
         og.addRow("", self.bold_cb)
         og.addRow("Custom colours", cb)
+        og.addRow("Text outline", self.outline_cb)
+        og.addRow("", ob)
+        og.addRow("", self.outline_lbl)
         og.addRow("", self.show_ref_cb)
         # --- background: solid colour, gradient, or a picture ---
         self.bgkind_cb = QtWidgets.QComboBox()
@@ -388,6 +406,10 @@ class Main(QtWidgets.QWidget):
         self.bg_b.clicked.connect(lambda: self.pick_color("bg_color"))
         self.fg_b.clicked.connect(lambda: self.pick_color("text_color"))
         self.reset_b.clicked.connect(self.reset_colors)
+        self.outline_cb.stateChanged.connect(self._style_changed)
+        self.outline_sp.valueChanged.connect(self._style_changed)
+        self.outline_b.clicked.connect(self.pick_outline)
+        self.outline_auto_b.clicked.connect(self.outline_auto)
         self.display_cb.currentIndexChanged.connect(self._style_changed)
         self.bgkind_cb.currentIndexChanged.connect(self._bg_changed)
         self.gdir_cb.currentIndexChanged.connect(self._bg_changed)
@@ -402,6 +424,7 @@ class Main(QtWidgets.QWidget):
                     self.tonoff_cb.stateChanged, self.tsw_cb.stateChanged):
             sig.connect(self._transition_changed)
         self._sync_transition_controls()
+        self._sync_outline()
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
@@ -448,12 +471,35 @@ class Main(QtWidgets.QWidget):
 
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
-                self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st))
+                self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st),
+                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"])
         self._style_args = args
         self.preview.set_style(*args)
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again
             self.proj.set_style(*args)
         self._refresh_live_state()
+
+    def _text_color_now(self):
+        """The text colour actually drawn right now (theme, custom, or the auto pick for a gradient)."""
+        kind = bgm.spec_from(self.st)[0]
+        bgc = self.st["bg_color"]
+        if kind == "gradient":
+            bgc = bgm.mix(self.st["grad_color1"], self.st["grad_color2"])
+        elif kind == "image":
+            bgc = "#0b0f19"
+        return cfg.resolve_colors(self.st["theme"], bgc, self.st["text_color"])[1]
+
+    def pick_outline(self):
+        cur = cfg.resolve_outline(self._text_color_now(), self.st["outline_color"])
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Choose the outline colour")
+        if c.isValid():
+            self.st["outline_color"] = c.name()
+            self.outline_cb.setChecked(True)
+            self._style_changed()
+
+    def outline_auto(self):
+        self.st["outline_color"] = ""
+        self._style_changed()
 
     def pick_color(self, key):
         cur = cfg.resolve_colors(self.st["theme"], self.st["bg_color"], self.st["text_color"])
@@ -536,7 +582,7 @@ class Main(QtWidgets.QWidget):
         self.img_lbl.setText(msg)
 
     def reset_colors(self):
-        self.st["bg_color"] = self.st["text_color"] = ""
+        self.st["bg_color"] = self.st["text_color"] = self.st["outline_color"] = ""
         self._style_changed()
 
     def _style_changed(self, *_):
@@ -546,8 +592,20 @@ class Main(QtWidgets.QWidget):
         self.st["display"] = self.display_cb.currentData()
         self.st["font_family"] = self.font_cb.currentText()
         self.st["bold"] = self.bold_cb.isChecked()
+        self.st["outline_on"] = self.outline_cb.isChecked()
+        self.st["outline_px"] = self.outline_sp.value()
+        self._sync_outline()
         self._apply_style()
         self.save_settings()
+
+    def _sync_outline(self):
+        self.outline_b.setEnabled(self.st["outline_on"])
+        self.outline_auto_b.setEnabled(self.st["outline_on"])
+        self.outline_sp.setEnabled(self.st["outline_on"])
+        oc = cfg.resolve_outline(self._text_color_now(), self.st["outline_color"])
+        self.outline_b.setStyleSheet("border-left:14px solid %s;" % oc)
+        self.outline_lbl.setText(cfg.outline_hint(self._text_color_now(), self.st["outline_color"]) if self.st["outline_on"]
+                                 else "")
 
     def _transition_changed(self, *_):
         """Only stores the choice. Nothing is animated or sent to the screen from here."""

@@ -19,6 +19,7 @@ numbers from the checklist below.
 - Service list: line up verses before the service, reorder, saved automatically.
 - Projection: borderless full-screen window on the extended (second) display, text auto-sized to fit, 3 colour
   styles, text size, show/hide reference. Project (F5) sends the preview to the full-screen display; Project Off (Esc) closes it. Everything else (Enter, arrows, Next/Previous) only changes the preview.
+- **Text outline** (Settings, next to the colours): tick "Outline around text", pick a colour (or press Auto: dark outline on light text, light on dark), and set Thickness 1 to 10. It is drawn on verse, reference and credit, and looks the same on the preview and the screen (thickness scales with screen size). Works on solid, gradient and picture backgrounds. A hint appears if the outline colour is too close to the text colour. Like other look changes, it reaches the screen only when you press Project. Saved in settings.
 - **Settings tab** (was "Look and screen"): projector screen, colours, text size, font, bold, show reference, plus the background.
   Background choices: Solid colour (as before), Gradient (Colour 1, Colour 2, Swap, direction: top to bottom, left to right,
   two diagonals) or Picture (Choose picture..., Remove picture, size: Fill, Fit, Stretch, Tile, and Darken picture 0-80%).
@@ -31,10 +32,11 @@ numbers from the checklist below.
   saved, and the preview and full-screen display use the same font.
   If a picture is bright enough that white text would be hard to read, Settings shows a hint to raise Darken picture.
   Tiled and scaled copies are cached per picture, so repainting does not redo work on a 2 GB PC.
-- **Screen effects (transitions)** in Settings: Cut, Fade through black, Dissolve, Wipe, Slide (push), Blinds, Open from centre.
+- **Screen effects (transitions)** in Settings: Cut, Fade through black, Dissolve, Wipe, Slide (push), Blinds, Open from centre, plus six more: Checkerboard, Diagonal wipe, Iris (circle), Zoom, Mosaic, Clock sweep.
   Pick the effect, speed (0 to 3000 ms, 0 = instant) and direction (follow Next/Previous, or left/right/up/down; used by Wipe, Slide,
   Blinds and Open). Two tick boxes turn the effect off for Project / Project Off, or for screen changes while live.
   - Fade: old picture fades out, then the new one fades in. Dissolve: new picture fades in over the old one.
+  - New: Checkerboard (chequer squares grow, two rounds), Diagonal wipe (slanted edge corner to corner, follows direction), Iris (circle opens from the middle), Zoom (old zooms out, new zooms in), Mosaic (squares pop in at scattered places), Clock sweep (a hand sweeps round from 12 o'clock). All use plain Qt painting, no new packages.
   - Wipe: a straight edge sweeps across. Slide: old and new push across together. Blinds: 8 slats open one after another.
     Open: the new picture opens from the middle outwards.
   - Plays ONLY on the full-screen display, when you click Project (comes on), Project while live (switches, direction follows whether you
@@ -101,3 +103,6 @@ skipped on 3.8 because the main app needs 3.9+. Not yet run on real Windows 8.1 
 ## Not in Lite (yet)
 Live listening and auto verse detection, theme editor, backgrounds/media, audio routing, NDI/OBS output.
 Main branch is untouched; all of this is on `poc/lite-pyqt5`.
+
+
+Note: tests run headless (offscreen). Smoothness on a real Windows 8.1 32-bit / 2 GB PC has not been tested.

@@ -22,6 +22,7 @@ class SlideView(QtWidgets.QWidget):
         self.bg_color = ""
         self.text_color = ""
         self.bg_spec = background.spec_from({})
+        self.outline_on, self.outline_color, self.outline_px = False, "", 3
         self._bgp = background.Painter()
 
     # ---- content ----
@@ -34,7 +35,9 @@ class SlideView(QtWidgets.QWidget):
         self.live = False
         self.update()
 
-    def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color="", bg_spec=None):
+    def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color="", bg_spec=None,
+                  outline_on=False, outline_color="", outline_px=3):
+        self.outline_on, self.outline_color, self.outline_px = bool(outline_on), outline_color, outline_px
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
         self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
         self.bg_spec = bg_spec or background.spec_from({})
@@ -52,6 +55,19 @@ class SlideView(QtWidgets.QWidget):
         self._draw(p, QtCore.QRect(0, 0, size.width(), size.height()))
         p.end()
         return pm
+
+    def _text(self, p, rect, flags, text, fg, h):
+        """Draw text in the current font/pen colour, with an outline when switched on.
+        The outline is the same text stamped in a ring around the real one (plain painting, works for
+        wrapped text and on any background), then the text itself on top."""
+        if self.outline_on:
+            oc = QtGui.QColor(settings.resolve_outline(fg, self.outline_color))
+            keep = p.pen()
+            p.setPen(oc)
+            for dx, dy in settings.outline_offsets(settings.outline_pixels(h, self.outline_px)):
+                p.drawText(rect.translated(dx, dy), flags, text)
+            p.setPen(keep)
+        p.drawText(rect, flags, text)
 
     def _draw(self, p, rect):
         kind = self.bg_spec[0]
@@ -77,8 +93,8 @@ class SlideView(QtWidgets.QWidget):
             p.setFont(f)
             p.setPen(QtGui.QColor(refc))
             ref_h = QtGui.QFontMetrics(f).height() + int(h * 0.02)
-            p.drawText(QtCore.QRect(area.x(), area.y() + area.height() - ref_h + int(h * 0.02),
-                                    area.width(), ref_h), QtCore.Qt.AlignCenter, self.ref)
+            self._text(p, QtCore.QRect(area.x(), area.y() + area.height() - ref_h + int(h * 0.02),
+                                       area.width(), ref_h), QtCore.Qt.AlignCenter, self.ref, refc, h)
         text_area = QtCore.QRect(area.x(), area.y(), area.width(), area.height() - ref_h)
         flags = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
 
@@ -91,15 +107,15 @@ class SlideView(QtWidgets.QWidget):
         size = layout.fit_font_size(fits, 14, max(16, top))
         p.setFont(self._body_font(size))
         p.setPen(QtGui.QColor(fg))
-        p.drawText(text_area, flags, self.body)
+        self._text(p, text_area, flags, self.body, fg, h)
         if self.credit:
             f2 = QtGui.QFont("Segoe UI")
             f2.setPixelSize(max(11, int(h * 0.02)))
             p.setFont(f2)
             p.setPen(QtGui.QColor(fg))
             p.setOpacity(0.55)
-            p.drawText(QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
-                       QtCore.Qt.AlignCenter, self.credit)
+            self._text(p, QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
+                       QtCore.Qt.AlignCenter, self.credit, fg, h)
 
     def _body_font(self, size):
         f = QtGui.QFont(self.font_family or "Georgia")
@@ -252,12 +268,47 @@ class ProjectionWindow(SlideView):
             (ox, oy), (nx, ny) = transitions.slide_offsets(d, w, h, pr)
             p.drawPixmap(QtCore.QRect(ox, oy, w, h), old)
             p.drawPixmap(QtCore.QRect(nx, ny, w, h), new)
-        else:                # wipe, blinds, open: new picture shown through a clip over the old one
+        elif eff == "zoom":
+            (os_, oa), (ns, na) = transitions.zoom_states(pr)
+            for pm, sc, al in ((old, os_, oa), (new, ns, na)):
+                if al > 0:
+                    p.setOpacity(al)
+                    zw, zh = int(round(w * sc)), int(round(h * sc))
+                    p.drawPixmap(QtCore.QRect((w - zw) // 2, (h - zh) // 2, zw, zh), pm)
+        elif eff in ("checkerboard", "mosaic"):      # many small squares of the new picture over the old one
+            p.drawPixmap(r, old)
+            tiles = (transitions.checkerboard_rects(w, h, pr) if eff == "checkerboard"
+                     else transitions.mosaic_rects(w, h, pr))
+            for x, y, rw, rh in tiles:
+                if rw > 0 and rh > 0:
+                    p.drawPixmap(x, y, new, x, y, rw, rh)
+        else:                # wipe, blinds, open, diagonal, iris, clock: new picture shown through a clip over the old one
             p.drawPixmap(r, old)
             if eff == "wipe":
                 rects = [transitions.wipe_rect(d, w, h, pr)]
             elif eff == "blinds":
                 rects = transitions.blinds_rects(d, w, h, pr)
+            elif eff in ("diagonal", "iris", "clock"):
+                path = QtGui.QPainterPath()
+                if eff == "diagonal":
+                    pts = transitions.diagonal_polygon(d, w, h, pr)
+                    if len(pts) >= 3:
+                        path.addPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in pts]))
+                elif eff == "iris":
+                    cx, cy, rad = transitions.iris_circle(w, h, pr)
+                    if rad > 0:
+                        path.addEllipse(QtCore.QPointF(cx, cy), rad, rad)
+                else:
+                    deg = transitions.clock_degrees(pr)
+                    if deg > 0:
+                        rad = transitions.iris_circle(w, h, 1)[2]
+                        path.moveTo(w / 2.0, h / 2.0)
+                        path.arcTo(QtCore.QRectF(w / 2.0 - rad, h / 2.0 - rad, 2 * rad, 2 * rad), 90, -deg)
+                        path.closeSubpath()
+                if not path.isEmpty():
+                    p.setClipPath(path)
+                    p.drawPixmap(r, new)
+                return
             else:
                 rects = [transitions.open_rect(d, w, h, pr)]
             reg = QtGui.QRegion()

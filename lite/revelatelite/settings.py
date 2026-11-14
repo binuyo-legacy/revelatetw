@@ -13,6 +13,9 @@ DEFAULTS = {
     "bold": False,
     "bg_color": "",          # "" = use the theme colour, else "#rrggbb"
     "text_color": "",        # "" = use the theme colour
+    "outline_on": False,     # draw an outline around the verse text (preview and screen alike)
+    "outline_color": "",     # "" = automatic (dark outline on light text, light on dark text), else "#rrggbb"
+    "outline_px": 3,         # thickness 1..10 (scales with screen height, so preview matches the projector)
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -20,7 +23,7 @@ DEFAULTS = {
     "bg_image": "",          # full path of the chosen picture ("" = none)
     "image_mode": "fill",    # fill | fit | stretch | tile
     "image_dim": 30,         # percent darkening over a picture, keeps text readable
-    "transition_effect": "dissolve",   # cut | fade | dissolve | wipe | slide | blinds | open (see transitions.py)
+    "transition_effect": "dissolve",   # cut | fade | dissolve | wipe | slide | blinds | open | checkerboard | diagonal | iris | zoom | mosaic | clock (see transitions.py)
     "transition_ms": 400,    # 0 = instant
     "transition_dir": "auto",          # auto | left | right | up | down
     "transition_onoff": True,          # animate Project / Project Off
@@ -63,6 +66,45 @@ def resolve_colors(theme, bg_color="", text_color=""):
     return bg, fg, refc
 
 
+OUTLINE_MIN, OUTLINE_MAX = 1, 10
+
+
+def resolve_outline(fg, outline_color=""):
+    """Outline colour to draw: the chosen one, or automatic (opposite of the text colour)."""
+    return outline_color if valid_color(outline_color) else best_text_on(fg if valid_color(fg) else "#ffffff")
+
+
+def outline_pixels(height, thickness):
+    """Outline radius in pixels for a surface of this height (same look in preview and projector)."""
+    t = max(OUTLINE_MIN, min(OUTLINE_MAX, int(thickness)))
+    return max(1, int(round(height * t / 900.0)))
+
+
+def _lum(c):
+    r, g, b = (int(c[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def outline_hint(fg, outline_color):
+    """Plain-words warning when a chosen outline colour is too close to the text colour, else ''."""
+    if valid_color(outline_color) and valid_color(fg) and abs(_lum(outline_color) - _lum(fg)) < 70:
+        return "The outline is almost the same colour as the text, so it will not help. Pick a darker or lighter outline."
+    return ""
+
+
+def outline_offsets(r):
+    """Points on a ring (plus the inner ring for thick outlines) used to stamp the outline."""
+    import math
+    pts = set()
+    for rad in ([r] if r <= 2 else [r, max(1, r // 2)]):
+        steps = 8 if rad <= 1 else 16
+        for i in range(steps):
+            a = 2 * math.pi * i / steps
+            pts.add((int(round(rad * math.cos(a))), int(round(rad * math.sin(a)))))
+    pts.discard((0, 0))
+    return sorted(pts)
+
+
 def best_text_on(bg):
     """White or near-black, whichever reads better on bg ('#rrggbb')."""
     r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
@@ -92,6 +134,9 @@ def load(path):
     for k in ("bg_color", "text_color"):
         if data[k] and not valid_color(data[k]):
             data[k] = ""
+    if data["outline_color"] and not valid_color(data["outline_color"]):
+        data["outline_color"] = ""
+    data["outline_px"] = max(OUTLINE_MIN, min(OUTLINE_MAX, data["outline_px"]))
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
     from . import background, transitions
