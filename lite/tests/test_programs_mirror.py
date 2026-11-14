@@ -331,3 +331,153 @@ class ProgramsMirror(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class ProgramsTransitionNoFlash(ProgramsMirror):
+    """Project ON / OFF transitions: Programs must fill its own box on EVERY frame (no projector-shaped
+    black side bars), while the real projector keeps its native size and aspect."""
+    EFFECTS = ("fade", "dissolve", "wipe", "slide", "checkerboard")
+
+    def tearDown(self):
+        for w in getattr(self, "_made", []):
+            try:
+                w.proj.finish_transition()
+                w.proj.hide()
+                w.close()
+            except RuntimeError:
+                pass
+        self._made = []
+        self.qa.processEvents()
+
+    def setup_anim(self, eff, ms=2000):
+        w = self.make()
+        self.__dict__.setdefault("_made", []).append(w)
+        w.st.update(transition_effect=eff, proj_on_effect=eff, proj_off_effect=eff,
+                    transition_ms=ms, transition_onoff=True, transition_switch=True)
+        w.proj.resize(960, 540)           # projector shape differs from the Programs box
+        w.programs.resize(300, 300)       # clearly not the projector's aspect: any fitted frame has bars
+        self.qa.processEvents()
+        return w
+
+    def bars_at(self, w):
+        """True if the Programs panel shows black side bars (pure black at the left/right edges while
+        the middle is not black)."""
+        im = w.programs.grab().toImage()
+        r = w.programs.rect()
+        black = 0xff000000
+        y = r.height() // 2
+        edges = (im.pixel(1, y) == black and im.pixel(r.width() - 2, y) == black)
+        mid = im.pixel(r.width() // 2, 2) != black
+        return edges and mid
+
+    def sweep(self, w, collect):
+        tx = w.proj._tx
+        self.assertIsNotNone(tx)
+        for pr in (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0):
+            tx["p"] = pr
+            w.proj.update()
+            self.qa.processEvents()
+            collect(pr)
+
+    def test_on_transition_never_shows_projector_shaped_bars(self):
+        for eff in self.EFFECTS:
+            w = self.setup_anim(eff)
+            w.lookup("John 3:16")
+            w.project()
+            self.assertTrue(w.proj.transitioning, eff)
+            tx = w.proj._tx
+            # box pictures are exactly the Programs box, projector pictures stay native
+            self.assertEqual(tx["m_old"].size(), w.programs.size(), eff)
+            self.assertEqual(tx["m_new"].size(), w.programs.size(), eff)
+            self.assertEqual(tx["old"].size(), w.proj.size(), eff)
+            self.assertEqual(tx["new"].size(), w.proj.size(), eff)
+            seen = []
+            self.sweep(w, lambda pr: seen.append(self.bars_at(w)))
+            self.assertFalse(any(seen), eff)
+            w.proj.finish_transition()
+            self.qa.processEvents()
+            self.assertFalse(self.bars_at(w), eff)
+            self.assertTrue(self.center_matches(w), eff)
+            self.tearDown()
+
+    def test_off_transition_never_shows_projector_shaped_bars(self):
+        for eff in self.EFFECTS:
+            w = self.setup_anim(eff)
+            w.lookup("John 3:16")
+            w.st["transition_ms"] = 0
+            w.project()
+            self.qa.processEvents()
+            w.st["transition_ms"] = 2000
+            w.project_off()
+            self.assertTrue(w.proj.transitioning, eff)
+            tx = w.proj._tx
+            self.assertEqual(tx["m_old"].size(), w.programs.size(), eff)
+            self.assertEqual(tx["m_new"].size(), w.programs.size(), eff)
+            seen = []
+            self.sweep(w, lambda pr: seen.append(self.bars_at(w)))
+            self.assertFalse(any(seen), eff)
+            w.proj.finish_transition()
+            self.qa.processEvents()
+            self.assertFalse(w.proj.isVisible())
+            self.assertEqual(w.programs.grab().toImage().pixel(1, 1), 0xff000000)
+            self.tearDown()
+
+    def test_first_frame_after_project_is_not_native_shape(self):
+        """The very first frames (window shown, animation not yet stepped) are box-shaped / black, never a native frame."""
+        w = self.setup_anim("dissolve")
+        frames = []
+        w.proj.frameChanged.connect(lambda: frames.append(self.bars_at(w)))
+        w.lookup("John 3:16")
+        w.project()
+        self.qa.processEvents()
+        self.assertTrue(frames)
+        self.assertFalse(any(frames))
+
+    def test_box_resize_mid_transition_stays_box_shaped(self):
+        w = self.setup_anim("dissolve")
+        w.lookup("John 3:16")
+        w.project()
+        w.proj._tx["p"] = 0.8
+        w.programs.resize(420, 250)
+        self.qa.processEvents()
+        self.assertEqual(w.proj.mirror_size, w.programs.size())
+        self.assertFalse(self.bars_at(w))
+        w.proj.finish_transition()
+
+    def test_projector_output_stays_native_size_and_aspect(self):
+        for eff in ("dissolve", "wipe", "slide"):
+            w = self.setup_anim(eff)
+            w.lookup("John 3:16")
+            w.project()
+            tx = w.proj._tx
+            self.assertEqual(tx["old"].size(), w.proj.size())
+            self.assertEqual(tx["new"].size(), w.proj.size())
+            tx["p"] = 0.6
+            pw, ph = w.proj.width(), w.proj.height()
+            im = img_of(lambda p, rect: w.proj.render_frame(p, rect), pw, ph)
+            self.assertEqual(im.size(), QtCore.QSize(pw, ph))
+            # native render is unchanged by Programs: identical with a different Programs box
+            w.programs.resize(500, 200)
+            self.qa.processEvents()
+            im2 = img_of(lambda p, rect: w.proj.render_frame(p, rect), pw, ph)
+            self.assertEqual(im, im2)
+            self.assertEqual(w.proj.size(), QtCore.QSize(pw, ph))
+            w.proj.finish_transition()
+            # still slide on the projector fills its native frame
+            im3 = img_of(lambda p, rect: w.proj.render_frame(p, rect), pw, ph)
+            self.assertNotEqual(im3.pixel(2, ph // 2), 0xff000000)
+            self.assertNotEqual(im3.pixel(pw - 3, ph // 2), 0xff000000)
+            self.tearDown()
+
+    def test_tv_preview_unchanged(self):
+        w = self.setup_anim("dissolve")
+        w.lookup("John 3:16")
+        sz = w.preview.size()
+        before = w.preview.snapshot(sz).toImage()
+        w.project()
+        w.proj._tx["p"] = 0.5
+        w.proj.update()
+        self.qa.processEvents()
+        self.assertEqual(w.preview.snapshot(sz).toImage(), before)
+        w.proj.finish_transition()

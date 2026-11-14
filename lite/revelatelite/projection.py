@@ -470,6 +470,7 @@ class ProjectionWindow(SlideView):
         self._tx = None        # running transition: dict(effect, direction, old, new, p, after)
         self._anim = None
         self._old_was_live = False
+        self.mirror_size = QtCore.QSize()   # size of the Programs box (set by ProgramsView); never used for the real output
 
     # ---- 'Programs' mirror: signal only, no polling, no screenshots ----
     def update(self, *a):
@@ -512,9 +513,16 @@ class ProjectionWindow(SlideView):
         self.finish_transition()
         self._old_was_live = bool(self.live and self.isVisible())
         old = self.snapshot(self.size()) if self._old_was_live else None
+        msize = QtCore.QSize(self.mirror_size)
+        m_old = None
         if plan.animated:
+            # the Programs box gets its OWN pictures, drawn with the same slide layout as the TV preview
+            # at the box's own size, so no transition frame is ever the projector's shape
+            if self._old_was_live and msize.isValid() and msize.width() > 0 and msize.height() > 0:
+                m_old = self.snapshot(msize)
             self._tx = {"old": old, "new": None, "p": 0.0, "effect": plan.effect,
-                        "direction": plan.direction, "after": after}
+                        "direction": plan.direction, "after": after,
+                        "m_size": msize, "m_old": m_old, "m_new": None}
         change()
         if not plan.animated:
             if after:
@@ -526,6 +534,12 @@ class ProjectionWindow(SlideView):
             old.fill(QtGui.QColor("#000000"))
         self._tx["old"] = old
         self._tx["new"] = self.snapshot(size)
+        if msize.isValid() and msize.width() > 0 and msize.height() > 0:
+            if m_old is None:
+                m_old = QtGui.QPixmap(msize)
+                m_old.fill(QtGui.QColor("#000000"))
+            self._tx["m_old"] = m_old
+            self._tx["m_new"] = self.snapshot(msize)
         a = QtCore.QVariantAnimation(self)
         a.setStartValue(0.0)
         a.setEndValue(1.0)
@@ -570,21 +584,40 @@ class ProjectionWindow(SlideView):
 
         A still slide is drawn straight into r, exactly the way the in-app TV preview draws it:
         the slide engine scales to the height of the rectangle it is given, so the slide fills
-        its box without stretching the text. A running transition has already been rendered at
-        the projector's full-screen pixels, so the frame is painted into that same shape, fitted
-        inside r, and the projector's outside area stays black.
+        its box without stretching the text. A running transition is drawn from pictures that were
+        rendered at the Programs box's own size with that same slide layout (never the projector's
+        shape), so every frame, first to last, fills the box with no black side bars. The real
+        projector keeps its own native-size frames (render_frame).
         """
         tx = self._tx
-        if tx is None:
-            p.save()
-            p.translate(r.x(), r.y())
-            p.setClipRect(QtCore.QRect(0, 0, r.width(), r.height()))
-            try:
-                self._draw(p, QtCore.QRect(0, 0, r.width(), r.height()))
-            finally:
-                p.restore()
-            return
-        self.render_frame(p, self.fit_rect(r))
+        p.save()
+        p.translate(r.x(), r.y())
+        p.setClipRect(QtCore.QRect(0, 0, r.width(), r.height()))
+        try:
+            local = QtCore.QRect(0, 0, r.width(), r.height())
+            if tx is None:
+                self._draw(p, local)
+            else:
+                old, new = tx.get("m_old"), tx.get("m_new")
+                if old is None and new is None and tx.get("old") is not None:
+                    old = self._mirror_pic(tx, "old", local)     # no box pictures yet: never show the projector shape
+                if new is None and tx.get("new") is not None:
+                    new = self._mirror_pic(tx, "new", local)
+                if old is not None and old.size() != local.size():
+                    old = old.scaled(local.size(), QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+                if new is not None and new.size() != local.size():
+                    new = self.snapshot(local.size()) if tx.get("m_new") is not None else \
+                        new.scaled(local.size(), QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
+                self._render_local(p, local, old, new)
+        finally:
+            p.restore()
+
+    def _mirror_pic(self, tx, key, local):
+        """Fallback only (Programs size unknown when the transition began): stretch the projector picture to the box."""
+        pm = tx.get(key)
+        if pm is None:
+            return None
+        return pm.scaled(local.size(), QtCore.Qt.IgnoreAspectRatio, QtCore.Qt.SmoothTransformation)
 
     def fit_rect(self, r):
         """The projector's own shape, fitted inside rect r (letterboxed if the shapes differ)."""
@@ -597,13 +630,15 @@ class ProjectionWindow(SlideView):
         h = max(1, w * ph // pw)
         return QtCore.QRect(r.x(), r.y() + (r.height() - h) // 2, w, h)
 
-    def _render_local(self, p, r):
+    def _render_local(self, p, r, old=None, new=None):
         tx = self._tx
         if tx is None:
             return self._draw(p, r)
         w, h = r.width(), r.height()
         p.fillRect(r, QtGui.QColor("#000000"))
-        old, new, pr, d = tx["old"], tx["new"], tx["p"], tx["direction"]
+        pr, d = tx["p"], tx["direction"]
+        if old is None and new is None:
+            old, new = tx["old"], tx["new"]
         if old is None:      # first frame of a show: black, nothing leaks before the animation starts
             return
         eff = tx["effect"]
@@ -738,7 +773,23 @@ class ProgramsView(QtWidgets.QWidget):
         sp = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
         sp.setHeightForWidth(True)
         self.setSizePolicy(sp)
-        proj.frameChanged.connect(self.update)
+        proj.frameChanged.connect(self._on_frame)
+        self._sync_size()
+
+    def _sync_size(self):
+        """Tell the projector how big this box is, so transitions are drawn for THIS box (Programs only)."""
+        self.proj.mirror_size = QtCore.QSize(self.width(), self.height())
+
+    def _on_frame(self):
+        self.update()
+
+    def resizeEvent(self, e):
+        self._sync_size()
+        super().resizeEvent(e)
+
+    def showEvent(self, e):
+        self._sync_size()
+        super().showEvent(e)
 
     def hasHeightForWidth(self):
         return True
@@ -753,7 +804,7 @@ class ProgramsView(QtWidgets.QWidget):
         """The whole inner display area: a still slide adapts to this widget's own shape, the same
         way the in-app TV preview does (the slide engine scales to the height of the rect it is
         given, so the slide fills the box without distorting the text). A running transition is
-        still drawn at the projector's own shape, fitted inside this area."""
+        drawn from pictures rendered at this box's own size (same layout as a still slide)."""
         return self.rect()
 
     def paintEvent(self, _):
