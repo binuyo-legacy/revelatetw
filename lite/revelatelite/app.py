@@ -6,37 +6,14 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg, songthemes, transitions as trn
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, theme, transitions as trn
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
 from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong, import_song_json, export_songs, safe_filename
 
-QSS = """
-QWidget {{ background:{bg}; color:{text}; font-size:{body}px; }}
-QLineEdit, QComboBox, QListWidget, QSpinBox {{ background:{inp}; border:1px solid {bc}; padding:6px; border-radius:4px; }}
-QListWidget::item {{ padding:6px; }}
-QListWidget::item:selected {{ background:{sel}; color:{accent}; }}
-QPushButton {{ background:{raised}; border:1px solid {bc}; padding:7px 14px; border-radius:4px; }}
-QPushButton:hover {{ border-color:{bh}; }}
-QPushButton:disabled {{ color:{dis}; }}
-QPushButton#primary {{ background:{accent}; color:{on}; border:none; font-weight:bold; }}
-QPushButton#primary:hover {{ background:{acch}; }}
-QPushButton#primary:disabled {{ background:{raised}; color:{dis}; }}
-QFrame#card {{ background:{alt}; border:1px solid {bcard}; border-radius:6px; }}
-QLabel {{ background:transparent; }}
-QLabel#ref {{ color:{accent}; font-size:{emph}px; font-weight:bold; }}
-QLabel#verse {{ font-size:{trans}px; }}
-QLabel#status, QLabel#hint {{ color:{muted}; font-size:{cap}px; }}
-QLabel#live {{ color:{lt}; background:{lbg}; border:1px solid {lb}; border-radius:4px; padding:3px 8px; font-weight:bold; }}
-QTabWidget::pane {{ border:1px solid {bcard}; }}
-QTabBar::tab {{ background:{raised}; padding:6px 14px; border:1px solid {bc}; }}
-QTabBar::tab:selected {{ color:{accent}; border-bottom-color:{accent}; }}
-""".format(bg=C.bg, text=C.text, body=T.body, inp=C.surface_input, bc=C.border_control, sel=C.selected_bg,
-           accent=C.accent, raised=C.surface_raised, bh=C.border_hover, dis=C.text_disabled, on=C.accent_on,
-           acch=C.accent_hover, alt=C.surface_alt, bcard=C.border_card, emph=T.emphasis, trans=T.transcript,
-           muted=C.text_muted, cap=T.caption, lt=C.live_on_text, lbg=C.live_on_bg, lb=C.live_on_border)
+QSS = theme.build_qss()
 
 
 SEARCH_DELAY_MS = 200   # typing pause before live word search runs
@@ -342,7 +319,8 @@ class Main(QtWidgets.QWidget):
         self.ref_lbl = QtWidgets.QLabel("")
         self.ref_lbl.setObjectName("ref")
         rightc.addWidget(cap)
-        rightc.addWidget(self.preview)
+        self.tv_frame = theme.TvFrame(self.preview)   # cosmetic bezel only; the preview inside is unchanged
+        rightc.addWidget(self.tv_frame)
         self.ref_lbl.hide()      # the preview already shows the reference
         nav = QtWidgets.QHBoxLayout()
         self.prev_b = QtWidgets.QPushButton("< Previous")
@@ -1232,6 +1210,7 @@ class Main(QtWidgets.QWidget):
         live = self.proj.live and self.proj.isVisible()
         self.preview.on_air = live
         self.preview.update()
+        self.tv_frame.set_on_air(live)
         self.blank_b.setEnabled(live)
         if not live:
             self.live_badge.setText("")
