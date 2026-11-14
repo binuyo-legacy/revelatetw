@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg
+from . import __version__, background as bgm, paths, settings as cfg, transitions as trn
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow
@@ -260,6 +260,33 @@ class Main(QtWidgets.QWidget):
         og.addRow("Picture size", self.imgmode_cb)
         og.addRow("Darken picture", self.imgdim_sp)
         og.addRow("", self.img_lbl)
+        self.tfx_cb = QtWidgets.QComboBox()
+        for k, label, _d in trn.EFFECTS:
+            self.tfx_cb.addItem(label, k)
+        self.tfx_cb.setCurrentIndex(max(self.tfx_cb.findData(self.st["transition_effect"]), 0))
+        self.tdir_cb = QtWidgets.QComboBox()
+        for k, label in trn.DIRECTIONS:
+            self.tdir_cb.addItem(label, k)
+        self.tdir_cb.setCurrentIndex(max(self.tdir_cb.findData(self.st["transition_dir"]), 0))
+        self.tms_sp = QtWidgets.QSpinBox()
+        self.tms_sp.setRange(0, trn.MS_MAX)
+        self.tms_sp.setSingleStep(trn.MS_STEP)
+        self.tms_sp.setSuffix(" ms")
+        self.tms_sp.setValue(self.st["transition_ms"])
+        self.tms_sp.setToolTip("How long the effect takes. 0 = instant.")
+        self.tonoff_cb = QtWidgets.QCheckBox("Animate Project and Project Off")
+        self.tonoff_cb.setChecked(self.st["transition_onoff"])
+        self.tsw_cb = QtWidgets.QCheckBox("Animate when the screen changes (Next / Previous, then Project)")
+        self.tsw_cb.setChecked(self.st["transition_switch"])
+        self.tfx_lbl = QtWidgets.QLabel("")
+        self.tfx_lbl.setObjectName("hint")
+        self.tfx_lbl.setWordWrap(True)
+        og.addRow("Screen effect", self.tfx_cb)
+        og.addRow("Effect direction", self.tdir_cb)
+        og.addRow("Effect speed", self.tms_sp)
+        og.addRow("", self.tonoff_cb)
+        og.addRow("", self.tsw_cb)
+        og.addRow("", self.tfx_lbl)
         note = QtWidgets.QLabel("Changes show in the preview first. Click Project to send them to the screen.")
         note.setObjectName("hint")
         note.setWordWrap(True)
@@ -371,6 +398,10 @@ class Main(QtWidgets.QWidget):
         self.gswap_b.clicked.connect(self.swap_grad)
         self.img_b.clicked.connect(self.choose_image)
         self.imgx_b.clicked.connect(self.remove_image)
+        for sig in (self.tfx_cb.currentIndexChanged, self.tdir_cb.currentIndexChanged, self.tms_sp.valueChanged,
+                    self.tonoff_cb.stateChanged, self.tsw_cb.stateChanged):
+            sig.connect(self._transition_changed)
+        self._sync_transition_controls()
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
@@ -518,6 +549,25 @@ class Main(QtWidgets.QWidget):
         self._apply_style()
         self.save_settings()
 
+    def _transition_changed(self, *_):
+        """Only stores the choice. Nothing is animated or sent to the screen from here."""
+        self.st["transition_effect"] = self.tfx_cb.currentData()
+        self.st["transition_dir"] = self.tdir_cb.currentData()
+        self.st["transition_ms"] = self.tms_sp.value()
+        self.st["transition_onoff"] = self.tonoff_cb.isChecked()
+        self.st["transition_switch"] = self.tsw_cb.isChecked()
+        self._sync_transition_controls()
+        self.save_settings()
+
+    def _sync_transition_controls(self):
+        eff = self.tfx_cb.currentData()
+        self.tdir_cb.setEnabled(eff in trn.DIRECTED)
+        self.tms_sp.setEnabled(eff != "cut")
+        text = trn.describe(eff)
+        if eff == "cut" or self.tms_sp.value() == 0:
+            text = "Instant: the screen changes at once."
+        self.tfx_lbl.setText(text + " Only the full-screen display animates; the preview always shows the final result at once.")
+
     def save_settings(self):
         try:
             cfg.save(self.settings_path, self.st)
@@ -622,6 +672,7 @@ class Main(QtWidgets.QWidget):
     def _set_slide(self, slide):
         """The ONE place the preview content changes (verses and song slides both come through here)."""
         self.slide = slide
+        self._step_hint = 0
         if slide:
             self.preview.show_slide(*slide)
         else:
@@ -649,6 +700,12 @@ class Main(QtWidgets.QWidget):
         self.lookup(self.box.text(), quiet=True)
 
     def step(self, delta):
+        before = self.slide
+        self._step_to(delta)
+        if self.slide != before:
+            self._step_hint = delta       # lets Project pick the effect direction (Next / Previous)
+
+    def _step_to(self, delta):
         if self.cur is None and self.song is not None and self.slide:
             r = self.slide_list.currentRow() + delta
             if 0 <= r < self.slide_list.count():
@@ -938,35 +995,55 @@ class Main(QtWidgets.QWidget):
 
     _sent_style = None
 
+    _step_hint = 0
+
     def project(self):
-        """Send exactly what the preview shows (text and look) to the full-screen display."""
+        """Send exactly what the preview shows (text and look) to the full-screen display.
+        The screen effect (if any) plays on the full-screen display only."""
         pair = self._preview_pair()
         if not pair:
             self.say("Look up a verse first, then press Project.")
             return
         ref, body, credit = pair
         args = getattr(self, "_style_args", None)
-        if args:
-            self.proj.set_style(*args)
-            self._sent_style = args
-        self.proj.set_content(ref, body, credit)
-        windowed = False
-        if not self.proj.isVisible():
-            idx, ext = self.proj.open_on(self.st["display"], self)
-            windowed = not ext
+        was_live = bool(self.proj.live and self.proj.isVisible())
+        same = was_live and (ref, body, credit) == (self.proj.ref, self.proj.body, self.proj.credit) \
+            and args == self._sent_style
+        plan = trn.plan(trn.SWITCH if was_live else trn.ON, self.st, self._step_hint, same_picture=same)
+        windowed = []
+
+        def change():
+            if args:
+                self.proj.set_style(*args)
+                self._sent_style = args
+            self.proj.set_content(ref, body, credit)
+            if not self.proj.isVisible():
+                idx, ext = self.proj.open_on(self.st["display"], self)
+                windowed.append(not ext)
+
+        self.proj.transition(plan, change)
+        self._step_hint = 0
         self._refresh_live_state()
-        if windowed:
+        if windowed and windowed[0]:
             self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
         else:
             self.say("On screen: " + ref)
 
     def project_off(self):
         """Close the full-screen display. Preview, selection, service list and settings stay as they are."""
-        self.proj.blank()
-        self.proj.hide()
+        was_live = bool(self.proj.live and self.proj.isVisible())
+        plan = trn.plan(trn.OFF, self.st, 0, same_picture=not was_live)
+
+        def change():
+            self.proj.blank()
+
+        def after():
+            self.proj.hide()
+            self.proj.set_style(*self._style_args)
+
+        self.proj.transition(plan, change, after)
         self._sent_style = None
         self._refresh_live_state()
-        self.proj.set_style(*self._style_args)
         self.say("Projection is off. Your preview is unchanged.")
 
     blank = project_off   # old name

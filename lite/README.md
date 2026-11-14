@@ -31,6 +31,18 @@ numbers from the checklist below.
   saved, and the preview and full-screen display use the same font.
   If a picture is bright enough that white text would be hard to read, Settings shows a hint to raise Darken picture.
   Tiled and scaled copies are cached per picture, so repainting does not redo work on a 2 GB PC.
+- **Screen effects (transitions)** in Settings: Cut, Fade through black, Dissolve, Wipe, Slide (push), Blinds, Open from centre.
+  Pick the effect, speed (0 to 3000 ms, 0 = instant) and direction (follow Next/Previous, or left/right/up/down; used by Wipe, Slide,
+  Blinds and Open). Two tick boxes turn the effect off for Project / Project Off, or for screen changes while live.
+  - Fade: old picture fades out, then the new one fades in. Dissolve: new picture fades in over the old one.
+  - Wipe: a straight edge sweeps across. Slide: old and new push across together. Blinds: 8 slats open one after another.
+    Open: the new picture opens from the middle outwards.
+  - Plays ONLY on the full-screen display, when you click Project (comes on), Project while live (switches, direction follows whether you
+    pressed Next or Previous before Project) or Project Off (goes away). Enter, Next/Previous, edits and settings still change the preview
+    only, and the preview never animates. Same picture projected again = no animation.
+  - Light on old PCs: two snapshots of the screen are drawn with plain Qt painting (opacity, clipping), no GPU effects, nothing is
+    re-laid-out each frame. Cut, 0 ms or a ticked-off box = instant.
+  - Code: `revelatelite/transitions.py` (pure maths, tested), `projection.py` (`ProjectionWindow.transition`). Tests: `tests/test_transitions.py`.
 - If only one screen is found, the projection opens as a normal window so you can still test.
 - Yoruba verses show the required credit line on screen (CC BY-SA 4.0). KJV/ASV/WEB are public domain.
 - Settings and the service list live in `%APPDATA%\RevelateTWLite`.

@@ -20,6 +20,11 @@ DEFAULTS = {
     "bg_image": "",          # full path of the chosen picture ("" = none)
     "image_mode": "fill",    # fill | fit | stretch | tile
     "image_dim": 30,         # percent darkening over a picture, keeps text readable
+    "transition_effect": "dissolve",   # cut | fade | dissolve | wipe | slide | blinds | open (see transitions.py)
+    "transition_ms": 400,    # 0 = instant
+    "transition_dir": "auto",          # auto | left | right | up | down
+    "transition_onoff": True,          # animate Project / Project Off
+    "transition_switch": True,         # animate a change while already live (Next / Previous, then Project)
 }
 
 # Fonts that ship with Windows 8.1 (nothing to download), grouped for the Settings picker.
@@ -89,8 +94,9 @@ def load(path):
             data[k] = ""
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
-    from . import background
+    from . import background, transitions
     data.update(background.clean(data))
+    data.update(transitions.clean(data))
     return data
 
 

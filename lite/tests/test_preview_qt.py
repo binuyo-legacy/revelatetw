@@ -26,7 +26,9 @@ class PreviewQt(unittest.TestCase):
         d = tempfile.mkdtemp()
         paths.user_dir = lambda: d
         lite_app.paths.user_dir = lambda: d
-        return lite_app.Main()
+        w = lite_app.Main()
+        w.st["transition_ms"] = 0      # these tests are about content, so screen changes are instant (see test_transitions.py)
+        return w
 
     def test_preview_follows_lookup_and_style(self):
         lite_app.Main._installed_fonts = staticmethod(lambda: ["Arial", "Georgia"])

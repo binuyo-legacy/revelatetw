@@ -1,7 +1,7 @@
 """The projection window: borderless, goes to the extended display, auto-sizes the verse."""
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-from . import background, layout, settings
+from . import background, layout, settings, transitions
 
 
 class SlideView(QtWidgets.QWidget):
@@ -42,6 +42,18 @@ class SlideView(QtWidgets.QWidget):
 
     # ---- drawing ----
     def paintEvent(self, _):
+        p = QtGui.QPainter(self)
+        self._draw(p, self.rect())
+
+    def snapshot(self, size):
+        """The slide as it looks right now, drawn into a plain pixmap (used by transitions)."""
+        pm = QtGui.QPixmap(size)
+        p = QtGui.QPainter(pm)
+        self._draw(p, QtCore.QRect(0, 0, size.width(), size.height()))
+        p.end()
+        return pm
+
+    def _draw(self, p, rect):
         kind = self.bg_spec[0]
         bg, fg, refc = settings.resolve_colors(self.theme, self.bg_color, self.text_color)
         if kind == "gradient":       # text colour follows the average of the two colours
@@ -49,13 +61,12 @@ class SlideView(QtWidgets.QWidget):
         elif kind == "image" and background.load_image(self.bg_spec[4])[0] is not None:
             bg, fg, refc = settings.resolve_colors(self.theme, "#0b0f19", self.text_color)
             bg = self.bg_color if settings.valid_color(self.bg_color) else bg
-        p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.TextAntialiasing)
         if not self.live or not self.body:
-            p.fillRect(self.rect(), QtGui.QColor("#000000"))
+            p.fillRect(rect, QtGui.QColor("#000000"))
             return
-        self._bgp.paint(p, self.rect(), self.bg_spec, bg)
-        w, h = self.width(), self.height()
+        self._bgp.paint(p, rect, self.bg_spec, bg)
+        w, h = rect.width(), rect.height()
         mx, my = int(w * 0.07), int(h * 0.06)
         area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)
         ref_h = 0
@@ -147,6 +158,114 @@ class ProjectionWindow(SlideView):
         self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint)
         self.resize(960, 540)
         self.setCursor(QtCore.Qt.BlankCursor)
+        self._tx = None        # running transition: dict(effect, direction, old, new, p, after)
+        self._anim = None
+        self._old_was_live = False
+
+    # ---- transitions (only this window; the in-app preview is never animated) ----
+    @property
+    def transitioning(self):
+        return self._tx is not None
+
+    def finish_transition(self):
+        """Jump to the end of a running transition (also runs its 'after' step, e.g. hide)."""
+        tx, self._tx = self._tx, None
+        if self._anim is not None:
+            a, self._anim = self._anim, None
+            a.stop()
+            a.deleteLater()
+        if tx is not None:
+            self.update()
+            if tx.get("after"):
+                tx["after"]()
+
+    def transition(self, plan, change, after=None):
+        """Run change() (which applies the new content / shows the window) with an animation.
+        old picture = what is on screen now (black if the window is hidden); new = after change().
+        after() runs when the animation ends (immediately for an instant plan)."""
+        self.finish_transition()
+        self._old_was_live = bool(self.live and self.isVisible())
+        old = self.snapshot(self.size()) if self._old_was_live else None
+        if plan.animated:
+            self._tx = {"old": old, "new": None, "p": 0.0, "effect": plan.effect,
+                        "direction": plan.direction, "after": after}
+        change()
+        if not plan.animated:
+            if after:
+                after()
+            return
+        size = self.size()
+        if old is None:
+            old = QtGui.QPixmap(size)
+            old.fill(QtGui.QColor("#000000"))
+        self._tx["old"] = old
+        self._tx["new"] = self.snapshot(size)
+        a = QtCore.QVariantAnimation(self)
+        a.setStartValue(0.0)
+        a.setEndValue(1.0)
+        a.setDuration(plan.ms)
+        a.valueChanged.connect(self._tx_step)
+        a.finished.connect(self.finish_transition)
+        self._anim = a
+        a.start()
+        self.update()
+
+    def resizeEvent(self, e):
+        tx = self._tx
+        if tx is not None and tx.get("new") is not None and self.width() > 0 and self.height() > 0:
+            tx["new"] = self.snapshot(self.size())      # went full screen mid-animation: redraw crisp
+            if tx["old"] is not None and tx["old"].size() != self.size() and not self._old_was_live:
+                tx["old"] = QtGui.QPixmap(self.size())
+                tx["old"].fill(QtGui.QColor("#000000"))
+        super().resizeEvent(e)
+
+    def _tx_step(self, v):
+        if self._tx is not None:
+            self._tx["p"] = transitions.ease(float(v))
+            self.update()
+
+    def paintEvent(self, e):
+        tx = self._tx
+        if tx is None:
+            return super().paintEvent(e)
+        p = QtGui.QPainter(self)
+        r = self.rect()
+        w, h = r.width(), r.height()
+        p.fillRect(r, QtGui.QColor("#000000"))
+        old, new, pr, d = tx["old"], tx["new"], tx["p"], tx["direction"]
+        if old is None:      # first frame of a show: black, nothing leaks before the animation starts
+            return
+        eff = tx["effect"]
+        if new is None:
+            p.drawPixmap(r, old)
+        elif eff == "fade":
+            a_old, a_new = transitions.fade_alphas(pr)
+            p.setOpacity(a_old)
+            p.drawPixmap(r, old)
+            p.setOpacity(a_new)
+            p.drawPixmap(r, new)
+        elif eff == "dissolve":
+            p.drawPixmap(r, old)
+            p.setOpacity(transitions.dissolve_alpha(pr))
+            p.drawPixmap(r, new)
+        elif eff == "slide":
+            (ox, oy), (nx, ny) = transitions.slide_offsets(d, w, h, pr)
+            p.drawPixmap(QtCore.QRect(ox, oy, w, h), old)
+            p.drawPixmap(QtCore.QRect(nx, ny, w, h), new)
+        else:                # wipe, blinds, open: new picture shown through a clip over the old one
+            p.drawPixmap(r, old)
+            if eff == "wipe":
+                rects = [transitions.wipe_rect(d, w, h, pr)]
+            elif eff == "blinds":
+                rects = transitions.blinds_rects(d, w, h, pr)
+            else:
+                rects = [transitions.open_rect(d, w, h, pr)]
+            reg = QtGui.QRegion()
+            for x, y, rw, rh in rects:
+                if rw > 0 and rh > 0:
+                    reg = reg.united(QtGui.QRegion(x, y, rw, rh))
+            p.setClipRegion(reg)
+            p.drawPixmap(r, new)
 
     # ---- keys: the full-screen window takes the keyboard, so Esc/F5 must work here too ----
     def keyPressEvent(self, e):
@@ -158,8 +277,15 @@ class ProjectionWindow(SlideView):
             super().keyPressEvent(e)
 
     def closeEvent(self, e):
+        self._tx_after_cancel()
         e.accept()
         self.closedByUser.emit()
+
+    def _tx_after_cancel(self):
+        """Window is closing: drop a running transition without running its after-step."""
+        if self._tx is not None:
+            self._tx["after"] = None
+        self.finish_transition()
 
     # ---- placing on a monitor ----
     def screen_rects(self):

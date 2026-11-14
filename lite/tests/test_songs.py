@@ -78,7 +78,9 @@ class Shared(unittest.TestCase):
         lite_app.paths.user_dir = lambda: d
         lib = S.SongLibrary(os.path.join(d, "songs"))
         lib.save(S.Song("Amazing Grace", "Newton", S.split_lyrics(LYR)))
-        return lite_app.Main()
+        w = lite_app.Main()
+        w.st["transition_ms"] = 0      # these tests are about content, so screen changes are instant (see test_transitions.py)
+        return w
 
     def test_songs_listed_and_slide_goes_to_the_same_preview(self):
         w = self.make()
