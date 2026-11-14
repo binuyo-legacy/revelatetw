@@ -8,6 +8,7 @@ from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn, versethemes
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, check_reference, partial_problem, _is_bare_ordinal, _has_chapter_number
+from .booklist import BookBrowser
 from .hintfade import HintFade
 from .refedit import RefEdit
 from .projection import PreviewView, ProgramsView, ProjectionWindow, SlideView
@@ -124,6 +125,8 @@ class Main(QtWidgets.QWidget):
         sl = QtWidgets.QWidget()
         sv = QtWidgets.QHBoxLayout(sl)
         sv.addWidget(self.service_list, 1)
+        self.book_browser = BookBrowser()      # OT/NT books of the chosen Bible, between the list and its buttons
+        sv.addWidget(self.book_browser)
         side = QtWidgets.QVBoxLayout()
         self.up_b, self.down_b, self.rm_b = (QtWidgets.QPushButton(x) for x in ("Move up", "Move down", "Remove"))
         self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
@@ -397,6 +400,8 @@ class Main(QtWidgets.QWidget):
         self._sync_bg_controls()
         self.refresh_displays()
         self.refresh_service_list()
+        self.refresh_books()
+        self.book_browser.bookChosen.connect(self.pick_book)
         self.refresh_songs()
 
         go.clicked.connect(lambda: self.lookup(self.box.text()))
@@ -1269,8 +1274,33 @@ class Main(QtWidgets.QWidget):
             return
         self.lookup(format_reference(*new))
 
+    def refresh_books(self):
+        """Fill the book browser from the selected translation (only the books it has)."""
+        t = self.tr_name()
+        try:
+            ids = self.bible.available_books(t) if t else []
+        except Exception:
+            ids = []
+        self.book_browser.set_books(ids)
+
+    def pick_book(self, book_id):
+        """A book was clicked in the browser: put its full name in the reference box, ready for a
+        chapter. Same state as accepting a book suggestion while typing, so chapter/verse typing and
+        Left/Right highlighting carry on as usual. Preview and projector are not touched."""
+        t = self.tr_name()
+        if not t or self.bible.last_chapter(t, book_id) < 1:
+            return
+        text = book_name(book_id) + " "
+        self.clear_ref_hint()
+        self.box.forget_reference()
+        self.box.setText(text)
+        self.box.setFocus()
+        self.box.setCursorPosition(len(text))
+        self.show_suggestions(text)
+
     def on_translation(self, *_):
         self.st["translation"] = self.tr_name()
+        self.refresh_books()
         if self.search_box.text().strip():
             self.do_search()    # keep the word-search results in the chosen translation
         if self.cur is None and self.song is not None and self.slide:
@@ -1555,6 +1585,7 @@ class Main(QtWidgets.QWidget):
         if want in self.bible.translations():
             self.trans.setCurrentText(want)
         self.trans.blockSignals(False)
+        self.refresh_books()
         self.say("Added %s. Choose it from the list at the top to use it." % select if select else "Bible list updated.")
 
     # ---------------- projection ----------------

@@ -308,6 +308,11 @@ class BibleStore:
             "SELECT MAX(verse) FROM verses WHERE book_id=? AND chapter=?", (book, chapter)).fetchone()
         return row[0] or 0
 
+    def available_books(self, translation):
+        """Book ids (1..66, canonical order) that this pack actually has verses for."""
+        rows = self._db(translation).execute("SELECT DISTINCT book_id FROM verses ORDER BY book_id").fetchall()
+        return [r[0] for r in rows if r[0] and 1 <= r[0] <= 66]
+
     def last_chapter(self, translation, book):
         row = self._db(translation).execute(
             "SELECT MAX(chapter) FROM verses WHERE book_id=?", (book,)).fetchone()
