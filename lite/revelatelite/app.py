@@ -293,8 +293,17 @@ class Main(QtWidgets.QWidget):
         self.tfx_lbl = QtWidgets.QLabel("")
         self.tfx_lbl.setObjectName("hint")
         self.tfx_lbl.setWordWrap(True)
-        og.addRow("Screen effect", self.tfx_cb)
+        og.addRow("Screen effect (Next / Previous)", self.tfx_cb)
         og.addRow("Effect direction", self.tdir_cb)
+        self.pon_cb, self.poff_cb = QtWidgets.QComboBox(), QtWidgets.QComboBox()
+        for cb, key, tip in ((self.pon_cb, "proj_on_effect", "Effect when Project turns the full-screen display on."),
+                             (self.poff_cb, "proj_off_effect", "Effect when Project Off turns the full-screen display off.")):
+            for k, label, _d in trn.EFFECTS:
+                cb.addItem(label, k)
+            cb.setCurrentIndex(max(cb.findData(self.st[key]), 0))
+            cb.setToolTip(tip + " Separate from the Screen effect above.")
+        og.addRow("Projection On", self.pon_cb)
+        og.addRow("Projection Off", self.poff_cb)
         og.addRow("Effect speed", self.tms_sp)
         og.addRow("", self.tonoff_cb)
         og.addRow("", self.tsw_cb)
@@ -419,7 +428,8 @@ class Main(QtWidgets.QWidget):
         self.img_b.clicked.connect(self.choose_image)
         self.imgx_b.clicked.connect(self.remove_image)
         for sig in (self.tfx_cb.currentIndexChanged, self.tdir_cb.currentIndexChanged, self.tms_sp.valueChanged,
-                    self.tonoff_cb.stateChanged, self.tsw_cb.stateChanged):
+                    self.tonoff_cb.stateChanged, self.tsw_cb.stateChanged,
+                    self.pon_cb.currentIndexChanged, self.poff_cb.currentIndexChanged):
             sig.connect(self._transition_changed)
         self._sync_transition_controls()
         self._sync_outline()
@@ -947,6 +957,8 @@ class Main(QtWidgets.QWidget):
         """Only stores the choice. Nothing is animated or sent to the screen from here."""
         self.st["transition_effect"] = self.tfx_cb.currentData()
         self.st["transition_dir"] = self.tdir_cb.currentData()
+        self.st["proj_on_effect"] = self.pon_cb.currentData()
+        self.st["proj_off_effect"] = self.poff_cb.currentData()
         self.st["transition_ms"] = self.tms_sp.value()
         self.st["transition_onoff"] = self.tonoff_cb.isChecked()
         self.st["transition_switch"] = self.tsw_cb.isChecked()

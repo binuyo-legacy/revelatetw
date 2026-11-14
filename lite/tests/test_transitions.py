@@ -150,7 +150,7 @@ class WithQt(unittest.TestCase):
 
     def test_every_effect_commits_then_ends_on_final_state(self):
         for eff in T.EFFECT_KEYS:
-            w = self.make(transition_effect=eff, transition_ms=60)
+            w = self.make(transition_effect=eff, proj_on_effect=eff, proj_off_effect=eff, transition_ms=60)
             w.lookup("Rom 8:28")
             w.project()
             self.assertEqual(w.proj.transitioning, eff != "cut")

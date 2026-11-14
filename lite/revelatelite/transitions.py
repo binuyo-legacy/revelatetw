@@ -61,6 +61,9 @@ MS_STEP = 50
 BLIND_COUNT = 8
 
 ON, OFF, SWITCH = "on", "off", "switch"
+# Independent full-screen Projection On / Off effect settings (same choices as EFFECTS).
+PROJ_KEYS = ("proj_on_effect", "proj_off_effect")
+PROJ_KEY_FOR = {ON: "proj_on_effect", OFF: "proj_off_effect"}
 
 
 def describe(effect):
@@ -83,6 +86,9 @@ def clean(data):
     out = {}
     e = data.get("transition_effect")
     out["transition_effect"] = e if e in EFFECT_KEYS else DEFAULT_EFFECT
+    for k in PROJ_KEYS:      # Projection On / Off have their own effect; a missing one starts as a copy of the normal one
+        v = data.get(k)
+        out[k] = v if v in EFFECT_KEYS else (out["transition_effect"] if v is None else DEFAULT_EFFECT)
     out["transition_ms"] = clamp_ms(data.get("transition_ms", DEFAULT_MS))
     d = data.get("transition_dir")
     out["transition_dir"] = d if d in DIRECTION_KEYS else "auto"
@@ -116,6 +122,8 @@ def plan(kind, st, step_hint=0, same_picture=False):
     unticked, or nothing visible would change (same_picture)."""
     c = clean(st)
     effect, ms = c["transition_effect"], c["transition_ms"]
+    if kind in PROJ_KEY_FOR:          # Project / Project Off use their own effect; switching uses the normal one
+        effect = c[PROJ_KEY_FOR[kind]]
     enabled = c["transition_onoff"] if kind in (ON, OFF) else c["transition_switch"]
     if not enabled or same_picture or ms <= 0 or effect == "cut":
         return Plan(kind, "cut", 0, resolve_direction(c["transition_dir"], step_hint))

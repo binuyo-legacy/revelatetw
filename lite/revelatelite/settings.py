@@ -26,6 +26,8 @@ DEFAULTS = {
     "image_mode": "fill",    # fill | fit | stretch | tile
     "image_dim": 30,         # percent darkening over a picture, keeps text readable
     "transition_effect": "dissolve",   # cut | fade | dissolve | wipe | slide | blinds | open | checkerboard | diagonal | iris | zoom | mosaic | clock (see transitions.py)
+    "proj_on_effect": "dissolve",      # effect when Project turns the full-screen display on (same choices as transition_effect)
+    "proj_off_effect": "dissolve",     # effect when Project Off turns it off (independent of transition_effect)
     "transition_ms": 400,    # 0 = instant
     "transition_dir": "auto",          # auto | left | right | up | down
     "transition_onoff": True,          # animate Project / Project Off
@@ -128,6 +130,9 @@ def load(path):
             for k in DEFAULTS:
                 if k in saved and isinstance(saved[k], type(DEFAULTS[k])):
                     data[k] = saved[k]
+            for k in ("proj_on_effect", "proj_off_effect"):   # older files: start as the effect they already had
+                if k not in saved and isinstance(saved.get("transition_effect"), str):
+                    data[k] = saved["transition_effect"]
     except (OSError, ValueError):
         pass
     data["font_scale"] = max(50, min(200, data["font_scale"]))
