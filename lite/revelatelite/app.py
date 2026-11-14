@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn, versethemes
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
@@ -220,6 +220,21 @@ class Main(QtWidgets.QWidget):
         self.song_theme_lbl = QtWidgets.QLabel(songthemes.blurb(self.st["song_theme"]))
         self.song_theme_lbl.setObjectName("hint")
         self.song_theme_lbl.setWordWrap(True)
+        self.verse_theme_lw = QtWidgets.QListWidget()
+        self.verse_theme_lw.setViewMode(QtWidgets.QListView.IconMode)
+        self.verse_theme_lw.setMovement(QtWidgets.QListView.Static)
+        self.verse_theme_lw.setResizeMode(QtWidgets.QListView.Adjust)
+        self.verse_theme_lw.setIconSize(QtCore.QSize(128, 72))
+        self.verse_theme_lw.setSpacing(6)
+        self.verse_theme_lw.setWrapping(True)
+        self.verse_theme_lw.setFixedHeight(220)
+        self.verse_theme_lw.setToolTip("Pick how Bible verse slides look. Songs are not affected. Reaches the screen after you press Project.")
+        self._fill_verse_themes()
+        self.verse_theme_lbl = QtWidgets.QLabel(versethemes.blurb(self.st["verse_theme"]))
+        self.verse_theme_lbl.setObjectName("hint")
+        self.verse_theme_lbl.setWordWrap(True)
+        og.addRow("Bible verse style", self.verse_theme_lw)
+        og.addRow("", self.verse_theme_lbl)
         og.addRow("Song slide style", self.song_theme_lw)
         og.addRow("", self.song_theme_lbl)
         og.addRow("", self._build_song_custom())
@@ -406,6 +421,7 @@ class Main(QtWidgets.QWidget):
         self.proj.closedByUser.connect(self._projector_closed)
         self.theme_cb.currentIndexChanged.connect(self._style_changed)
         self.song_theme_lw.currentRowChanged.connect(self._song_theme_changed)
+        self.verse_theme_lw.currentRowChanged.connect(self._verse_theme_changed)
         self.size_sp.valueChanged.connect(self._style_changed)
         self.show_ref_cb.stateChanged.connect(self._style_changed)
         self.font_cb.currentIndexChanged.connect(self._style_changed)
@@ -804,6 +820,33 @@ class Main(QtWidgets.QWidget):
         self.song_theme_lw.setCurrentRow(max(songthemes.KEYS.index(self.st["song_theme"]), 0))
         self.song_theme_lw.blockSignals(False)
 
+    def _verse_icon(self, k):
+        v = SlideView()
+        v.set_style("navy", 100, True, self.st["font_family"], self.st["bold"], self.st["bg_color"], self.st["text_color"],
+                    bgm.spec_from(self.st), False, "", 3, songthemes.STANDARD, None, k)
+        v.set_content(versethemes.SAMPLE_REF, versethemes.SAMPLE_BODY, "")
+        return QtGui.QIcon(v.snapshot(QtCore.QSize(256, 144)).scaled(128, 72, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+
+    def _fill_verse_themes(self):
+        """Gallery of the verse templates, each drawn by the same code as the projector."""
+        self.verse_theme_lw.blockSignals(True)
+        self.verse_theme_lw.clear()
+        for k in versethemes.KEYS:
+            it = QtWidgets.QListWidgetItem(self._verse_icon(k), versethemes.label(k))
+            it.setData(QtCore.Qt.UserRole, k)
+            self.verse_theme_lw.addItem(it)
+        self.verse_theme_lw.setCurrentRow(max(versethemes.KEYS.index(self.st["verse_theme"]), 0))
+        self.verse_theme_lw.blockSignals(False)
+
+    def _verse_theme_changed(self, row):
+        """Only stores the choice and redraws the preview. The screen changes after Project."""
+        if not (0 <= row < len(versethemes.KEYS)):
+            return
+        self.st["verse_theme"] = versethemes.KEYS[row]
+        self.verse_theme_lbl.setText(versethemes.blurb(self.st["verse_theme"]))
+        self._apply_style()
+        self.save_settings()
+
     def _song_theme_changed(self, row):
         """Only stores the choice and redraws the preview. The screen changes after Project."""
         if not (0 <= row < len(songthemes.KEYS)):
@@ -817,7 +860,8 @@ class Main(QtWidgets.QWidget):
     def _apply_style(self):
         args = (self.theme_cb.currentText(), self.size_sp.value(), self.show_ref_cb.isChecked(),
                 self.font_cb.currentText(), self.bold_cb.isChecked(), self.st["bg_color"], self.st["text_color"], bgm.spec_from(self.st),
-                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"], self.st["song_theme"], songthemes.copy_custom(self.st["song_custom"]))
+                self.st["outline_on"], self.st["outline_color"], self.st["outline_px"], self.st["song_theme"], songthemes.copy_custom(self.st["song_custom"]),
+                self.st["verse_theme"])
         self._style_args = args
         self.preview.set_style(*args)
         if not self.proj.live:      # a live projector keeps its look until Project is clicked again

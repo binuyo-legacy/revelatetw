@@ -3,7 +3,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C
 
-from . import background, layout, settings, songthemes, transitions
+from . import background, layout, settings, songthemes, transitions, versethemes
 
 
 class SlideView(QtWidgets.QWidget):
@@ -27,6 +27,7 @@ class SlideView(QtWidgets.QWidget):
         self.outline_on, self.outline_color, self.outline_px = False, "", 3
         self.song_custom = {}                    # per-template overrides (songs only)
         self.song_theme = songthemes.STANDARD   # used only when the slide is a song slide (meta is not None)
+        self.verse_theme = versethemes.DEFAULT   # used only for verse slides (meta is None); 'default' = the old look
         self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
 
@@ -41,7 +42,9 @@ class SlideView(QtWidgets.QWidget):
         self.update()
 
     def set_style(self, theme, scale, show_ref, font_family="Georgia", bold=False, bg_color="", text_color="", bg_spec=None,
-                  outline_on=False, outline_color="", outline_px=3, song_theme=songthemes.STANDARD, song_custom=None):
+                  outline_on=False, outline_color="", outline_px=3, song_theme=songthemes.STANDARD, song_custom=None,
+                  verse_theme=versethemes.DEFAULT):
+        self.verse_theme = versethemes.clean(verse_theme)
         self.song_theme = songthemes.clean(song_theme)
         self.song_custom = songthemes.copy_custom(song_custom)
         self.outline_on, self.outline_color, self.outline_px = bool(outline_on), outline_color, outline_px
@@ -81,6 +84,10 @@ class SlideView(QtWidgets.QWidget):
             p.setRenderHint(QtGui.QPainter.TextAntialiasing)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             return self._draw_song(p, rect, songthemes.resolve(self.song_theme, self.song_custom))
+        if self.live and self.body and self.meta is None and self.verse_theme in versethemes.TEMPLATES:
+            p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            return self._draw_verse(p, rect, versethemes.resolve(self.verse_theme))
         kind = self.bg_spec[0]
         bg, fg, refc = settings.resolve_colors(self.theme, self.bg_color, self.text_color)
         if kind == "gradient":       # text colour follows the average of the two colours
@@ -295,6 +302,111 @@ class SlideView(QtWidgets.QWidget):
             cy = y + int(h * 0.015)
             if cy < area.bottom():
                 divider_at(cy)
+
+    # ---- verse templates (verses only; songs never come here) ----
+    def _draw_verse(self, p, rect, t):
+        w, h = rect.width(), rect.height()
+        A = QtCore.Qt
+        self._paint_song_bg(p, rect, t)       # same painted backgrounds as the song templates
+        acc, dim = QtGui.QColor(t["accent"]), QtGui.QColor(t["dim"])
+        frame = t["frame"]
+        pad = int(h * 0.09)
+        left = pad
+        if frame == "single":
+            p.setBrush(A.NoBrush)
+            c = QtGui.QColor(t["accent"])
+            c.setAlphaF(0.85)
+            p.setPen(QtGui.QPen(c, max(1, h * 0.004)))
+            m = h * 0.04
+            p.drawRoundedRect(QtCore.QRectF(m, m, w - 2 * m, h - 2 * m), h * 0.03, h * 0.03)
+            pad = int(h * 0.12)
+            left = pad
+        elif frame == "double":
+            p.setBrush(A.NoBrush)
+            c = QtGui.QColor(t["accent"])
+            p.setPen(QtGui.QPen(c, max(2, h * 0.006)))
+            m = h * 0.035
+            p.drawRect(QtCore.QRectF(m, m, w - 2 * m, h - 2 * m))
+            p.setPen(QtGui.QPen(c, max(1, h * 0.002)))
+            m2 = h * 0.05
+            p.drawRect(QtCore.QRectF(m2, m2, w - 2 * m2, h - 2 * m2))
+            pad = int(h * 0.13)
+            left = pad
+        elif frame == "bar":
+            p.fillRect(QtCore.QRect(int(w * 0.06), int(h * 0.12), max(3, int(h * 0.012)), int(h * 0.76)), acc)
+            left = int(w * 0.12)
+        elif frame == "card":
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 60), max(1, h * 0.002)))
+            p.setBrush(QtGui.QColor(255, 255, 255, 28))
+            p.drawRoundedRect(QtCore.QRectF(w * 0.06, h * 0.10, w * 0.88, h * 0.70), h * 0.04, h * 0.04)
+            p.setBrush(A.NoBrush)
+            pad = int(h * 0.15)
+            left = int(w * 0.10)
+        inner = QtCore.QRect(left, pad if frame != "card" else int(h * 0.13), w - left - (pad if frame != "bar" else int(w * 0.07)),
+                             h - 2 * pad if frame != "card" else int(h * 0.64))
+        h_al = {"left": A.AlignLeft, "center": A.AlignHCenter, "right": A.AlignRight}[t["align"]]
+        # reference block (top or bottom); the Settings switch 'show verse reference' still applies
+        ref_h = 0
+        show_ref = bool(self.show_ref and self.ref)
+        pill = t["ref_style"] == "pill"
+        rf = QtGui.QFont("Segoe UI")
+        rf.setBold(True)
+        rf.setPixelSize(max(14, int(h * 0.05 * self.scale / 100)))
+        fm = QtGui.QFontMetrics(rf)
+        if show_ref:
+            ref_h = fm.height() + int(h * (0.05 if t["divider"] or pill else 0.03))
+        top = t["ref_pos"] == "top"
+        ref_rect = QtCore.QRect(inner.x(), inner.y() if top else inner.bottom() - ref_h, inner.width(), ref_h)
+        body_area = QtCore.QRect(inner.x(), inner.y() + (ref_h if top else 0), inner.width(), inner.height() - ref_h)
+        flags = h_al | A.AlignVCenter | A.TextWordWrap
+
+        def fits(size):
+            r = QtGui.QFontMetrics(self._body_font(size)).boundingRect(0, 0, body_area.width(), 100000, flags, self.body)
+            return r.height() <= body_area.height()
+
+        size = layout.fit_font_size(fits, 14, max(16, int(h * 0.11 * self.scale / 100)))
+        p.setFont(self._body_font(size))
+        if t["shadow"]:
+            p.setPen(QtGui.QColor(0, 0, 0, 140))
+            p.drawText(body_area.translated(0, max(1, int(h * 0.004))), flags, self.body)
+        p.setPen(QtGui.QColor(t["text"]))
+        self._text(p, body_area, flags, self.body, t["text"], h)
+        if show_ref:
+            p.setFont(rf)
+            if pill:
+                tw = fm.horizontalAdvance(self.ref) if hasattr(fm, "horizontalAdvance") else fm.width(self.ref)
+                pw, ph = tw + h * 0.07, fm.height() + h * 0.02
+                x = {"left": inner.x(), "center": inner.x() + (inner.width() - pw) / 2.0, "right": inner.right() - pw}[t["align"]]
+                y = ref_rect.y() + (h * 0.005 if top else ref_rect.height() - ph)
+                pr = QtCore.QRectF(x, y, pw, ph)
+                p.setPen(QtGui.QPen(acc, max(1, h * 0.002)))
+                p.setBrush(QtGui.QColor(0, 0, 0, 60))
+                p.drawRoundedRect(pr, ph / 2, ph / 2)
+                p.setBrush(A.NoBrush)
+                p.setPen(acc)
+                p.drawText(pr, A.AlignCenter, self.ref)
+            else:
+                if t["divider"]:
+                    g = QtGui.QLinearGradient(w / 2.0 - w * 0.09, 0, w / 2.0 + w * 0.09, 0)
+                    c0 = QtGui.QColor(t["accent"])
+                    c0.setAlpha(0)
+                    g.setColorAt(0, c0)
+                    g.setColorAt(0.5, acc)
+                    g.setColorAt(1, c0)
+                    cy = ref_rect.bottom() - ref_h + int(h * 0.01) if not top else ref_rect.bottom() - int(h * 0.01)
+                    if not top:
+                        cy = ref_rect.y() + int(h * 0.005)
+                    p.fillRect(QtCore.QRectF(w / 2.0 - w * 0.09, cy, w * 0.18, max(1, h * 0.003)), QtGui.QBrush(g))
+                    ref_rect = ref_rect.adjusted(0, int(h * 0.02) if not top else 0, 0, 0 if not top else -int(h * 0.02))
+                p.setPen(acc)
+                self._text(p, ref_rect, h_al | A.AlignVCenter, self.ref, t["accent"], h)
+        if self.credit:
+            f2 = QtGui.QFont("Segoe UI")
+            f2.setPixelSize(max(11, int(h * 0.02)))
+            p.setFont(f2)
+            p.setPen(dim)
+            cy = h - int(h * (0.105 if frame in ("single", "double") else 0.04)) - 4
+            p.drawText(QtCore.QRect(0, cy, w, int(h * 0.04)), A.AlignCenter, self.credit)
 
     def _body_font(self, size, bold=None, family=None):
         fam = family or self.font_family or "Georgia"
