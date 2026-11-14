@@ -80,5 +80,28 @@ class ButtonFocus(unittest.TestCase):
         win.close()
 
 
+
+    def test_project_off_and_named_buttons_are_plain_pushbuttons_covered_by_wrapper(self):
+        # Regression for the Project Off (Esc) question: it must stay a plain QPushButton
+        # so the NoButtonFocusRectStyle isinstance() check intercepts its focus rect.
+        d = tempfile.mkdtemp()
+        lite_app.paths.user_dir = lambda: d
+        w = lite_app.Main()
+        w.show()
+        self.assertIs(type(w.blank_b), QtWidgets.QPushButton)
+        self.assertEqual(w.blank_b.text(), "Project Off (Esc)")
+        self.assertNotEqual(w.blank_b.focusPolicy(), QtCore.Qt.NoFocus)
+        named = {b.text(): b for b in w.findChildren(QtWidgets.QPushButton)}
+        for label in ("Look up", "Add Bible...", "Move up", "Search", "Project Off (Esc)", "Project (F5)"):
+            self.assertIn(label, named, label)
+            self.assertIs(type(named[label]), QtWidgets.QPushButton)
+        from revelatelite import bibleimport
+        dlg = bibleimport.ImportBibleDialog(w, d, [])
+        for b in dlg.findChildren(QtWidgets.QPushButton):
+            self.assertIs(type(b), QtWidgets.QPushButton)
+        song = lite_app.SongDialog(w)
+        self.assertIs(type(song.save_b), QtWidgets.QPushButton)
+        w.close()
+
 if __name__ == "__main__":
     unittest.main()
