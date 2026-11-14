@@ -170,6 +170,8 @@ class Shared(unittest.TestCase):
 
     def test_project_still_disabled_with_nothing_shown(self):
         w = self.make()
+        w._set_slide(None)
+        w.cur = None
         w.lookup("Nope 9:9")
         self.assertFalse(w.project_b.isEnabled())
         w.close()

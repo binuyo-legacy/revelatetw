@@ -34,6 +34,7 @@ class RefEdit(QtWidgets.QLineEdit):
         self._erasing = False    # last key was Backspace/Delete: do not re-fill the suggestion
         self._select_all_on_focus = False  # armed by the app (e.g. translation picked)
         self.jumpHandler = None  # app callback: (direction) -> True when it jumped into a part
+        self.typedDigitHandler = None  # app callback: (text_before_key, text_after_key) after a digit typed at the end
 
     def erasing(self):
         return self._erasing
@@ -52,6 +53,13 @@ class RefEdit(QtWidgets.QLineEdit):
         self.setText(full)
         self.setSelection(len(full), -(len(full) - len(typed)))
         self._seg = None
+
+    def set_invalid(self, bad):
+        """Red border while the typed reference is out of range (style only)."""
+        if bool(self.property("invalid")) != bool(bad):
+            self.setProperty("invalid", bool(bad))
+            self.style().unpolish(self)
+            self.style().polish(self)
 
     def segment(self):
         return self._seg
@@ -160,4 +168,8 @@ class RefEdit(QtWidgets.QLineEdit):
                 self._seg = None
         elif self._seg and not (mods & _K.ControlModifier):
             self._seg = None
+        before = self.text()
         super().keyPressEvent(e)
+        if plain and self.typedDigitHandler is not None and e.text() and e.text().isdigit() \
+                and self.cursorPosition() == len(self.text()):
+            self.typedDigitHandler(before, self.text())   # the app may refuse a digit that can never become valid

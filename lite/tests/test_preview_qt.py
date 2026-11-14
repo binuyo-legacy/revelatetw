@@ -146,6 +146,8 @@ class PreviewQt(unittest.TestCase):
 
     def test_project_without_verse_says_so_and_status_resets(self):
         w = self.make()
+        w._set_slide(None)
+        w.cur = None
         w.lookup("Nope 9:9")
         w.project()
         self.assertIn("Look up a verse", w.status.text())

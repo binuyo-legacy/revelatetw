@@ -183,6 +183,45 @@ def _chapters(book, typed, store, translation, limit):
     return out
 
 
+def check_reference(store, translation, parsed):
+    """Range check for a parsed reference (book, chapter, v1, v2) in one translation.
+
+    Returns None when it exists, else (kind, message, fix) where kind is 'book',
+    'chapter' or 'verse' and fix is the nearest valid (book, chapter, v1, v2) or None.
+    Never raises: this is the single place that decides 'out of range', so typing,
+    Enter and Look up all give the same answer.
+    """
+    book, ch, v1, v2 = parsed
+    name = book_name(book)
+    last_c = store.last_chapter(translation, book)
+    if last_c < 1:
+        return ("book", "%s is not in %s." % (name, translation), None)
+    if ch > last_c:
+        return ("chapter", "Chapter %d isn't in %s (1-%d)." % (ch, name, last_c), (book, last_c, 1, 1))
+    last_v = store.last_verse(translation, book, ch)
+    if v1 > last_v:
+        return ("verse", "Verse %d isn't in %s %d (1-%d)." % (v1, name, ch, last_v), (book, ch, last_v, last_v))
+    return None
+
+
+def partial_problem(store, translation, text):
+    """While typing: the out-of-range message for what is typed so far, or None.
+    Only whole numbers already typed count ('psalms 15' is fine, it may become 150);
+    a number is judged wrong only when NO longer number could make it valid, i.e.
+    it is already above the limit (every longer number is bigger still)."""
+    m = _PARTIAL.match(text or "")
+    if not m or _is_bare_ordinal(text) or not _has_chapter_number(text):
+        return None
+    book = find_book(m.group(1))
+    if book is None:
+        return None
+    parsed = (book, int(m.group(2)), int(m.group(3)) if m.group(3) else 1, 1)
+    if parsed[1] < 1 or parsed[2] < 1:
+        return None
+    bad = check_reference(store, translation, parsed)
+    return bad[1] if bad else None
+
+
 def format_reference(book, chapter, v1, v2):
     verses = str(v1) if v1 == v2 else "%d-%d" % (v1, v2)
     return "%s %d:%s" % (book_name(book), chapter, verses)

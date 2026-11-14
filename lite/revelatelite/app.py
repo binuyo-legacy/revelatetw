@@ -7,7 +7,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn, versethemes
-from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, _is_bare_ordinal, _has_chapter_number
+from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, check_reference, partial_problem, _is_bare_ordinal, _has_chapter_number
+from .hintfade import HintFade
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
@@ -109,6 +110,13 @@ class Main(QtWidgets.QWidget):
         self.verse_lbl.setWordWrap(True)
         self.verse_lbl.setTextInteractionFlags(QtCore.Qt.NoTextInteraction)
         fl.addWidget(self.verse_lbl)
+        # Out-of-range hint: soft fade-in (see hintfade.py), then it clears by itself. No modal.
+        self._hint_fade = HintFade(self.verse_lbl)
+        self._hint_timer = QtCore.QTimer(self)
+        self._hint_timer.setSingleShot(True)
+        self._hint_timer.setInterval(4500)
+        self._hint_timer.timeout.connect(self.clear_ref_hint)
+        self._hint_on = False
         leftc.addWidget(find)
 
         tabs = tabanimate.AnimatedTabWidget()
@@ -390,6 +398,7 @@ class Main(QtWidgets.QWidget):
         self.box.textEdited.connect(self.show_suggestions)
         self.box.adjustRequested.connect(self.edit_segment)
         self.box.jumpHandler = self.jump_from_typing
+        self.box.typedDigitHandler = self._digit_typed
         self.completer.activated[str].connect(self.suggestion_picked)
         self.trans.currentIndexChanged.connect(self.on_translation)
         self.prev_b.clicked.connect(lambda: self.step(-1))
@@ -1065,8 +1074,46 @@ class Main(QtWidgets.QWidget):
             pass
 
     # ---------------- typing suggestions ----------------
+    def show_ref_hint(self, msg):
+        """Inline, non-modal hint under the reference box (fade-in, auto-clears). Never touches the preview."""
+        self.verse_lbl.setStyleSheet("color:%s;" % C.danger_text)
+        self.verse_lbl.setText(msg)
+        self._hint_on = True
+        self._hint_fade.play()
+        self._hint_timer.start()
+
+    def clear_ref_hint(self):
+        self._hint_timer.stop()
+        if self._hint_on:
+            self._hint_on = False
+            self._hint_fade.stop()
+            self.verse_lbl.setStyleSheet("")
+            self.verse_lbl.setText("")
+        self.box.set_invalid(False)
+
+    def _digit_typed(self, before, after):
+        """A digit was typed at the end. If the number is now above the book's (or chapter's) limit,
+        no longer number can fix it, so the digit is not accepted: the box goes back to what it was
+        and the hint explains why. Digits that may still grow into a valid number ('Psalms 15' on the
+        way to 150) are always accepted."""
+        t = self.tr_name()
+        if not t or partial_problem(self.bible, t, before):
+            return
+        msg = partial_problem(self.bible, t, after)
+        if msg:
+            self.box.setText(before)
+            self.box.setCursorPosition(len(before))
+            self.show_suggestions(before)
+            self.show_ref_hint(msg)
+
     def show_suggestions(self, text):
         t = self.tr_name()
+        problem = partial_problem(self.bible, t, text) if t else None
+        if problem:                      # e.g. pasted text: keep it, mark it, explain; preview untouched
+            self.box.set_invalid(True)
+            self.show_ref_hint(problem)
+        elif self._hint_on or self.box.property("invalid"):
+            self.clear_ref_hint()
         items = suggest(text, self.bible, t) if t else []
         self.sug_model.setStringList(items)
         if items:
@@ -1136,6 +1183,17 @@ class Main(QtWidgets.QWidget):
     # ---------------- lookup ----------------
     def lookup(self, text, quiet=False, segment=None):
         parsed = parse_reference(text)
+        t0 = self.tr_name()
+        if t0 is not None:
+            # Wrong chapter/verse (or unreadable text) must never blank the preview or drop the
+            # last good verse: say what is wrong, mark the box, and leave everything else alone.
+            bad = check_reference(self.bible, t0, parsed) if parsed else (
+                "read", "I could not read that. Try: John 3:16  or  Rom 8:28-30  or  1 Cor 13", None)
+            if bad:
+                self._reject_reference(parsed, bad)
+                return
+        self.clear_ref_hint()
+        self.verse_lbl.setText("")
         self._set_slide(None)
         self.cur = None
         if not parsed:
@@ -1166,6 +1224,20 @@ class Main(QtWidgets.QWidget):
             self.say("")
         self._refresh_live_state()
         self.save_settings()
+
+    def _reject_reference(self, parsed, bad):
+        """Committed (Enter / Look up) reference that is out of range or unreadable.
+        Keeps the last valid preview and self.cur, puts the last valid reference back in the box
+        with the offending part highlighted (so typing replaces it), and shows the hint."""
+        kind, msg = bad[0], bad[1]
+        self.show_ref_hint(msg)
+        if kind in ("chapter", "verse") and self.cur is not None:
+            b, ch, v1, v2, _t = self.cur
+            ref = format_reference(b, ch, v1, v2)
+            self.box.set_reference(ref, reference_spans(b, ch, v1, v2), True, kind)
+            self.box.set_invalid(False)
+        else:
+            self.box.set_invalid(True)
 
     def _set_slide(self, slide, meta=None):
         """The ONE place the preview content changes (verses and song slides both come through here).

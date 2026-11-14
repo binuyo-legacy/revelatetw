@@ -32,6 +32,7 @@ QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {{ background:{inp}; border:1px s
     selection-background-color:{accent}; selection-color:{on}; }}
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QPlainTextEdit:hover {{ border-color:{bh}; }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {{ border:1px solid {accent}; }}
+QLineEdit[invalid="true"], QLineEdit[invalid="true"]:focus {{ border:1px solid {dbd}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color:{dis}; border-color:{border}; }}
 QComboBox {{ padding-right:24px; }}
 QComboBox::drop-down {{ subcontrol-origin:padding; subcontrol-position:center right; width:22px; border:none;
@@ -109,7 +110,7 @@ def build_qss():
         dis=C.text_disabled, on=C.accent_on, acch=C.accent_hover, alt=C.surface_alt, bcard=C.border_card,
         border=C.border, emph=T.emphasis, trans=T.transcript, muted=C.text_muted, cap=T.caption,
         lt=C.live_on_text, lbg=C.live_on_bg, lb=C.live_on_border, accsoft=C.accent_soft,
-        rad=RADIUS, rc=RADIUS_CTL)
+        rad=RADIUS, rc=RADIUS_CTL, dbd=C.danger_border)
 
 
 def _mix(a, b, t):
