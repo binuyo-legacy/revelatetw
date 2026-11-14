@@ -111,8 +111,8 @@ class Main(QtWidgets.QWidget):
         fl.addWidget(self.verse_lbl)
         leftc.addWidget(find)
 
-        # Animated tab strip: gentle content fade only. The selected tab keeps
-        # its gold top border/text from theme.py; no extra bottom gold strip.
+        # Animated tab strip: sliding gold pill + gentle content fade. Same
+        # widgets, order and signals as a plain QTabWidget (looks only).
         tabs = tabanimate.AnimatedTabWidget()
         self.service_list = QtWidgets.QListWidget()
         sl = QtWidgets.QWidget()

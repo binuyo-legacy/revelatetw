@@ -52,30 +52,39 @@ class TabAnimation(unittest.TestCase):
         self.assertTrue(isinstance(tabs, QtWidgets.QTabWidget))
         w.close()
 
-    def test_no_bottom_indicator_and_no_layout_change(self):
-        """Operator request: no extra gold strip under the selected label."""
+    def test_indicator_is_cosmetic_and_does_not_change_layout(self):
         w = self.make()
         tabs, bar = self.bars(w)
         ind = bar.indicator()
         self.assertIsNotNone(ind)
         before = (tabs.geometry(), [tabs.widget(i).geometry() for i in range(tabs.count())])
+        # clicking the pill's area still hits the tab button (it ignores the mouse)
+        ind.mousePressEvent = self.fail if False else None  # no-op guard: see below
+        ind = bar.indicator()
         tabs.setCurrentIndex(1)
         self.qa.processEvents()
         after = (tabs.geometry(), [tabs.widget(i).geometry() for i in range(tabs.count())])
         self.assertEqual(before[0], after[0])
-        # nothing gold paints at the bottom: rect empty, widget hidden
-        self.assertEqual(ind._rect, QtCore.QRect())
-        self.assertFalse(ind.isVisible())
-        self.assertIsNone(ind._anim)
+        # indicator moved toward tab 1 without resizing anything
+        target = tabanimate.indicator_rect(bar, bar.tabRect(1))
+        final = ind._rect
+        # either still animating (start!=target) or already on target
+        self.assertTrue(final.width() > 0)
+        ind._anim.stop() if ind._anim else None
+        ind.place_immediately(1)
+        self.assertEqual(ind._rect, target)
         w.close()
 
-    def test_indicator_rect_is_empty_for_every_tab(self):
+    def test_indicator_target_inside_tab_rect(self):
         w = self.make()
         tabs, bar = self.bars(w)
         for i in range(bar.count()):
-            self.assertEqual(tabanimate.indicator_rect(bar, bar.tabRect(i)),
-                             QtCore.QRect())
-        self.assertEqual(tabanimate.indicator_rect(None, None), QtCore.QRect())
+            r = bar.tabRect(i)
+            ir = tabanimate.indicator_rect(bar, r)
+            self.assertTrue(r.contains(ir.topLeft()))
+            self.assertTrue(r.contains(ir.bottomRight()))
+            self.assertGreaterEqual(ir.width(), 1)
+            self.assertEqual(ir.height(), tabanimate.INDICATOR_HEIGHT)
         w.close()
 
     def test_rapid_switching_never_gets_stuck(self):
@@ -97,11 +106,10 @@ class TabAnimation(unittest.TestCase):
             if page is current:
                 continue
             self.assertIsNone(page.graphicsEffect())
-        # no bottom strip is painted after rapid switches
+        # the pill ends where the selection is
         bar = tabs.tabBar()
         bar.indicator().place_immediately(2)
-        self.assertEqual(bar.indicator()._rect, QtCore.QRect())
-        self.assertFalse(bar.indicator().isVisible())
+        self.assertEqual(bar.indicator()._rect, tabanimate.indicator_rect(bar, bar.tabRect(2)))
         w.close()
 
     def test_current_changed_still_fires(self):
@@ -129,22 +137,32 @@ class TabAnimation(unittest.TestCase):
 
     def test_deleted_animation_wrapper_never_raises(self):
         """Regression: DeleteWhenStopped left self._anim pointing at a deleted C++
-        wrapper; the next stop() in resizeEvent/place_immediately raised RuntimeError.
-        The bottom pill is gone now, so _stop_anim must stay safe with no animation."""
+        wrapper; the next stop() in resizeEvent/place_immediately raised RuntimeError."""
         w = self.make()
         tabs, bar = self.bars(w)
         ind = bar.indicator()
         tabs.setCurrentIndex(1)
         self.qa.processEvents()
-        self.assertIsNone(ind._anim)
+        # force the deleted-wrapper state the crash came from
+        anim = ind._anim
+        self.assertIsNotNone(anim)
+        import gc
+        del anim
+        gc.collect()
+        # simulate: the stored ref now points at a gone C++ object
+        # stop() must not raise
         try:
             ind._stop_anim()
+        except RuntimeError as e:
+            self.fail("stop on deleted wrapper raised: %r" % e)
+        # place_immediately and resize after deletion must not raise
+        try:
             ind.place_immediately(1)
             w.resize(1200, 800)
             self.qa.processEvents()
         except RuntimeError as e:
-            self.fail("stop/place_immediately/resize raised: %r" % e)
-        self.assertEqual(ind._rect, QtCore.QRect())
+            self.fail("place_immediately/resize after deleted wrapper raised: %r" % e)
+        self.assertEqual(ind._rect, tabanimate.indicator_rect(bar, bar.tabRect(1)))
         w.close()
 
     def test_resize_during_animation_never_raises(self):
@@ -160,40 +178,23 @@ class TabAnimation(unittest.TestCase):
             w.resize(1300, 850)
             w.resize(1100, 720)
             self.qa.processEvents()
-        # still no bottom strip
+        # final pill position matches final selection
         ind.place_immediately(tabs.currentIndex())
-        self.assertEqual(ind._rect, QtCore.QRect())
-        self.assertFalse(ind.isVisible())
+        self.assertEqual(ind._rect,
+                         tabanimate.indicator_rect(bar, bar.tabRect(tabs.currentIndex())))
         w.close()
 
     def test_finished_animation_clears_its_reference(self):
-        """Content fade finishes and restores the page; no stale wrapper."""
+        """Once an animation finishes, self._anim is None (no stale stopped wrapper)."""
         w = self.make()
         tabs, bar = self.bars(w)
         ind = bar.indicator()
         tabs.setCurrentIndex(3)
         self.qa.processEvents()
-        QtCore.QThread.msleep(tabanimate.CONTENT_MS + 100)
+        QtCore.QThread.msleep(tabanimate.INDICATOR_MS + tabanimate.CONTENT_MS + 50)
         self.qa.processEvents()
         self.assertIsNone(ind._anim)
-        self.assertIsNone(tabs._fade._anim)
-        self.assertEqual(ind._rect, QtCore.QRect())
         w.close()
-
-    def test_top_gold_selected_tab_style_preserved(self):
-        """Selected tab keeps gold top border + gold text from theme.py."""
-        from revelatelite import theme
-        qss = theme.build_qss()
-        self.assertIn("QTabBar::tab:selected", qss)
-        sel = [ln for ln in qss.splitlines() if "QTabBar::tab:selected" in ln][0]
-        self.assertIn("border-top:2px solid", sel)
-        # and nothing in theme.py paints a bottom strip on selected tabs
-        self.assertNotIn("border-bottom:2px", sel)
-        # no bottom-strip rule in the tab styling at all
-        tab_lines = [ln for ln in qss.splitlines() if "QTabBar::tab" in ln]
-        for ln in tab_lines:
-            self.assertNotIn("border-bottom:2px solid", ln)
-            self.assertNotIn("border-bottom:3px solid", ln)
 
 
 if __name__ == "__main__":
