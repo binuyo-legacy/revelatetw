@@ -143,6 +143,25 @@ class BookBrowser(unittest.TestCase):
         self.assertEqual(w.cur[:4], (43, 3, 16, 16))
         self.assertEqual(getattr(w, "proj", None), shown)
 
+    def test_headings_fully_visible_at_normal_size(self):
+        # NEW TESTAMENT (and OLD TESTAMENT) must not elide at their normal bold size: the
+        # browser was widened leftwards for exactly this, so the heading font/metrics are
+        # measured as they are, with no shrinking. Qt elides to the viewport width.
+        from PyQt5 import QtGui
+        w = make_window(self)
+        bb = w.book_browser
+        viewport_w = bb.viewport().width()
+        for text in ("OLD TESTAMENT", "NEW TESTAMENT"):
+            item = next(bb.item(i) for i in range(bb.count()) if bb.item(i).text() == text)
+            fm = QtGui.QFontMetrics(item.font())
+            self.assertTrue(item.font().bold(), text)
+            self.assertLessEqual(fm.horizontalAdvance(text), viewport_w, text)
+            self.assertEqual(fm.elidedText(text, bb.textElideMode(), viewport_w), text, text)
+            # the widest book name must fit too (no elided book rows either)
+        for _k, _b, name in bb.books():
+            fm = QtGui.QFontMetrics(bb.font())
+            self.assertLessEqual(fm.horizontalAdvance(name), viewport_w, name)
+
     def test_layout_compact_vertical_only_and_neighbours_intact(self):
         w = make_window(self)
         bb = w.book_browser
@@ -150,10 +169,12 @@ class BookBrowser(unittest.TestCase):
         self.assertFalse(bb.horizontalScrollBar().isVisible())
         self.assertTrue(bb.verticalScrollBar().isVisible() or bb.verticalScrollBar().maximum() > 0)
         self.assertEqual(bb.width(), booklist.WIDTH)
+        self.assertEqual(booklist.WIDTH, 200)  # widened leftwards from 150 so NEW TESTAMENT fits
         r = lambda o: o.mapTo(w, o.rect().topLeft())
         self.assertLess(r(w.service_list).x() + w.service_list.width(), r(bb).x() + 1)
         self.assertLessEqual(r(bb).x() + bb.width(), r(w.up_b).x())
-        self.assertGreaterEqual(w.service_list.width(), 250)
+        self.assertGreaterEqual(r(w.up_b).x() - (r(bb).x() + bb.width()), 1)  # right stack untouched, gap kept
+        self.assertGreaterEqual(w.service_list.width(), 210)
         self.assertEqual((w.up_b.width(), w.project_b.width()), (w.rm_b.width(), w.down_b.width()))
         self.assertLessEqual(w.preview.mapTo(w, w.preview.rect().bottomRight()).y(), r(bb).y() + bb.height())
         self.assertEqual(w.size().width(), 1000)

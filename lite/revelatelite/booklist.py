@@ -11,7 +11,9 @@ from revelatetw.books import BOOKS
 
 OT_LAST = 39           # book_id 1..39 Old Testament, 40..66 New Testament
 BOOK_ROLE = QtCore.Qt.UserRole + 1
-WIDTH = 150
+WIDTH = 200            # wide enough for the bold NEW/OLD TESTAMENT headings at normal size
+                       # (was 150, which elided NEW TESTAMENT); the extra 50 px comes from
+                       # the Service list on its left, the right button stack is untouched
 
 
 def testament_of(book_id):
