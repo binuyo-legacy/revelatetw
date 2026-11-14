@@ -303,7 +303,8 @@ class Main(QtWidgets.QWidget):
         self.tms_sp.setToolTip("How long the effect takes. 0 = instant.")
         self.tonoff_cb = QtWidgets.QCheckBox("Animate Project and Project Off")
         self.tonoff_cb.setChecked(self.st["transition_onoff"])
-        self.tsw_cb = QtWidgets.QCheckBox("Animate when the screen changes (Next / Previous, then Project)")
+        self.tsw_cb = QtWidgets.QCheckBox("Animate when the screen changes")
+        self.tsw_cb.setToolTip("Animate when the screen changes (Next / Previous, then Project)")
         self.tsw_cb.setChecked(self.st["transition_switch"])
         self.tfx_lbl = QtWidgets.QLabel("")
         self.tfx_lbl.setObjectName("hint")
@@ -327,10 +328,13 @@ class Main(QtWidgets.QWidget):
         note.setObjectName("hint")
         note.setWordWrap(True)
         og.addRow("", note)
+        self._fit_settings_width(ow)
         sc = QtWidgets.QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QtWidgets.QFrame.NoFrame)
+        sc.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)   # Settings scrolls up/down only
         sc.setWidget(ow)
+        self.settings_scroll = sc
         tabs.addTab(sc, "Settings")
         self.tabs = tabs
         self._build_quick(tabs)
@@ -663,8 +667,24 @@ class Main(QtWidgets.QWidget):
                    ("two_tone", "First line in highlight colour"), ("divider", "Thin divider line"),
                    ("pill", "Rounded tags"), ("shadow", "Soft shadow behind words"), ("bold", "Bold words"))
 
+    def _fit_settings_width(self, page):
+        """Keep the Settings page narrow enough for its column (vertical scrolling only).
+        Long labels used to set a wide minimum width; now the form wraps a long label above its
+        field when needed, drop-downs may shrink (the full choice still shows in the list and
+        tooltip) and long check-box / button texts keep their full text as a tooltip."""
+        def shrink(root):
+            for cb in root.findChildren(QtWidgets.QComboBox):
+                cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                cb.setMinimumContentsLength(8)
+            for lay in [root.layout()] + [g.layout() for g in root.findChildren(QtWidgets.QGroupBox)]:
+                if isinstance(lay, QtWidgets.QFormLayout):
+                    lay.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+                    lay.setLabelAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        shrink(page)
+
     def _build_song_custom(self):
-        gb = QtWidgets.QGroupBox("Customise the selected song style (songs only, Bible verses are not affected)")
+        gb = QtWidgets.QGroupBox("Customise the selected song style")
+        gb.setToolTip("Songs only. Bible verses are not affected.")
         f = QtWidgets.QFormLayout(gb)
         self.sc_hint = QtWidgets.QLabel("")
         self.sc_hint.setObjectName("hint")
@@ -675,7 +695,7 @@ class Main(QtWidgets.QWidget):
         for i, (k, label) in enumerate(self.SONG_COLORS):
             b = QtWidgets.QPushButton(label)
             self.sc_color_b[k] = b
-            grid.addWidget(b, i // 3, i % 3)
+            grid.addWidget(b, i // 2, i % 2)
         f.addRow("Colours", grid)
         self.sc_bg_cb = QtWidgets.QComboBox()
         for k, lab in (("solid", "Plain colour (Background 1)"), ("linear", "Two-colour fade"), ("radial", "Soft glow in the middle")):
