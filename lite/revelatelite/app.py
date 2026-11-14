@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg, songthemes, theme, transitions as trn
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
@@ -111,7 +111,9 @@ class Main(QtWidgets.QWidget):
         fl.addWidget(self.verse_lbl)
         leftc.addWidget(find)
 
-        tabs = QtWidgets.QTabWidget()
+        # Animated tab strip: sliding gold pill + gentle content fade. Same
+        # widgets, order and signals as a plain QTabWidget (looks only).
+        tabs = tabanimate.AnimatedTabWidget()
         self.service_list = QtWidgets.QListWidget()
         sl = QtWidgets.QWidget()
         sv = QtWidgets.QHBoxLayout(sl)
