@@ -4,6 +4,8 @@ Looks only. Nothing here changes layout order, signals or behaviour. Colours, si
 from the shared design tokens (revelatetw.ui_tokens). Plain Qt style sheets only (PyQt5 5.15, no
 effects or shaders), so it stays light on a 2 GB Windows 8.1 32-bit machine.
 """
+import os
+
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T
@@ -110,6 +112,12 @@ def build_qss():
         rad=RADIUS, rc=RADIUS_CTL)
 
 
+def _mix(a, b, t):
+    """Blend colour a toward b by t (0..1)."""
+    return QtGui.QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
+                        int(a.blue() + (b.blue() - a.blue()) * t))
+
+
 class TvFrame(QtWidgets.QWidget):
     """Cosmetic TV bezel drawn AROUND a widget. It only adds margins and paints; the wrapped preview
     keeps its own 16:9 shape, content and size rules, and projection never sees this frame."""
@@ -119,6 +127,8 @@ class TvFrame(QtWidgets.QWidget):
     def __init__(self, inner, parent=None):
         super().__init__(parent)
         self.on_air = False
+        self._glow = 0.0
+        self._anim = None
         lay = QtWidgets.QVBoxLayout(self)
         m = self.BEZEL
         lay.setContentsMargins(m, m, m, m + 6)   # slightly thicker chin, like a TV
@@ -128,11 +138,52 @@ class TvFrame(QtWidgets.QWidget):
         sp.setHeightForWidth(True)
         self.setSizePolicy(sp)
 
-    def set_on_air(self, on):
-        on = bool(on)
-        if on != self.on_air:
-            self.on_air = on
+    GLOW_IN_MS = 450    # light switching on: quick warm rise
+    GLOW_OUT_MS = 750   # light switching off: slower fade, like a cooling bulb
+
+    def _get_glow(self):
+        return self._glow
+
+    def _set_glow(self, v):
+        v = max(0.0, min(1.0, float(v)))
+        if abs(v - self._glow) > 0.001 or v in (0.0, 1.0):
+            self._glow = v
             self.update()
+
+    glow = QtCore.pyqtProperty(float, _get_glow, _set_glow)   # 0 = off, 1 = fully lit (paint only)
+
+    def set_on_air(self, on):
+        """Only a real on/off change starts the glow fade; repeating the same state does nothing."""
+        on = bool(on)
+        if on == self.on_air:
+            return
+        self.on_air = on
+        target = 1.0 if on else 0.0
+        if os.environ.get("REVELATELITE_NO_GLOW_ANIMATION") or not self.isVisible():
+            self._stop_glow()
+            self._set_glow(target)
+            return
+        if self._anim is None:   # one reused animation, created on first use
+            self._anim = QtCore.QPropertyAnimation(self, b"glow", self)
+            self._anim.setEasingCurve(QtCore.QEasingCurve.InOutSine)
+        self._anim.stop()
+        self._anim.setDuration(int((self.GLOW_IN_MS if on else self.GLOW_OUT_MS) * abs(target - self._glow)) + 40)
+        self._anim.setStartValue(self._glow)   # rapid toggles continue from the current brightness
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def _stop_glow(self):
+        if self._anim is not None:
+            self._anim.stop()
+
+    def hideEvent(self, e):
+        self._stop_glow()
+        self._set_glow(1.0 if self.on_air else 0.0)   # never leave a half-lit frame while hidden
+        super().hideEvent(e)
+
+    def closeEvent(self, e):
+        self._stop_glow()
+        super().closeEvent(e)
 
     def paintEvent(self, e):
         p = QtGui.QPainter(self)
@@ -142,15 +193,53 @@ class TvFrame(QtWidgets.QWidget):
         grad.setColorAt(0.0, QtGui.QColor("#2a3346"))
         grad.setColorAt(1.0, QtGui.QColor("#141a27"))
         p.setBrush(QtGui.QBrush(grad))
-        p.setPen(QtGui.QPen(QtGui.QColor(C.accent if self.on_air else C.border_hover), 2 if self.on_air else 1))
+        g = self._glow
+        ring = _mix(QtGui.QColor(C.border_hover), QtGui.QColor(C.accent), g)
+        p.setPen(QtGui.QPen(ring, 1 + g))
         p.drawRoundedRect(r, FRAME_RADIUS, FRAME_RADIUS)
+        if g > 0.01:   # warm halo: a few soft translucent strokes just inside the ring (no blur, no layout change)
+            p.setBrush(QtCore.Qt.NoBrush)
+            for i, (w, a) in enumerate(((7.0, 0.07), (4.5, 0.11), (2.5, 0.16))):
+                c = QtGui.QColor(C.accent)
+                c.setAlphaF(a * g)
+                p.setPen(QtGui.QPen(c, w))
+                p.drawRoundedRect(r.adjusted(1 + w / 2, 1 + w / 2, -1 - w / 2, -1 - w / 2), FRAME_RADIUS - w / 2, FRAME_RADIUS - w / 2)
+            # warm light wash across the bezel: brighter at the top, fading down (gives the metal some depth)
+            wash = QtGui.QLinearGradient(r.topLeft(), r.bottomLeft())
+            top = QtGui.QColor(C.accent)
+            top.setAlphaF(0.20 * g)
+            bot = QtGui.QColor(C.accent)
+            bot.setAlphaF(0.05 * g)
+            wash.setColorAt(0.0, top)
+            wash.setColorAt(1.0, bot)
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QBrush(wash))
+            p.drawRoundedRect(r, FRAME_RADIUS, FRAME_RADIUS)
+            # controlled bright edge: a thin pale-gold highlight just inside the ring
+            hi = QtGui.QColor("#fff1c2")
+            hi.setAlphaF(0.55 * g)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.setPen(QtGui.QPen(hi, 1))
+            p.drawRoundedRect(r.adjusted(2.2, 2.2, -2.2, -2.2), FRAME_RADIUS - 2, FRAME_RADIUS - 2)
+            p.setBrush(QtGui.QBrush(grad))
         # thin inner rim around the screen
         m = self.BEZEL - 2
         inner = QtCore.QRectF(self.rect()).adjusted(m, m, -m, -(m + 6))
         p.setBrush(QtCore.Qt.NoBrush)
         p.setPen(QtGui.QPen(QtGui.QColor("#05080f"), 2))
         p.drawRoundedRect(inner, 4, 4)
+        if g > 0.01:   # the screen rim picks up a faint gold light, keeping the double-line look
+            rim = QtGui.QColor(C.accent)
+            rim.setAlphaF(0.45 * g)
+            p.setPen(QtGui.QPen(rim, 1))
+            p.drawRoundedRect(inner.adjusted(-1.5, -1.5, 1.5, 1.5), 5, 5)
         # power LED on the chin
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(C.accent if self.on_air else "#475569"))
-        p.drawEllipse(QtCore.QPointF(r.center().x(), r.bottom() - 5), 2, 2)
+        led = QtCore.QPointF(r.center().x(), r.bottom() - 5)
+        if g > 0.01:
+            halo = QtGui.QColor(C.accent)
+            halo.setAlphaF(0.28 * g)
+            p.setBrush(halo)
+            p.drawEllipse(led, 4.5, 4.5)
+        p.setBrush(_mix(QtGui.QColor("#475569"), QtGui.QColor(C.accent), g))
+        p.drawEllipse(led, 2, 2)
