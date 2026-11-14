@@ -419,6 +419,8 @@ class Main(QtWidgets.QWidget):
         self.up_b.clicked.connect(lambda: self.move_item(-1))
         self.down_b.clicked.connect(lambda: self.move_item(1))
         self.service_list.itemClicked.connect(self.pick_item)
+        # keyboard navigation (Up/Down/Home/End in the list) changes the current row without a click
+        self.service_list.currentRowChanged.connect(self._service_row_changed)
         self.results.itemClicked.connect(self.pick_result)
         sb.clicked.connect(self.do_search)
         self.search_box.returnPressed.connect(self.do_search)
@@ -1380,13 +1382,23 @@ class Main(QtWidgets.QWidget):
         activate=True; add/remove/startup keep their existing behaviour
         (highlight only, no preview change) to avoid regressions.
         """
-        self.service_list.clear()
-        for it in self.services.items:
-            self.service_list.addItem("%s  (%s)" % (it["ref"], it["translation"]))
-        if select is not None and 0 <= select < self.service_list.count():
-            self.service_list.setCurrentRow(select)
-            if activate:
-                self.pick_item(self.service_list.currentItem())
+        # rebuilding must not fire the row-changed handler (only a real user navigation may)
+        self.service_list.blockSignals(True)
+        try:
+            self.service_list.clear()
+            for it in self.services.items:
+                self.service_list.addItem("%s  (%s)" % (it["ref"], it["translation"]))
+            if select is not None and 0 <= select < self.service_list.count():
+                self.service_list.setCurrentRow(select)
+        finally:
+            self.service_list.blockSignals(False)
+        if activate and select is not None and 0 <= select < self.service_list.count():
+            self.pick_item(self.service_list.currentItem())
+
+    def _service_row_changed(self, row):
+        # arrow-key selection in the Service list loads the item like a click (preview only)
+        if 0 <= row < len(self.services.items):
+            self.pick_item(None)
 
     def persist_list(self):
         try:
