@@ -81,10 +81,11 @@ class ThemeLook(unittest.TestCase):
         names = [b.text() for b in right.findChildren(QtWidgets.QPushButton)
                  if b in (w.prev_b, w.next_b, w.add_b, w.blank_b, w.project_b)]
         self.assertEqual(set(names), {"< Previous", "Next >", "Add to service list", "Project Off (Esc)", "Project (F5)"})
-        ys = [w.prev_b.mapTo(w, w.prev_b.rect().topLeft()).y(), w.add_b.mapTo(w, w.add_b.rect().topLeft()).y(),
-              w.project_b.mapTo(w, w.project_b.rect().topLeft()).y()]
+        ys = [w.prev_b.mapTo(w, w.prev_b.rect().topLeft()).y(), w.add_b.mapTo(w, w.add_b.rect().topLeft()).y()]
         self.assertEqual(ys, sorted(ys))
-        self.assertLess(w.blank_b.x(), w.project_b.x())
+        # Project / Project Off now live in the middle stack, not under the preview
+        self.assertIs(w.project_b.parentWidget(), w.up_b.parentWidget())
+        self.assertLess(w.project_b.y(), w.blank_b.y())
 
     def test_signals_still_wired(self):
         w = self.make()

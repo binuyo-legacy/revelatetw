@@ -459,6 +459,7 @@ class ProjectionWindow(SlideView):
     offRequested = QtCore.pyqtSignal()       # Esc pressed while this window has the keyboard
     projectRequested = QtCore.pyqtSignal()   # F5 pressed while this window has the keyboard
     closedByUser = QtCore.pyqtSignal()       # window closed some other way (Alt+F4, taskbar)
+    frameChanged = QtCore.pyqtSignal()       # anything the window would repaint (content, style, transition frame, show/hide)
 
     def __init__(self):
         super().__init__()
@@ -469,6 +470,23 @@ class ProjectionWindow(SlideView):
         self._tx = None        # running transition: dict(effect, direction, old, new, p, after)
         self._anim = None
         self._old_was_live = False
+
+    # ---- 'Programs' mirror: signal only, no polling, no screenshots ----
+    def update(self, *a):
+        super().update(*a)
+        self.frameChanged.emit()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.frameChanged.emit()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self.frameChanged.emit()
+
+    def on_air(self):
+        """True only while the full-screen window is really showing something."""
+        return bool(self.live and self.isVisible())
 
     # ---- transitions (only this window; the in-app preview is never animated) ----
     @property
@@ -533,11 +551,24 @@ class ProjectionWindow(SlideView):
             self.update()
 
     def paintEvent(self, e):
+        p = QtGui.QPainter(self)
+        self.render_frame(p, self.rect())
+
+    def render_frame(self, p, r):
+        """Paint exactly what this window shows (slide, black, or the running transition frame) into
+        rect r. The window itself and the 'Programs' mirror both use this, so they cannot disagree."""
+        p.save()
+        p.translate(r.x(), r.y())
+        p.setClipRect(QtCore.QRect(0, 0, r.width(), r.height()))
+        try:
+            self._render_local(p, QtCore.QRect(0, 0, r.width(), r.height()))
+        finally:
+            p.restore()
+
+    def _render_local(self, p, r):
         tx = self._tx
         if tx is None:
-            return super().paintEvent(e)
-        p = QtGui.QPainter(self)
-        r = self.rect()
+            return self._draw(p, r)
         w, h = r.width(), r.height()
         p.fillRect(r, QtGui.QColor("#000000"))
         old, new, pr, d = tx["old"], tx["new"], tx["p"], tx["direction"]
@@ -658,3 +689,49 @@ class ProjectionWindow(SlideView):
             self.showNormal()   # only one screen: do not cover the operator window
             self.resize(960, 540)
         return idx, ext
+
+
+class ProgramsView(QtWidgets.QWidget):
+    """Read-only mirror of the REAL projector window ('Programs'). It never holds slide content of its
+    own: every repaint asks the projector to draw its current frame (including a running transition)
+    into this widget, scaled to the projector's own shape. Repaints are driven by the projector's
+    frameChanged signal only (no timer, no screen capture). Hidden projector = black 'Projection off'."""
+
+    def __init__(self, proj):
+        super().__init__()
+        self.proj = proj
+        self.setMinimumSize(320, 180)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)   # not interactive
+        sp = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+        proj.frameChanged.connect(self.update)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return layout.height_for_width(w)
+
+    def sizeHint(self):
+        return QtCore.QSize(400, layout.height_for_width(400))
+
+    def screen_rect(self):
+        """Where the projector picture goes inside this widget: the projector's own aspect, centred."""
+        r = self.rect()
+        pw, ph = max(1, self.proj.width()), max(1, self.proj.height())
+        if pw * r.height() >= ph * r.width():
+            h = max(1, r.width() * ph // pw)
+            return QtCore.QRect(0, (r.height() - h) // 2, r.width(), h)
+        w = max(1, r.height() * pw // ph)
+        return QtCore.QRect((r.width() - w) // 2, 0, w, r.height())
+
+    def paintEvent(self, _):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor("#000000"))
+        if not self.proj.isVisible():
+            p.setPen(QtGui.QColor("#64748b"))
+            p.drawText(self.rect(), QtCore.Qt.AlignCenter, "Projection off")
+            return
+        self.proj.render_frame(p, self.screen_rect())

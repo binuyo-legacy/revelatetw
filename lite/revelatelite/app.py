@@ -10,7 +10,7 @@ from . import __version__, background as bgm, paths, settings as cfg, songthemes
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, check_reference, partial_problem, _is_bare_ordinal, _has_chapter_number
 from .hintfade import HintFade
 from .refedit import RefEdit
-from .projection import PreviewView, ProjectionWindow, SlideView
+from .projection import PreviewView, ProgramsView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
 from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong, import_song_json, export_songs, safe_filename
 
@@ -126,8 +126,15 @@ class Main(QtWidgets.QWidget):
         sv.addWidget(self.service_list, 1)
         side = QtWidgets.QVBoxLayout()
         self.up_b, self.down_b, self.rm_b = (QtWidgets.QPushButton(x) for x in ("Move up", "Move down", "Remove"))
-        for b in (self.up_b, self.down_b, self.rm_b):
+        self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
+        self.blank_b.setEnabled(False)
+        self.project_b = QtWidgets.QPushButton("Project (F5)")
+        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this.")
+        self.project_b.setObjectName("primary")
+        self.project_b.setEnabled(False)
+        for b in (self.project_b, self.blank_b, self.up_b, self.down_b, self.rm_b):
             side.addWidget(b)
+        side.insertSpacing(2, 8)       # small gap between the screen buttons and the list buttons
         side.addStretch(1)
         sv.addLayout(side)
         tabs.addTab(sl, "Service list")
@@ -359,6 +366,12 @@ class Main(QtWidgets.QWidget):
         rightc.addWidget(cap)
         self.tv_frame = theme.TvFrame(self.preview)   # cosmetic bezel only; the preview inside is unchanged
         rightc.addWidget(self.tv_frame)
+        pcap = QtWidgets.QLabel("Programs (live output on the projector screen, view only)")
+        pcap.setObjectName("hint")
+        rightc.addWidget(pcap)
+        self.programs = ProgramsView(self.proj)       # mirror of the real projector window; never edited
+        self.programs_frame = theme.TvFrame(self.programs)
+        rightc.addWidget(self.programs_frame)
         self.ref_lbl.hide()      # the preview already shows the reference
         nav = QtWidgets.QHBoxLayout()
         self.prev_b = QtWidgets.QPushButton("< Previous")
@@ -368,21 +381,14 @@ class Main(QtWidgets.QWidget):
         nav.addWidget(self.next_b)
         rightc.addLayout(nav)
         rightc.addWidget(self.add_b)
+        nav.setSpacing(4)
+        for b in (self.prev_b, self.next_b, self.add_b):      # compact, to leave room for the Programs panel
+            b.setStyleSheet("QPushButton{padding:2px 10px; min-height:14px;}")
         rightc.addStretch(1)
         self.status = QtWidgets.QLabel("")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
-        self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
-        self.blank_b.setEnabled(False)
-        self.project_b = QtWidgets.QPushButton("Project (F5)")
-        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this.")
-        self.project_b.setObjectName("primary")
-        self.project_b.setEnabled(False)
         rightc.addWidget(self.status)
-        pb = QtWidgets.QHBoxLayout()
-        pb.addWidget(self.blank_b)
-        pb.addWidget(self.project_b, 1)
-        rightc.addLayout(pb)
         self.credit_lbl = QtWidgets.QLabel("")
         self.credit_lbl.setObjectName("hint")
         self.credit_lbl.setWordWrap(True)
@@ -1562,6 +1568,8 @@ class Main(QtWidgets.QWidget):
         self.preview.on_air = live
         self.preview.update()
         self.tv_frame.set_on_air(live)
+        self.programs_frame.set_on_air(live)
+        self.programs.update()
         self.blank_b.setEnabled(live)
         if not live:
             self.live_badge.setText("")
