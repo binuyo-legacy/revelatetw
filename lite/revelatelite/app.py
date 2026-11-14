@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, layout, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
@@ -445,26 +445,7 @@ class Main(QtWidgets.QWidget):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1))
-        # Startup geometry: size to the primary screen's available area so the
-        # whole operator window opens on that screen on any display, including
-        # small/low-resolution ones (the 1000x640 default overflows a small
-        # operator screen and spills past its right and bottom edges).
-        self._fit_startup_geometry()
-
-    def _fit_startup_geometry(self):
-        """Open the operator window wholly inside the primary screen's available geometry."""
-        want_w, want_h = 1000, 640
-        try:
-            screen = QtWidgets.QApplication.primaryScreen()
-            if screen is not None:
-                avail = screen.availableGeometry()
-                x, y, w, h = layout.clamp_startup_geometry(
-                    want_w, want_h, avail.x(), avail.y(), avail.width(), avail.height())
-                self.setGeometry(x, y, w, h)
-                return
-        except Exception:
-            pass
-        self.resize(want_w, want_h)
+        self.resize(1000, 640)
 
     # ---------------- helpers ----------------
     def tr_name(self):
