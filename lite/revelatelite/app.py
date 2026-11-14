@@ -308,6 +308,8 @@ class Main(QtWidgets.QWidget):
         sc.setFrameShape(QtWidgets.QFrame.NoFrame)
         sc.setWidget(ow)
         tabs.addTab(sc, "Settings")
+        self.tabs = tabs
+        self._build_quick(tabs)
         leftc.addWidget(tabs, 1)
 
 
@@ -427,6 +429,167 @@ class Main(QtWidgets.QWidget):
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1))
         self.resize(1000, 640)
 
+    # ---------------- quick controls (in the tab row, right of the tabs) ----------------
+    QUICK_EFFECT_SHORT = {"cut": "Cut", "fade": "Fade", "dissolve": "Blend", "wipe": "Wipe", "slide": "Slide",
+                          "blinds": "Blinds", "open": "Open", "checkerboard": "Chess", "diagonal": "Diag",
+                          "iris": "Iris", "zoom": "Zoom", "mosaic": "Mosaic", "clock": "Clock"}
+    QUICK_SONG_SHORT = {"standard": "Std", "midnight": "Night", "classic": "Black", "sunrise": "Sun",
+                        "light": "Ivory", "royal": "Royal"}
+    QUICK_SPEEDS = (0, 200, 400, 800, 1500)
+    QUICK_SIZES = (60, 80, 100, 120, 140)
+    QUICK_W = {"effect": 66, "screen": 54, "speed": 54, "style": 62, "size": 58}
+
+    def _quick_combo(self, key, tip):
+        cb = QtWidgets.QComboBox()
+        cb.setObjectName("quick")
+        cb.setToolTip(tip)
+        cb.setFixedWidth(self.QUICK_W[key])
+        cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLength)
+        cb.setMinimumContentsLength(3)
+        cb.setStyleSheet("QComboBox{padding:3px 4px;} QComboBox::drop-down{width:14px;}")
+        return cb
+
+    def _build_quick(self, tabs):
+        """Three short controls per tab, in the tab bar's own row (a corner widget), so no vertical room is used.
+        They only mirror existing Settings widgets: choosing here sets that widget, which stores and saves as before."""
+        host = QtWidgets.QWidget()
+        host.setObjectName("quickbar")
+        stack = QtWidgets.QStackedLayout(host)
+        stack.setContentsMargins(0, 0, 0, 0)
+        self.quick_host, self.quick_stack = host, stack
+
+        def page(widgets):
+            w = QtWidgets.QWidget()
+            h = QtWidgets.QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(4)
+            for x in widgets:
+                h.addWidget(x)
+            stack.addWidget(w)
+            return w
+
+        def pair(src_effect=True):
+            eff = self._quick_combo("effect", "Screen effect (same as Settings > Screen effect)")
+            for k, label, d in trn.EFFECTS:
+                eff.addItem(self.QUICK_EFFECT_SHORT.get(k, label), k)
+                eff.setItemData(eff.count() - 1, label + ": " + d, QtCore.Qt.ToolTipRole)
+            return eff
+
+        self.q_sl_effect = pair()
+        self.q_sl_screen = self._quick_combo("screen", "Projector screen (same as Settings > Projector screen)")
+        self.q_sl_speed = self._quick_combo("speed", "Effect speed (same as Settings > Effect speed)")
+        self.q_sg_style = self._quick_combo("style", "Song slide style (same as Settings > Song slide style)")
+        for k in songthemes.KEYS:
+            self.q_sg_style.addItem(self.QUICK_SONG_SHORT.get(k, songthemes.label(k)), k)
+            self.q_sg_style.setItemData(self.q_sg_style.count() - 1, songthemes.label(k), QtCore.Qt.ToolTipRole)
+        self.q_sg_effect = pair()
+        self.q_sg_size = self._quick_combo("size", "Song words size for the chosen song style (same as Settings > Words size). "
+                                                  "Pick a song style other than Standard to use it.")
+        self.q_sl_page = page([self.q_sl_effect, self.q_sl_screen, self.q_sl_speed])
+        self.q_sg_page = page([self.q_sg_style, self.q_sg_effect, self.q_sg_size])
+        self.q_none_page = page([])
+        self.quick_controls = {0: [self.q_sl_effect, self.q_sl_screen, self.q_sl_speed],
+                               2: [self.q_sg_style, self.q_sg_effect, self.q_sg_size]}
+        for cb, fn in ((self.q_sl_effect, self._q_effect), (self.q_sg_effect, self._q_effect),
+                       (self.q_sl_screen, self._q_screen), (self.q_sl_speed, self._q_speed),
+                       (self.q_sg_style, self._q_style), (self.q_sg_size, self._q_size)):
+            cb.activated.connect(fn)
+        self.quick_ok = True
+        tabs.setCornerWidget(host, QtCore.Qt.TopRightCorner)
+        tabs.currentChanged.connect(self._quick_page)
+        tabs.installEventFilter(self)
+        self._quick_sync()
+        self._quick_page(tabs.currentIndex())
+
+    def _quick_page(self, i):
+        self.quick_stack.setCurrentWidget({0: self.q_sl_page, 2: self.q_sg_page}.get(i, self.q_none_page))
+        self.quick_host.setFixedSize(self.quick_stack.currentWidget().sizeHint())
+        self._quick_fit()
+
+    def _quick_fit(self):
+        """If the tab row is too narrow for tabs plus controls (very small window), hide the controls
+        rather than squeeze the tabs. Every option is still in Settings."""
+        t = self.tabs
+        need = t.tabBar().sizeHint().width() + self.quick_host.width() + 6
+        if t.width() > 0:
+            self.quick_host.setVisible(t.width() >= need)
+
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, "tabs", None) and ev.type() == QtCore.QEvent.Resize and getattr(self, "quick_ok", False):
+            self._quick_fit()
+        return super().eventFilter(obj, ev)
+
+    def _q_set_items(self, cb, value, label):
+        """Quick lists show presets; a value stored in settings that is not a preset gets its own item."""
+        k = cb.findData(value)
+        if k < 0:
+            cb.addItem(label(value), value)
+            k = cb.count() - 1
+        cb.setCurrentIndex(k)
+
+    def _quick_sync(self, *_):
+        """Show the current stored settings in the quick controls (no changes are stored)."""
+        if not getattr(self, "quick_ok", False):
+            return
+        for cb in (self.q_sl_effect, self.q_sg_effect):
+            cb.blockSignals(True)
+            cb.setCurrentIndex(max(cb.findData(self.st["transition_effect"]), 0))
+            cb.blockSignals(False)
+        cb = self.q_sl_speed
+        cb.blockSignals(True)
+        cb.clear()
+        for ms in sorted(set(self.QUICK_SPEEDS) | {self.st["transition_ms"]}):
+            cb.addItem("0" if ms == 0 else ("%gs" % (ms / 1000.0)), ms)
+            cb.setItemData(cb.count() - 1, "Instant" if ms == 0 else "%d ms" % ms, QtCore.Qt.ToolTipRole)
+        cb.setCurrentIndex(max(cb.findData(self.st["transition_ms"]), 0))
+        cb.setEnabled(self.st["transition_effect"] != "cut")
+        cb.blockSignals(False)
+        cb = self.q_sl_screen
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("Auto", -1)
+        cb.setItemData(0, "Automatic (second screen if plugged in)", QtCore.Qt.ToolTipRole)
+        for i, s in enumerate(QtWidgets.QApplication.screens()):
+            g = s.geometry()
+            cb.addItem("Scr %d" % (i + 1), i)
+            cb.setItemData(cb.count() - 1, "Screen %d: %dx%d" % (i + 1, g.width(), g.height()), QtCore.Qt.ToolTipRole)
+        cb.setCurrentIndex(max(cb.findData(self.st["display"]), 0))
+        cb.blockSignals(False)
+        cb = self.q_sg_style
+        cb.blockSignals(True)
+        cb.setCurrentIndex(max(cb.findData(self.st["song_theme"]), 0))
+        cb.blockSignals(False)
+        cb = self.q_sg_size
+        key = self._sc_key()
+        cb.blockSignals(True)
+        cb.clear()
+        cur = self.sc_scale_sp.value()
+        for v in sorted(set(self.QUICK_SIZES) | {cur}):
+            cb.addItem("%d%%" % v, v)
+        cb.setCurrentIndex(max(cb.findData(cur), 0))
+        cb.setEnabled(key is not None)
+        cb.blockSignals(False)
+
+    def _q_effect(self, i):
+        cb = self.sender()
+        self.tfx_cb.setCurrentIndex(max(self.tfx_cb.findData(cb.itemData(i)), 0))
+
+    def _q_screen(self, i):
+        k = self.display_cb.findData(self.q_sl_screen.itemData(i))
+        if k >= 0:
+            self.display_cb.setCurrentIndex(k)
+
+    def _q_speed(self, i):
+        self.tms_sp.setValue(int(self.q_sl_speed.itemData(i)))
+
+    def _q_style(self, i):
+        k = songthemes.KEYS.index(self.q_sg_style.itemData(i))
+        self.song_theme_lw.setCurrentRow(k)
+
+    def _q_size(self, i):
+        if self._sc_key() is not None:
+            self.sc_scale_sp.setValue(int(self.q_sg_size.itemData(i)))
+
     # ---------------- helpers ----------------
     def tr_name(self):
         return self.trans.currentData()
@@ -444,6 +607,7 @@ class Main(QtWidgets.QWidget):
         k = self.display_cb.findData(self.st["display"])
         self.display_cb.setCurrentIndex(max(k, 0))
         self.display_cb.blockSignals(False)
+        self._quick_sync()
 
     @staticmethod
     def _installed_fonts():
@@ -569,6 +733,7 @@ class Main(QtWidgets.QWidget):
             self.sc_color_b["bg2"].setEnabled(t["bg_kind"] != "solid")
         finally:
             self._sc_loading = False
+            self._quick_sync()
 
     def _sc_set(self, field, value):
         key = self._sc_key()
@@ -765,6 +930,7 @@ class Main(QtWidgets.QWidget):
         self.st["outline_on"] = self.outline_cb.isChecked()
         self.st["outline_px"] = self.outline_sp.value()
         self._sync_outline()
+        self._quick_sync()
         self._apply_style()
         self.save_settings()
 
@@ -785,6 +951,7 @@ class Main(QtWidgets.QWidget):
         self.st["transition_onoff"] = self.tonoff_cb.isChecked()
         self.st["transition_switch"] = self.tsw_cb.isChecked()
         self._sync_transition_controls()
+        self._quick_sync()
         self.save_settings()
 
     def _sync_transition_controls(self):
