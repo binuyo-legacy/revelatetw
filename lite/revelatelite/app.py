@@ -7,7 +7,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
 from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn, versethemes
-from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference
+from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, _is_bare_ordinal, _has_chapter_number
 from .refedit import RefEdit
 from .projection import PreviewView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
@@ -1080,7 +1080,9 @@ class Main(QtWidgets.QWidget):
         """Typing a book prefix ('jo') pre-fills the top book ('Job ') with the extra letters
         selected, so Right/Left can accept it straight away. Never while erasing."""
         first = items[0]
-        if self.box.erasing() or not first.endswith(" ") or any(c.isdigit() for c in typed):
+        # Numbered books ('1 jo' -> '1 John '): the digit starts the BOOK, not a
+        # chapter, so the inline fill applies just like a plain book prefix.
+        if self.box.erasing() or not first.endswith(" "):
             return
         if first.lower().startswith(typed.lower()) and len(first) > len(typed) \
                 and self.box.text() == typed:
@@ -1095,7 +1097,10 @@ class Main(QtWidgets.QWidget):
         full = self.box.text()
         if not t or not typed.strip():
             return False
-        if not any(c.isdigit() for c in typed):          # a book is being typed
+        # A book is being typed when it has no chapter yet: plain books
+        # ('joh'), a lone ordinal ('1'), or a numbered book ('1 jo'). Those must
+        # be routed to the book part, never to chapter/verse (see bible.suggest).
+        if _is_bare_ordinal(typed) or not _has_chapter_number(typed):
             book = find_book(full)
             if book is None:
                 top = suggest(typed, self.bible, t)

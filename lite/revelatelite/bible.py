@@ -49,10 +49,49 @@ def find_book(text):
 _REF = re.compile(r"^\s*(.+?)\s*(\d+)\s*(?:[:. ]\s*(\d*)\s*(?:[-\u2013]\s*(\d+))?)?\s*$")
 
 
+_BARE_ORDINAL = re.compile(r"^\s*[123]\.?\s*$")
+
+
+def _is_bare_ordinal(text):
+    """True for a lone ordinal prefix with no book name yet ('1', '1 ', '2', '3.').
+
+    This is a book being typed, never a chapter: '1' alone must not be read as
+    chapter 1 of an empty book, so typing (autocomplete, arrow navigation) can
+    treat the number plus the book name that follows as ONE book component.
+    """
+    return bool(_BARE_ORDINAL.match(text or ""))
+
+
+def _has_chapter_number(text):
+    """True when the typed text already carries a chapter number.
+
+    'john 3' and '1 john 3' have one; 'joh', '1' and '1 jo' do not. The ordinal
+    prefix of a numbered book ('1 John') is part of the book, never a chapter,
+    which a plain digit search would mistake it for.
+    """
+    t = (text or "").strip()
+    if _is_bare_ordinal(t):
+        return False
+    # A verse already typed ('1 john 3:16'): there IS a chapter number.
+    if ":" in t:
+        return True
+    words = t.replace(".", " ").split()
+    if not words:
+        return False
+    # a trailing number after a recognisable book is the chapter
+    last = words[-1]
+    if not last.isdigit():
+        return False
+    return find_book(" ".join(words[:-1])) is not None
+
+
 def parse_reference(text):
     """'John 3:16', 'rom 8:28', '1 cor 13:4', 'ps 23:1-3', 'John 3' -> (book, chapter, v1, v2).
     A chapter alone means verse 1; a book name alone ('John') means chapter 1 verse 1.
+    A lone ordinal ('1') is a book being typed, not a chapter: it returns None.
     Returns None when it cannot be read."""
+    if _is_bare_ordinal(text):
+        return None
     m = _REF.match(text or "")
     if not m:
         book = find_book(text or "")
@@ -101,6 +140,13 @@ def suggest(text, store=None, translation=None, limit=8):
     text = text or ""
     if not text.strip():
         return []
+    # A lone ordinal ('1', '2', '3') is a book prefix, never a chapter number:
+    # offer the numbered books ("1 Samuel ", "1 John ", ...). Without this the
+    # partial-reference regex below reads the digit as a chapter of an empty
+    # book and returns nothing, so the suggestion list (and the highlight that
+    # follows from accepting one) never shows for numbered books.
+    if _is_bare_ordinal(text):
+        return [n + " " for n in suggest_books(text, limit)]
     m = _PARTIAL.match(text)
     if not m:
         book = find_book(text)
