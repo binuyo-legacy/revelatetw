@@ -565,6 +565,38 @@ class ProjectionWindow(SlideView):
         finally:
             p.restore()
 
+    def render_frame_adaptive(self, p, r):
+        """Paint what this window shows into rect r, ADAPTING to r's own shape (used by Programs).
+
+        A still slide is drawn straight into r, exactly the way the in-app TV preview draws it:
+        the slide engine scales to the height of the rectangle it is given, so the slide fills
+        its box without stretching the text. A running transition has already been rendered at
+        the projector's full-screen pixels, so the frame is painted into that same shape, fitted
+        inside r, and the projector's outside area stays black.
+        """
+        tx = self._tx
+        if tx is None:
+            p.save()
+            p.translate(r.x(), r.y())
+            p.setClipRect(QtCore.QRect(0, 0, r.width(), r.height()))
+            try:
+                self._draw(p, QtCore.QRect(0, 0, r.width(), r.height()))
+            finally:
+                p.restore()
+            return
+        self.render_frame(p, self.fit_rect(r))
+
+    def fit_rect(self, r):
+        """The projector's own shape, fitted inside rect r (letterboxed if the shapes differ)."""
+        pw, ph = max(1, self.width()), max(1, self.height())
+        if r.width() * ph >= r.height() * pw:
+            h = max(1, r.height())
+            w = max(1, h * pw // ph)
+            return QtCore.QRect(r.x() + (r.width() - w) // 2, r.y(), w, h)
+        w = max(1, r.width())
+        h = max(1, w * ph // pw)
+        return QtCore.QRect(r.x(), r.y() + (r.height() - h) // 2, w, h)
+
     def _render_local(self, p, r):
         tx = self._tx
         if tx is None:
@@ -718,14 +750,11 @@ class ProgramsView(QtWidgets.QWidget):
         return QtCore.QSize(400, layout.height_for_width(400))
 
     def screen_rect(self):
-        """Where the projector picture goes inside this widget: the projector's own aspect, centred."""
-        r = self.rect()
-        pw, ph = max(1, self.proj.width()), max(1, self.proj.height())
-        if pw * r.height() >= ph * r.width():
-            h = max(1, r.width() * ph // pw)
-            return QtCore.QRect(0, (r.height() - h) // 2, r.width(), h)
-        w = max(1, r.height() * pw // ph)
-        return QtCore.QRect((r.width() - w) // 2, 0, w, r.height())
+        """The whole inner display area: a still slide adapts to this widget's own shape, the same
+        way the in-app TV preview does (the slide engine scales to the height of the rect it is
+        given, so the slide fills the box without distorting the text). A running transition is
+        still drawn at the projector's own shape, fitted inside this area."""
+        return self.rect()
 
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
@@ -734,4 +763,4 @@ class ProgramsView(QtWidgets.QWidget):
             p.setPen(QtGui.QColor("#64748b"))
             p.drawText(self.rect(), QtCore.Qt.AlignCenter, "Projection off")
             return
-        self.proj.render_frame(p, self.screen_rect())
+        self.proj.render_frame_adaptive(p, self.screen_rect())

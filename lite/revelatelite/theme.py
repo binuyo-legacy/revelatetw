@@ -151,8 +151,9 @@ class TvFrame(QtWidgets.QWidget):
 
     BEZEL = 10   # px of bezel on each side
 
-    def __init__(self, inner, parent=None):
+    def __init__(self, inner, parent=None, glow_hex=None):
         super().__init__(parent)
+        self.glow_hex = glow_hex or C.accent   # live glow colour; gold by default (TV preview stays gold)
         self.on_air = False
         self._glow = 0.0
         self._anim = None
@@ -221,28 +222,28 @@ class TvFrame(QtWidgets.QWidget):
         grad.setColorAt(1.0, QtGui.QColor("#141a27"))
         p.setBrush(QtGui.QBrush(grad))
         g = self._glow
-        ring = _mix(QtGui.QColor(C.border_hover), QtGui.QColor(C.accent), g)
+        ring = _mix(QtGui.QColor(C.border_hover), QtGui.QColor(self.glow_hex), g)
         p.setPen(QtGui.QPen(ring, 1 + g))
         p.drawRoundedRect(r, FRAME_RADIUS, FRAME_RADIUS)
         if g > 0.01:   # warm halo: a few soft translucent strokes just inside the ring (no blur, no layout change)
             p.setBrush(QtCore.Qt.NoBrush)
             for i, (w, a) in enumerate(((7.0, 0.07), (4.5, 0.11), (2.5, 0.16))):
-                c = QtGui.QColor(C.accent)
+                c = QtGui.QColor(self.glow_hex)
                 c.setAlphaF(a * g)
                 p.setPen(QtGui.QPen(c, w))
                 p.drawRoundedRect(r.adjusted(1 + w / 2, 1 + w / 2, -1 - w / 2, -1 - w / 2), FRAME_RADIUS - w / 2, FRAME_RADIUS - w / 2)
             # warm light wash across the bezel: brighter at the top, fading down (gives the metal some depth)
             wash = QtGui.QLinearGradient(r.topLeft(), r.bottomLeft())
-            top = QtGui.QColor(C.accent)
+            top = QtGui.QColor(self.glow_hex)
             top.setAlphaF(0.20 * g)
-            bot = QtGui.QColor(C.accent)
+            bot = QtGui.QColor(self.glow_hex)
             bot.setAlphaF(0.05 * g)
             wash.setColorAt(0.0, top)
             wash.setColorAt(1.0, bot)
             p.setPen(QtCore.Qt.NoPen)
             p.setBrush(QtGui.QBrush(wash))
             p.drawRoundedRect(r, FRAME_RADIUS, FRAME_RADIUS)
-            # controlled bright edge: a thin pale-gold highlight just inside the ring
+            # controlled bright edge: a thin pale highlight just inside the ring
             hi = QtGui.QColor("#fff1c2")
             hi.setAlphaF(0.55 * g)
             p.setBrush(QtCore.Qt.NoBrush)
@@ -255,8 +256,8 @@ class TvFrame(QtWidgets.QWidget):
         p.setBrush(QtCore.Qt.NoBrush)
         p.setPen(QtGui.QPen(QtGui.QColor("#05080f"), 2))
         p.drawRoundedRect(inner, 4, 4)
-        if g > 0.01:   # the screen rim picks up a faint gold light, keeping the double-line look
-            rim = QtGui.QColor(C.accent)
+        if g > 0.01:   # the screen rim picks up a faint glow light, keeping the double-line look
+            rim = QtGui.QColor(self.glow_hex)
             rim.setAlphaF(0.45 * g)
             p.setPen(QtGui.QPen(rim, 1))
             p.drawRoundedRect(inner.adjusted(-1.5, -1.5, 1.5, 1.5), 5, 5)
@@ -264,9 +265,9 @@ class TvFrame(QtWidgets.QWidget):
         p.setPen(QtCore.Qt.NoPen)
         led = QtCore.QPointF(r.center().x(), r.bottom() - 5)
         if g > 0.01:
-            halo = QtGui.QColor(C.accent)
+            halo = QtGui.QColor(self.glow_hex)
             halo.setAlphaF(0.28 * g)
             p.setBrush(halo)
             p.drawEllipse(led, 4.5, 4.5)
-        p.setBrush(_mix(QtGui.QColor("#475569"), QtGui.QColor(C.accent), g))
+        p.setBrush(_mix(QtGui.QColor("#475569"), QtGui.QColor(self.glow_hex), g))
         p.drawEllipse(led, 2, 2)

@@ -370,7 +370,7 @@ class Main(QtWidgets.QWidget):
         pcap.setObjectName("hint")
         rightc.addWidget(pcap)
         self.programs = ProgramsView(self.proj)       # mirror of the real projector window; never edited
-        self.programs_frame = theme.TvFrame(self.programs)
+        self.programs_frame = theme.TvFrame(self.programs, glow_hex=C.live_on_border)   # green: this panel means live output
         rightc.addWidget(self.programs_frame)
         self.ref_lbl.hide()      # the preview already shows the reference
         nav = QtWidgets.QHBoxLayout()

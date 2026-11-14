@@ -53,9 +53,9 @@ class ProgramsMirror(unittest.TestCase):
         return pv.grab().toImage()
 
     def expected(self, w):
-        """What the projector window itself draws, scaled into the Programs rect."""
+        """What the Programs widget itself paints, including its adaptive scaling."""
         r = w.programs.screen_rect()
-        return img_of(w.proj.render_frame, r.width(), r.height())
+        return img_of(lambda p, rect: w.proj.render_frame_adaptive(p, rect), r.width(), r.height())
 
     def center_matches(self, w):
         got = self.mirror_img(w)
@@ -233,6 +233,100 @@ class ProgramsMirror(unittest.TestCase):
         self.assertTrue(n)
         timers = [t for t in w.programs.findChildren(QtCore.QTimer)]
         self.assertEqual(timers, [])
+    # ---- adaptive scaling: the slide fills the Programs box like the TV preview ----
+
+    def test_screen_rect_is_the_whole_widget(self):
+        w = self.make()
+        self.assertEqual(w.programs.screen_rect(), w.programs.rect())
+
+    def test_slide_fills_box_edges_not_letterboxed(self):
+        """Corners/edges carry the slide background, not the old black sidebars."""
+        w = self.make()
+        w.lookup("John 3:16")
+        w.project()
+        self.pump()
+        im = self.mirror_img(w)
+        r = w.programs.rect()
+        black = 0xff000000
+        navies = {0xff0b0f19}
+        for (x, y) in ((2, 2), (r.width() - 3, 2), (2, r.height() - 3), (r.width() - 3, r.height() - 3),
+                       (r.width() // 2, 2), (2, r.height() // 2), (r.width() - 3, r.height() // 2), (r.width() // 2, r.height() - 3)):
+            self.assertNotEqual(im.pixel(x, y), black, (x, y))
+            self.assertIn(im.pixel(x, y), navies, (x, y))
+
+    def test_adaptation_follows_programs_widget_size(self):
+        """Resizing the Programs widget re-scales the slide to its own box (no fixed bar inset)."""
+        from revelatelite.projection import ProgramsView
+        import tempfile
+        from revelatelite import paths
+        d = tempfile.mkdtemp()
+        paths.user_dir = lambda: d
+        lite_app.paths.user_dir = lambda: d
+        w = lite_app.Main()
+        w.show()
+        self.qa.processEvents()
+        pv = w.programs
+        w.lookup("John 3:16")
+        w.project()
+        self.pump()
+        self.assertTrue(pv.screen_rect().isValid())
+        # a tall, narrow box gets the full height through the same fit path
+        pv.resize(300, 400)
+        self.qa.processEvents()
+        self.assertEqual(pv.screen_rect(), pv.rect())
+        fr = w.proj.fit_rect(pv.rect())
+        self.assertLessEqual(fr.width(), pv.width())
+        self.assertLessEqual(fr.height(), pv.height())
+        self.assertGreater(fr.width(), 0)
+        self.assertGreater(fr.height(), 0)
+        # and painting still works at the new shape
+        im = pv.grab().toImage()
+        self.assertGreater(im.width(), 0)
+
+    # ---- green live frame (Programs only) ----
+
+    def test_programs_glow_is_green_tv_stays_gold(self):
+        w = self.make()
+        from revelatetw.ui_tokens import COLORS as C
+        self.assertEqual(w.programs_frame.glow_hex, C.live_on_border)
+        g = QtGui.QColor(w.programs_frame.glow_hex)
+        self.assertGreater(g.green(), g.red())          # green, not gold
+        self.assertEqual(w.tv_frame.glow_hex, C.accent)  # TV preview keeps gold
+        gold = QtGui.QColor(C.accent)
+        self.assertGreater(gold.red(), gold.green())
+
+    def test_green_frame_lights_and_dims_with_live_state(self):
+        os.environ["REVELATELITE_NO_GLOW_ANIMATION"] = "1"
+        try:
+            w = self.make()
+            self.assertEqual(w.programs_frame.glow, 0.0)     # off: subdued
+            self.assertFalse(w.programs_frame.on_air)
+            w.lookup("John 3:16")
+            w.project()
+            self.pump()
+            self.assertTrue(w.programs_frame.on_air)
+            self.assertEqual(w.programs_frame.glow, 1.0)     # live: fully lit green
+            self.assertEqual(w.tv_frame.glow, 1.0)           # tv also lit (gold, unchanged)
+            w.project_off()
+            self.pump()
+            self.assertFalse(w.programs_frame.on_air)
+            self.assertEqual(w.programs_frame.glow, 0.0)     # off again: dims out
+        finally:
+            os.environ.pop("REVELATELITE_NO_GLOW_ANIMATION", None)
+
+    # ---- no size/layout change ----
+
+    def test_frames_same_size_and_no_layout_shift_on_live(self):
+        w = self.make()
+        w.lookup("John 3:16")
+        w.project()
+        self.pump()
+        # sizes while live (frames have settled at their final geometry)
+        self.assertEqual(w.programs_frame.size(), w.tv_frame.size())
+        self.assertEqual(w.programs.height(), w.preview.height())
+        w.project_off()
+        self.pump()
+        self.assertEqual(w.programs_frame.size(), w.tv_frame.size())
 
 
 if __name__ == "__main__":
