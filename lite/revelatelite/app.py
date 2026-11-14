@@ -1695,6 +1695,7 @@ def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("RevelateTW Lite")
+    theme.install_button_focus_style(app)
     app.setStyleSheet(QSS)
     w = Main()
     w.show()

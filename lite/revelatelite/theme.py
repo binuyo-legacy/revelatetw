@@ -103,6 +103,32 @@ QMenu::item:selected {{ background:{sel}; color:{accent}; }}
 """
 
 
+class NoButtonFocusRectStyle(QtWidgets.QProxyStyle):
+    """Drops the native dotted keyboard-focus rectangle on push buttons only.
+
+    Windows styles (windowsvista / windows) draw that rectangle through PE_FrameFocusRect; the
+    stylesheet cannot always hide it there. Buttons keep their focus policy and keyboard
+    activation, and still show the gold `QPushButton:focus` border. Other widgets are untouched."""
+
+    def drawPrimitive(self, element, option, painter, widget=None):
+        if element == QtWidgets.QStyle.PE_FrameFocusRect and isinstance(widget, QtWidgets.QPushButton):
+            return
+        super().drawPrimitive(element, option, painter, widget)
+
+
+_FOCUS_STYLE = None
+
+
+def install_button_focus_style(app):
+    """Wrap the platform style once (idempotent)."""
+    global _FOCUS_STYLE
+    if _FOCUS_STYLE is not None:
+        return _FOCUS_STYLE
+    _FOCUS_STYLE = NoButtonFocusRectStyle(app.style().objectName())   # module ref keeps it alive
+    app.setStyle(_FOCUS_STYLE)
+    return _FOCUS_STYLE
+
+
 def build_qss():
     return _QSS.format(
         bg=C.bg, text=C.text, strong=C.text_strong, body=T.body, inp=C.surface_input, bc=C.border_control,
