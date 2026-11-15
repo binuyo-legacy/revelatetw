@@ -122,7 +122,13 @@ def resolve(key, text_color="", bg_color=""):
     if _valid_color(text_color):
         t["text"] = text_color.lower()
     if _valid_color(bg_color):
-        t["bg_kind"], t["bg1"], t["bg2"] = "solid", bg_color.lower(), bg_color.lower()
+        bg = bg_color.lower()
+        # Every historical key must agree: some renders read the legacy "bg"
+        # tuple (kind, c1, c2) while others read bg_kind/bg1/bg2. Updating only
+        # the new keys left the tuple at the template navy, so a custom
+        # background picked in the Timer tab never painted. Keep all four in sync.
+        t["bg_kind"], t["bg1"], t["bg2"] = "solid", bg, bg
+        t["bg"] = ("solid", bg, bg)
     return t
 
 
@@ -163,6 +169,56 @@ def dial_string(dt, fmt="24"):
 
 def clamp_duration(seconds):
     return max(1, min(12 * 3600, int(seconds)))
+
+
+# ---- digit fall (flip) animation ----
+# When a time/countdown digit changes, the NEW digit falls in from above
+# and settles into its slot while the old digit drops out below. The model is
+# headless and deterministic so it is testable without a frame loop; the
+# projection renderer draws the per-change offsets it returns.
+FALL_DURATION_MS = 350
+FALL_TRAVEL_FRAC = 1.1  # new digit starts this many digit heights above its slot
+
+
+def falling_centers(old_text, new_text, t_ms):
+    """Frames to draw at t_ms into a digit change, one entry per column.
+
+    Each entry is (new_char, old_char, y_offset_frac): y_offset is in digit
+    heights, negative = above the slot (falling in), positive = below it
+    (the old digit exiting). At t >= FALL_DURATION_MS all offsets are 0 and
+    the caller draws the plain text. Deterministic: same inputs, same frames.
+    """
+    n = max(len(str(old_text)), len(str(new_text)))
+    old_s = str(old_text).rjust(n)
+    new_s = str(new_text).rjust(n)
+    if t_ms is None or t_ms >= FALL_DURATION_MS:
+        return [(nw, o, 0.0) for nw, o in zip(new_s, old_s)]
+    frac = max(0.0, min(1.0, float(t_ms) / float(FALL_DURATION_MS)))
+    # new digit eases in from above (ease-out), old digit drops out below
+    # with an accelerating (gravity) ease.
+    land = 1.0 - (1.0 - frac) ** 3
+    drop = frac * frac
+    out = []
+    for o, nw in zip(old_s, new_s):
+        if o == nw:
+            out.append((nw, o, 0.0))
+        else:
+            out.append((nw, o, -FALL_TRAVEL_FRAC * (1.0 - land) + FALL_TRAVEL_FRAC * drop))
+    return out
+
+
+def digit_changed(old_text, new_text):
+    """True when any aligned digit position differs (colon/other chars ignored)."""
+    if old_text == new_text:
+        return False
+    o = str(old_text).rjust(len(str(new_text)))
+    n = str(new_text)
+    if len(o) != len(n):
+        return True
+    for a, b in zip(o, n):
+        if a != b and (a.isalnum() or b.isalnum()):
+            return True
+    return False
 
 
 class TimerEngine:
@@ -266,15 +322,35 @@ class TimerEngine:
             text, marker = format_clock(dt, self.fmt, self.show_ampm, self.show_seconds)
             dial = None
             if self.style == "analog":
-                dial = dict(hour=dt.hour % 12 + dt.minute / 60.0, minute=dt.minute + dt.second / 60.0, second=dt.second)
+                # Standard clockwise wall-clock mapping. Fractional parts are
+                # included so the hands sweep smoothly between ticks:
+                #   second = seconds (with microsecond fraction when live)
+                #   minute = minutes + seconds/60
+                #   hour   = hours(12h) + minutes/60
+                sec = dt.second + dt.microsecond / 1e6
+                dial = dict(hour=(dt.hour % 12) + dt.minute / 60.0 + sec / 3600.0,
+                            minute=dt.minute + sec / 60.0,
+                            second=sec)
         else:
             text = format_countdown(self.remaining)
             marker = ""
             dial = None
             if self.style == "analog":
-                # countdown dial sweeps from full to empty over the configured duration
-                frac = (self.remaining / float(self.duration)) if self.duration else 0.0
-                dial = dict(hour=frac * 12.0, minute=frac * 60.0, second=(self.remaining % 60))
+                # Countdown hands show ELAPSED time sweeping clockwise like a
+                # normal clock (never backwards); the remaining time is shown
+                # in digits under/inside the dial, and the draining arc shows
+                # how much is left. So the hands equal "time since it started",
+                # the digits equal "time remaining".
+                elapsed = max(0.0, float(self.duration) - float(self.remaining))
+                sec = elapsed % 60.0
+                minutes = (elapsed / 60.0) % 60.0
+                hours = (elapsed / 3600.0) % 12.0
+                dial = dict(hour=hours + minutes / 60.0,
+                            minute=minutes,
+                            second=sec,
+                            elapsed=elapsed,
+                            remaining=float(self.remaining),
+                            fraction=(self.remaining / float(self.duration)) if self.duration else 0.0)
         return dict(text=text, marker=marker, label="", state="",
                     message=self.message,
                     mode=self.mode, style=self.style, dial=dial, seconds=self.show_seconds,

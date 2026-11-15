@@ -179,6 +179,44 @@ class SlideView(QtWidgets.QWidget):
         self.timer_snap = None                    # timer.py snapshot dict, or None (verses/songs unchanged)
         self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
+        self._fall_prev_text = ""
+        self._fall_old_text = ""
+        self._fall_frames = None
+        self._fall_elapsed = None
+        self._fall_timer = QtCore.QTimer(self)
+        self._fall_timer.setInterval(16)
+        self._fall_timer.timeout.connect(self._step_fall)
+
+    # ---- falling digit animation (timer digital only) ----
+    def _step_fall(self):
+        if self._fall_elapsed is None:
+            return
+        try:
+            t_ms = self._fall_elapsed.elapsed()
+        except Exception:
+            t_ms = timermod.FALL_DURATION_MS
+        if t_ms >= timermod.FALL_DURATION_MS:
+            self._fall_frames = None
+            self._fall_timer.stop()
+            self._fall_elapsed = None
+        else:
+            self._fall_frames = timermod.falling_centers(self._fall_old_text, self._fall_prev_text, t_ms)
+        self.update()
+
+    def _begin_fall(self, old_text, new_text):
+        """Start a falling-digit animation from old_text to new_text."""
+        if old_text == new_text:
+            self._fall_frames = None
+            self._fall_prev_text = str(new_text)
+            return
+        from PyQt5.QtCore import QElapsedTimer
+        self._fall_old_text = str(old_text)
+        self._fall_prev_text = str(new_text)
+        self._fall_elapsed = QElapsedTimer()
+        self._fall_elapsed.start()
+        self._fall_frames = timermod.falling_centers(old_text, new_text, 0)
+        if not self._fall_timer.isActive():
+            self._fall_timer.start()
 
     # ---- content ----
     def set_content(self, ref, body, credit="", meta=None):
@@ -190,9 +228,20 @@ class SlideView(QtWidgets.QWidget):
 
     def set_timer(self, snap):
         """Timer tab slide. snap is timer.py's snapshot dict (text/marker/message...)."""
+        old_text = ""
+        try:
+            old_text = str((self.timer_snap or {}).get("text", "")) if self.timer_snap else ""
+        except Exception:
+            old_text = ""
+        new_text = str((snap or {}).get("text", ""))
         self.timer_snap = snap
         self.meta = None
         self.live = True
+        if snap and snap.get("style") != "analog" and old_text and new_text and timermod.digit_changed(old_text, new_text):
+            self._begin_fall(old_text, new_text)
+        elif snap:
+            self._fall_frames = None
+            self._fall_prev_text = new_text
         self.update()
 
     def blank(self):
@@ -371,12 +420,39 @@ class SlideView(QtWidgets.QWidget):
                 rad = math.radians(ang)
                 p.setPen(QtGui.QPen(colour, max(2, int(r * width))))
                 p.drawLine(int(cx), int(cy), int(cx + math.sin(rad) * length), int(cy - math.cos(rad) * length))
-            hand(dial.get("hour", 0), 12, r * 0.48, 0.035, txt)
-            hand(dial.get("minute", 0), 60, r * 0.72, 0.025, txt)
-            if snap.get("seconds") or snap.get("mode") == "countdown":
-                hand(dial.get("second", 0), 60, r * 0.80, 0.012, acc)
+            # Standard wall clock, three clearly distinct hands:
+            # short thick = hour, medium = minute, thin + accent = second.
+            hand(dial.get("hour", 0), 12, r * 0.48, 0.045, txt)
+            hand(dial.get("minute", 0), 60, r * 0.72, 0.030, txt)
+            hand(dial.get("second", 0), 60, r * 0.82, 0.014, acc)
             p.setPen(acc)
             p.drawEllipse(QtCore.QRectF(cx - r * 0.04, cy - r * 0.04, r * 0.08, r * 0.08))
+            # Countdown: digits under the dial show the time LEFT and an arc
+            # drains as it runs. No generic mode word is needed for these.
+            if snap.get("mode") == "countdown":
+                try:
+                    frac_left = float(dial.get("fraction", 0.0))
+                except (TypeError, ValueError):
+                    frac_left = 0.0
+                frac_left = max(0.0, min(1.0, frac_left))
+                if frac_left > 0.0:
+                    p.setPen(QtGui.QPen(acc, max(3, int(r * 0.035))))
+                    p.drawArc(QtCore.QRectF(cx - r * 1.08, cy - r * 1.08, r * 2.16, r * 2.16),
+                              -90 * 16, int(-360 * frac_left * 16))
+                df = QtGui.QFont(family)
+                df.setBold(True)
+                df.setPixelSize(max(10, int(r * 0.22)))
+                p.setFont(df)
+                p.setPen(txt)
+                p.drawText(QtCore.QRectF(cx - r, cy + r * 0.42, r * 2, r * 0.34),
+                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
+            elif marker:
+                df = QtGui.QFont(family)
+                df.setPixelSize(max(10, int(r * 0.18)))
+                p.setFont(df)
+                p.setPen(txt)
+                p.drawText(QtCore.QRectF(cx - r, cy + r * 0.42, r * 2, r * 0.34),
+                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, marker)
             if message:
                 sf = QtGui.QFont(family)
                 sf.setPixelSize(max(10, int(h * 0.045)))
@@ -406,7 +482,38 @@ class SlideView(QtWidgets.QWidget):
         p.setPen(txt)
         time_rect = QtCore.QRect(int(plate.left() + plate.width() * 0.04),
                                  int(h * 0.30), int(plate.width() * 0.92), int(h * 0.38))
-        p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
+        # Falling digit animation: when new digits land, the changed columns
+        # fall into place (old digit dropping out below). The view tracks the
+        # previous snapshot text and a small work timer repaints at ~60fps
+        # until the fall settles; outside that window the plain draw below is
+        # used, so the slide is identical when nothing is animating.
+        frames = getattr(self, "_fall_frames", None)
+        if frames is not None:
+            try:
+                digit_h = max(10, int(h * frac))
+                fm = QtGui.QFontMetrics(f)
+                advances = []
+                for ch in text:
+                    try:
+                        advances.append(fm.horizontalAdvance(ch))
+                    except AttributeError:
+                        advances.append(fm.width(ch))
+                total_w = sum(advances) or plate_inner_w
+                cx0 = w / 2.0 - total_w / 2.0
+                y_mid = h * 0.30 + h * 0.19
+                x = cx0
+                for i, (nw, old, off) in enumerate(frames):
+                    if i >= len(text):
+                        break
+                    aw = advances[i] if i < len(advances) else 0
+                    cell = QtCore.QRectF(x - off * 0.0, y_mid - digit_h / 2.0 + off * digit_h,
+                                         max(aw, 1), digit_h)
+                    p.drawText(cell, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, str(nw))
+                    x += aw
+            except Exception:
+                p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
+        else:
+            p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
         if marker:
             mf = QtGui.QFont(family)
             mf.setBold(True)
