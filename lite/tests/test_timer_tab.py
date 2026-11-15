@@ -32,7 +32,7 @@ class TimerLogic(unittest.TestCase):
         e.start()
         assert e.tick()["remaining"] == 119
         e.pause()
-        assert e.tick()["state"] == "PAUSED"
+        assert e.tick()["state"] == ""
         e.reset()
         assert e.snapshot()["remaining"] == 120
         assert tm.clean_style("weird") == "digital"
@@ -44,11 +44,16 @@ class TimerLogic(unittest.TestCase):
 
     def test_settings_defaults(self):
         d = cfg.DEFAULTS
-        for k in ("timer_template", "timer_mode", "timer_format", "timer_ampm", "timer_duration", "timer_style", "timer_show_seconds"):
+        for k in ("timer_template", "timer_mode", "timer_format", "timer_ampm", "timer_duration", "timer_style", "timer_show_seconds",
+                  "timer_source", "timer_message", "timer_font_family", "timer_text_color", "timer_bg_color",
+                  "timer_manual_hour", "timer_manual_minute", "timer_manual_second"):
             assert k in d
         loaded = cfg.load("/nonexistent/settings.json")
         assert loaded["timer_style"] == "digital"
-        assert loaded["timer_mode"] == "clock"
+        assert loaded["timer_mode"] == "time"
+        assert loaded["timer_source"] == "live"
+        assert loaded["timer_font_family"] == "Segoe UI"
+        assert loaded["timer_message"] == ""
 
 
 @unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
@@ -96,6 +101,61 @@ class TimerQt(unittest.TestCase):
         w.project()
         assert w.proj.timer_snap is not None
         w.close()
+
+
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class TimerRefinements(unittest.TestCase):
+    def test_no_static_labels_or_state_in_any_mode(self):
+        import datetime as _dt
+        for mode, style in (("time", "digital"), ("time", "analog"), ("countdown", "digital"), ("countdown", "analog")):
+            s = tm.TimerEngine(mode=mode, style=style, duration=300, message="Pastor leading prayer").snapshot(_dt.datetime(2026, 1, 1, 10, 0, 0))
+            assert s["label"] == "" and s["state"] == "", (mode, style, s)
+            assert "CLOCK" not in (s["text"] + s["message"]) and "COUNTDOWN" not in (s["text"] + s["message"])
+            assert "RUNNING" not in (s["text"] + s["message"]) and "PAUSED" not in (s["text"] + s["message"])
+            assert s["message"] == "Pastor leading prayer"
+
+    def test_message_per_entry_and_cleaning(self):
+        e = tm.TimerEngine(mode="countdown", duration=60, message="  Pastor   leading   prayer  ")
+        assert e.snapshot()["message"] == "Pastor leading prayer"
+        e.configure(message="Closing and benediction")
+        assert e.snapshot()["message"] == "Closing and benediction"
+        assert len(tm.clean_message("x" * 500)) == tm.MAX_MESSAGE
+        s = tm.TimerEngine(mode="time", message="Opening service").snapshot()
+        assert s["message"] == "Opening service"
+
+    def test_manual_time_and_clock_alias(self):
+        import datetime as _dt
+        assert tm.clean_mode("clock") == "time"
+        e = tm.TimerEngine(mode="time", source="manual", manual_hour=18, manual_minute=30, manual_second=5, show_seconds=True)
+        s = e.snapshot(_dt.datetime(2026, 1, 1, 3, 3, 3))   # live now must be ignored
+        assert s["text"] == "18:30:05"
+        e.configure(manual_hour=9, manual_minute=0)
+        assert e.snapshot()["text"] == "09:00:05"
+        assert tm.clamp_time(25, 99, -1) == (23, 59, 0)
+        assert tm.clean_source("manual") == "manual" and tm.clean_source("bogus") == "live"
+
+    def test_font_and_colors_flow_to_snapshot_and_resolve(self):
+        e = tm.TimerEngine(mode="time", font_family="Georgia", text_color="#FF0000", bg_color="#00FF00")
+        s = e.snapshot()
+        assert s["font_family"] == "Georgia"
+        r = tm.resolve(s["template"], s["text_color"], s["bg_color"])
+        assert r["text"] == "#ff0000" and r["bg1"] == "#00ff00"
+        assert tm.clean_font("No Such Font") == "Segoe UI"
+        assert tm.clean_font("Calibri") == "Calibri"
+
+    def test_message_rect_stays_inside_template_shape(self):
+        for w, h in ((1280, 720), (640, 360), (1920, 1080)):
+            x, y, rw, rh = tm.inner_rect(w, h)
+            assert 0 <= x and 0 <= y and x + rw <= w and y + rh <= h
+            assert y >= h * 0.5 and y + rh <= h * 0.98   # inside, clear of outer frame
+        # projection draws only the message, never a generic label, even for legacy snaps
+        from revelatelite.projection import PreviewView
+        pv = PreviewView()
+        pv.resize(640, 360)
+        legacy = dict(tm.TimerEngine(mode="countdown", duration=60, message="Final prayer").snapshot(),
+                      label="COUNTDOWN", state="RUNNING")
+        pv.show_timer(legacy)
+        assert pv.timer_snap is not None and pv.live
 
 
 if __name__ == "__main__":

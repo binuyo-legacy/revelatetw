@@ -39,9 +39,55 @@ TEMPLATES = {
 KEYS = list(TEMPLATES.keys())
 DEFAULT = "revelate"
 
-MODES = ("clock", "countdown")
+MODES = ("time", "countdown")
+SOURCES = ("live", "manual")
 FORMATS = ("24", "12")
 STYLES = ("digital", "analog")
+
+# Windows fonts offered in the Timer tab. settings.FONT_GROUPS has the same
+# Windows 8.1 faces; duplicated here so this headless module never imports Qt
+# settings (avoids a settings <-> timer import cycle through load()).
+FONT_FAMILIES = (
+    "Segoe UI", "Georgia", "Arial", "Arial Black", "Calibri", "Cambria",
+    "Candara", "Comic Sans MS", "Consolas", "Corbel", "Courier New",
+    "Franklin Gothic Medium", "Gabriola", "Impact", "Lucida Sans Unicode",
+    "Palatino Linotype", "Segoe Script", "Tahoma", "Times New Roman", "Verdana",
+)
+MAX_MESSAGE = 120
+MESSAGE_RECT_FRAC = (0.10, 0.74, 0.80, 0.10)
+
+
+def inner_rect(w, h):
+    """Inner shape every projected timer string must stay inside.
+    Returns (x, y, width, height) as floats. Kept in one place so the
+    renderer and the bounds tests agree exactly."""
+    x, y, rw, rh = MESSAGE_RECT_FRAC
+    return (w * x, h * y, w * rw, h * rh)
+
+
+def clean_message(m):
+    return " ".join(str(m or "").split())[:MAX_MESSAGE]
+
+
+def clean_source(s):
+    return s if s in SOURCES else "live"
+
+
+def clean_font(f):
+    return f if f in FONT_FAMILIES else "Segoe UI"
+
+
+def clamp_time(hour, minute, second=0, ampm=None):
+    """Normalise a manually entered clock time to a plain (h, m, s) 24h tuple."""
+    try:
+        h, m, s = int(hour), int(minute), int(second)
+    except (TypeError, ValueError):
+        return (0, 0, 0)
+    if ampm in ("AM", "am", "a"):
+        h = h % 12
+    elif ampm in ("PM", "pm", "p"):
+        h = (h % 12) + 12
+    return (max(0, min(23, h)), max(0, min(59, m)), max(0, min(59, s)))
 
 
 def clean(key):
@@ -49,7 +95,9 @@ def clean(key):
 
 
 def clean_mode(m):
-    return m if m in MODES else "clock"
+    if m == "clock":  # settings saved before the Time rename
+        return "time"
+    return m if m in MODES else "time"
 
 
 def clean_format(f):
@@ -76,6 +124,12 @@ def resolve(key, text_color="", bg_color=""):
     if _valid_color(bg_color):
         t["bg_kind"], t["bg1"], t["bg2"] = "solid", bg_color.lower(), bg_color.lower()
     return t
+
+
+def manual_datetime(hour, minute, second=0, ampm=None):
+    """A datetime carrying only the manually entered time (today's date)."""
+    h, m, s = clamp_time(hour, minute, second, ampm)
+    return datetime.datetime.now().replace(hour=h, minute=m, second=s, microsecond=0)
 
 
 def format_clock(dt, fmt="24", show_ampm=True, show_seconds=False):
@@ -114,8 +168,10 @@ def clamp_duration(seconds):
 class TimerEngine:
     """Operator-controlled clock/countdown state. One tick per second from Qt."""
 
-    def __init__(self, mode="clock", fmt="24", show_ampm=True, duration=300, template=DEFAULT,
-                 text_color="", bg_color="", style="digital", show_seconds=False):
+    def __init__(self, mode="time", fmt="24", show_ampm=True, duration=300, template=DEFAULT,
+                 text_color="", bg_color="", style="digital", show_seconds=False,
+                 message="", source="live", manual_hour=9, manual_minute=0, manual_second=0,
+                 font_family="Segoe UI"):
         self.mode = clean_mode(mode)
         self.fmt = clean_format(fmt)
         self.show_ampm = bool(show_ampm)
@@ -128,9 +184,15 @@ class TimerEngine:
         self.bg_color = bg_color if _valid_color(bg_color) else ""
         self.style = clean_style(style)
         self.show_seconds = bool(show_seconds)
+        self.message = clean_message(message)
+        self.source = clean_source(source)
+        self.manual_hour, self.manual_minute, self.manual_second = clamp_time(manual_hour, manual_minute, manual_second)
+        self.font_family = clean_font(font_family)
 
     def configure(self, mode=None, fmt=None, show_ampm=None, duration=None,
-                  template=None, text_color=None, bg_color=None, style=None, show_seconds=None):
+                  template=None, text_color=None, bg_color=None, style=None, show_seconds=None,
+                  message=None, source=None, manual_hour=None, manual_minute=None, manual_second=None,
+                  font_family=None):
         if mode is not None:
             self.mode = clean_mode(mode)
         if fmt is not None:
@@ -152,6 +214,20 @@ class TimerEngine:
             self.style = clean_style(style)
         if show_seconds is not None:
             self.show_seconds = bool(show_seconds)
+        if message is not None:
+            self.message = clean_message(message)
+        if source is not None:
+            self.source = clean_source(source)
+        if manual_hour is not None or manual_minute is not None or manual_second is not None:
+            self.manual_hour, self.manual_minute, self.manual_second = clamp_time(
+                self.manual_hour if manual_hour is None else manual_hour,
+                self.manual_minute if manual_minute is None else manual_minute,
+                self.manual_second if manual_second is None else manual_second)
+        if font_family is not None:
+            self.font_family = clean_font(font_family)
+
+    def manual_dt(self):
+        return manual_datetime(self.manual_hour, self.manual_minute, self.manual_second)
 
     def start(self):
         if self.mode == "countdown":
@@ -178,26 +254,30 @@ class TimerEngine:
         return self.snapshot(now)
 
     def snapshot(self, now=None):
-        if self.mode == "clock":
-            dt = now or datetime.datetime.now()
+        # No generic CLOCK / COUNTDOWN caption and no RUNNING/PAUSED/FINISHED state
+        # is projected: people already know what it is, and those words used to
+        # overflow the custom template shapes. The only words on screen are the
+        # operator's own message (if any) plus the time/countdown itself.
+        if self.mode == "time":
+            if self.source == "manual":
+                dt = self.manual_dt()
+            else:
+                dt = now or datetime.datetime.now()
             text, marker = format_clock(dt, self.fmt, self.show_ampm, self.show_seconds)
-            label_text = "CLOCK"
-            state = ""
             dial = None
             if self.style == "analog":
                 dial = dict(hour=dt.hour % 12 + dt.minute / 60.0, minute=dt.minute + dt.second / 60.0, second=dt.second)
         else:
             text = format_countdown(self.remaining)
             marker = ""
-            label_text = "COUNTDOWN"
-            state = "FINISHED" if self.finished else ("RUNNING" if self.running else "PAUSED")
             dial = None
             if self.style == "analog":
                 # countdown dial sweeps from full to empty over the configured duration
                 frac = (self.remaining / float(self.duration)) if self.duration else 0.0
                 dial = dict(hour=frac * 12.0, minute=frac * 60.0, second=(self.remaining % 60))
-        return dict(text=text, marker=marker, label=label_text, state=state,
+        return dict(text=text, marker=marker, label="", state="",
+                    message=self.message,
                     mode=self.mode, style=self.style, dial=dial, seconds=self.show_seconds,
-                    template=self.template,
+                    template=self.template, font_family=self.font_family,
                     text_color=self.text_color, bg_color=self.bg_color,
                     remaining=int(round(self.remaining)) if self.mode == "countdown" else None)

@@ -22,7 +22,13 @@ DEFAULTS = {
     "timer_template": "revelate",  # Timer tab look (timer.py); verses/songs never use it
     "timer_text_color": "",   # "" = template text colour, else "#rrggbb"
     "timer_bg_color": "",     # "" = template background, else "#rrggbb"
-    "timer_mode": "clock",    # clock | countdown (timer.py)
+    "timer_mode": "time",     # time | countdown (timer.py); "clock" from older saves is mapped to "time"
+    "timer_source": "live",   # live (system clock) | manual (operator-set time) for Time mode
+    "timer_manual_hour": 9,   # manual Time value, 0..23
+    "timer_manual_minute": 0, # manual Time value, 0..59
+    "timer_manual_second": 0, # manual Time value, 0..59
+    "timer_message": "",      # operator's own core message/title shown with the time/countdown
+    "timer_font_family": "Segoe UI",  # projected timer font (timer.py FONT_FAMILIES)
     "timer_format": "24",     # 24 | 12
     "timer_ampm": False,      # show AM/PM marker (12h only)
     "timer_duration": 300,    # countdown length in seconds
@@ -162,6 +168,11 @@ def load(path):
     data["verse_theme"] = versethemes.clean(data["verse_theme"])
     data["timer_template"] = timermod.clean(data["timer_template"])
     data["timer_mode"] = timermod.clean_mode(data["timer_mode"])
+    data["timer_source"] = timermod.clean_source(data["timer_source"])
+    data["timer_message"] = timermod.clean_message(data["timer_message"])
+    data["timer_font_family"] = timermod.clean_font(data["timer_font_family"])
+    data["timer_manual_hour"], data["timer_manual_minute"], data["timer_manual_second"] = timermod.clamp_time(
+        data["timer_manual_hour"], data["timer_manual_minute"], data["timer_manual_second"])
     data["timer_format"] = timermod.clean_format(data["timer_format"])
     data["timer_style"] = timermod.clean_style(data["timer_style"])
     for k in ("timer_text_color", "timer_bg_color"):

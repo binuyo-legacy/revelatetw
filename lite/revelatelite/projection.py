@@ -189,7 +189,7 @@ class SlideView(QtWidgets.QWidget):
         self.update()
 
     def set_timer(self, snap):
-        """Timer tab slide. snap is timer.py's snapshot dict (text/marker/label/state...)."""
+        """Timer tab slide. snap is timer.py's snapshot dict (text/marker/message...)."""
         self.timer_snap = snap
         self.meta = None
         self.live = True
@@ -339,8 +339,12 @@ class SlideView(QtWidgets.QWidget):
             p.setBrush(QtCore.Qt.NoBrush)
         text = str(snap.get("text", "00:00"))
         marker = str(snap.get("marker", ""))
-        label_txt = str(snap.get("label", ""))
-        state = str(snap.get("state", ""))
+        # Generic CLOCK/COUNTDOWN captions and RUNNING/PAUSED state are never
+        # drawn, even if an older snapshot still carries them; only the
+        # operator's own core message joins the time/countdown on screen.
+        message = str(timermod.clean_message(snap.get("message", "")))
+        family = timermod.clean_font(snap.get("font_family", ""))
+        mx, my, mwid, mhei = timermod.inner_rect(w, h)
         style = snap.get("style", "digital")
         dial = snap.get("dial") or {}
         if style == "analog" and dial:
@@ -352,7 +356,7 @@ class SlideView(QtWidgets.QWidget):
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
             p.drawEllipse(QtCore.QRectF(cx - r, cy - r, r * 2, r * 2))
             p.setBrush(QtCore.Qt.NoBrush)
-            tf = QtGui.QFont("Segoe UI")
+            tf = QtGui.QFont(family)
             tf.setPixelSize(max(8, int(r * 0.14)))
             p.setFont(tf)
             p.setPen(dim)
@@ -373,14 +377,13 @@ class SlideView(QtWidgets.QWidget):
                 hand(dial.get("second", 0), 60, r * 0.80, 0.012, acc)
             p.setPen(acc)
             p.drawEllipse(QtCore.QRectF(cx - r * 0.04, cy - r * 0.04, r * 0.08, r * 0.08))
-            sub = label_txt + (("  -  " + state) if state else "")
-            if sub:
-                sf = QtGui.QFont("Segoe UI")
+            if message:
+                sf = QtGui.QFont(family)
                 sf.setPixelSize(max(10, int(h * 0.045)))
                 p.setFont(sf)
-                p.setPen(dim)
-                p.drawText(QtCore.QRect(int(w * 0.04), int(h * 0.90), int(w * 0.92), int(h * 0.06)),
-                           QtCore.Qt.AlignCenter, sub)
+                p.setPen(txt)
+                p.drawText(QtCore.QRect(int(mx), int(my), int(mwid), int(mhei)),
+                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap, message)
             return
         # digital: bold Segoe UI readout with a subtle dark glass plate behind it
         # (original RevelateTW look; not copied from any reference app)
@@ -389,37 +392,43 @@ class SlideView(QtWidgets.QWidget):
         p.setBrush(QtGui.QColor(0, 0, 0, 90))
         p.drawRoundedRect(plate, h * 0.05, h * 0.05)
         p.setBrush(QtCore.Qt.NoBrush)
-        # fit the time into the width (binary search, like the verse autosize)
+        # fit the time into the plate width (binary search, like the verse autosize)
+        plate_inner_w = plate.width() * 0.92
         frac = 0.30
         while frac > 0.05:
-            f = QtGui.QFont("Segoe UI")
+            f = QtGui.QFont(family)
             f.setBold(True)
             f.setPixelSize(max(10, int(h * frac)))
-            if QtGui.QFontMetrics(f).horizontalAdvance(text) <= w * 0.92:
+            if QtGui.QFontMetrics(f).horizontalAdvance(text) <= plate_inner_w:
                 break
             frac -= 0.02
         p.setFont(f)
         p.setPen(txt)
-        time_rect = QtCore.QRect(int(w * 0.04), int(h * 0.30), int(w * 0.92), int(h * 0.42))
+        time_rect = QtCore.QRect(int(plate.left() + plate.width() * 0.04),
+                                 int(h * 0.30), int(plate.width() * 0.92), int(h * 0.38))
         p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
         if marker:
-            mf = QtGui.QFont("Segoe UI")
+            mf = QtGui.QFont(family)
             mf.setBold(True)
             mf.setPixelSize(max(10, int(h * 0.07)))
             p.setFont(mf)
             p.setPen(acc)
             tw = QtGui.QFontMetrics(f).horizontalAdvance(text)
-            p.drawText(QtCore.QRect(int(w / 2.0 + tw / 2.0 + h * 0.02), int(h * 0.30), int(w * 0.12), int(h * 0.42)),
+            p.drawText(QtCore.QRect(int(w / 2.0 + tw / 2.0 + h * 0.02), int(h * 0.30), int(w * 0.12), int(h * 0.38)),
                        QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, marker)
-        # label and state under the time
-        sub = label_txt + (("  -  " + state) if state else "")
-        if sub:
-            sf = QtGui.QFont("Segoe UI")
-            sf.setPixelSize(max(10, int(h * 0.045)))
+        # the operator's own message, inside the same plate (never a generic label)
+        if message:
+            sf = QtGui.QFont(family)
+            sfrac = 0.055
+            while sfrac > 0.02:
+                sf.setPixelSize(max(10, int(h * sfrac)))
+                if QtGui.QFontMetrics(sf).horizontalAdvance(message) <= mwid:
+                    break
+                sfrac -= 0.005
             p.setFont(sf)
-            p.setPen(dim)
-            p.drawText(QtCore.QRect(int(w * 0.04), int(h * 0.74), int(w * 0.92), int(h * 0.07)),
-                       QtCore.Qt.AlignCenter, sub)
+            p.setPen(txt)
+            p.drawText(QtCore.QRect(int(mx), int(my), int(mwid), int(mhei)),
+                       QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap, message)
         if t["frame"] == "line":
             p.setPen(QtGui.QPen(acc, max(2, int(h * 0.008))))
             p.drawLine(int(w * 0.30), int(h * 0.82), int(w * 0.70), int(h * 0.82))

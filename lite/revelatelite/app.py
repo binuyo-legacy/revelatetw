@@ -41,7 +41,11 @@ class Main(QtWidgets.QWidget):
                                          show_ampm=self.st["timer_ampm"], duration=self.st["timer_duration"],
                                          template=self.st["timer_template"], text_color=self.st["timer_text_color"],
                                          bg_color=self.st["timer_bg_color"], style=self.st["timer_style"],
-                                         show_seconds=self.st["timer_show_seconds"])
+                                         show_seconds=self.st["timer_show_seconds"],
+                                         message=self.st["timer_message"], source=self.st["timer_source"],
+                                         manual_hour=self.st["timer_manual_hour"], manual_minute=self.st["timer_manual_minute"],
+                                         manual_second=self.st["timer_manual_second"],
+                                         font_family=self.st["timer_font_family"])
         self.timer_snap = None    # the timer snapshot currently in the preview (None = verse/song is showing)
         self._timer_showing = False  # True once the Timer tab has been opened and its slide put in the preview
         self.proj = ProjectionWindow()
@@ -199,10 +203,10 @@ class Main(QtWidgets.QWidget):
         tabs.addTab(sgw, "Songs")
 
         # ---- Timer tab: live clock or countdown, same shared projection as verses/songs ----
-        tw = QtWidgets.QWidget()
-        tg = QtWidgets.QFormLayout(tw)
+        twc = QtWidgets.QWidget()
+        tg = QtWidgets.QFormLayout(twc)
         self.timer_mode_cb = QtWidgets.QComboBox()
-        for k, label in (("clock", "Clock (current time)"), ("countdown", "Countdown")):
+        for k, label in (("time", "Time"), ("countdown", "Countdown")):
             self.timer_mode_cb.addItem(label, k)
         self.timer_mode_cb.setCurrentIndex(max(self.timer_mode_cb.findData(self.st["timer_mode"]), 0))
         self.timer_style_cb = QtWidgets.QComboBox()
@@ -224,6 +228,43 @@ class Main(QtWidgets.QWidget):
         self.timer_template_lbl = QtWidgets.QLabel(timermod.blurb(self.st["timer_template"]))
         self.timer_template_lbl.setObjectName("hint")
         self.timer_template_lbl.setWordWrap(True)
+        # Time source: live system clock or a time the operator sets by hand
+        # (opening/closing time). Manual controls only apply in Time mode.
+        self.timer_source_cb = QtWidgets.QComboBox()
+        self.timer_source_cb.addItem("Live (system clock)", "live")
+        self.timer_source_cb.addItem("Set manually", "manual")
+        self.timer_source_cb.setCurrentIndex(max(self.timer_source_cb.findData(self.st["timer_source"]), 0))
+        self.timer_mhour_sp = QtWidgets.QSpinBox()
+        self.timer_mhour_sp.setRange(0, 23)
+        self.timer_mhour_sp.setValue(int(self.st["timer_manual_hour"]))
+        self.timer_mmin_sp = QtWidgets.QSpinBox()
+        self.timer_mmin_sp.setRange(0, 59)
+        self.timer_mmin_sp.setValue(int(self.st["timer_manual_minute"]))
+        self.timer_msec_sp = QtWidgets.QSpinBox()
+        self.timer_msec_sp.setRange(0, 59)
+        self.timer_msec_sp.setValue(int(self.st["timer_manual_second"]))
+        man_row = QtWidgets.QHBoxLayout()
+        man_row.addWidget(QtWidgets.QLabel("Hour"))
+        man_row.addWidget(self.timer_mhour_sp)
+        man_row.addWidget(QtWidgets.QLabel("Minute"))
+        man_row.addWidget(self.timer_mmin_sp)
+        man_row.addWidget(QtWidgets.QLabel("Second"))
+        man_row.addWidget(self.timer_msec_sp)
+        # the operator's own core message/title for THIS time/countdown entry
+        self.timer_message_le = QtWidgets.QLineEdit()
+        self.timer_message_le.setPlaceholderText("e.g. Pastor on the final prayer")
+        self.timer_message_le.setText(self.st["timer_message"])
+        self.timer_message_le.setMaxLength(timermod.MAX_MESSAGE)
+        # display font + foreground/background colours ("" = template colour)
+        self.timer_font_cb = QtWidgets.QComboBox()
+        self.timer_font_cb.setEditable(True)
+        for n in timermod.FONT_FAMILIES:
+            self.timer_font_cb.addItem(n)
+        self.timer_font_cb.setCurrentText(timermod.clean_font(self.st["timer_font_family"]))
+        self.timer_text_b = QtWidgets.QPushButton("Text colour")
+        self.timer_bg_b = QtWidgets.QPushButton("Background colour")
+        self.timer_reset_colors_b = QtWidgets.QPushButton("Reset colours")
+        self.timer_reset_colors_b.setEnabled(bool(self.st["timer_text_color"] or self.st["timer_bg_color"]))
         # duration controls: minutes + seconds spinboxes (countdown only uses them, but kept visible for simplicity)
         self.timer_min_sp = QtWidgets.QSpinBox()
         self.timer_min_sp.setRange(0, 720)
@@ -251,17 +292,35 @@ class Main(QtWidgets.QWidget):
         self._timer_tick = QtCore.QTimer(self)
         self._timer_tick.setInterval(1000)
         self._timer_tick.timeout.connect(self._on_timer_tick)
+        self.timer_countdown_lbl = QtWidgets.QLabel("Countdown length")
+        self.timer_manual_row_lbl = QtWidgets.QLabel("Set the time")
         tg.addRow("Timer type", self.timer_mode_cb)
+        tg.addRow("Time source", self.timer_source_cb)
+        tg.addRow("", man_row)
         tg.addRow("Display style", self.timer_style_cb)
         tg.addRow("Time format", self.timer_format_cb)
         tg.addRow("", self.timer_ampm_cb)
         tg.addRow("", self.timer_seconds_cb)
+        tg.addRow("Message on screen", self.timer_message_le)
+        tg.addRow("Font", self.timer_font_cb)
+        tg.addRow("Text colour", self.timer_text_b)
+        tg.addRow("Background colour", self.timer_bg_b)
+        tg.addRow("", self.timer_reset_colors_b)
         tg.addRow("Template", self.timer_template_cb)
         tg.addRow("", self.timer_template_lbl)
-        tg.addRow("Countdown length", dur_row)
+        self._timer_dur_row_index = tg.rowCount()
+        tg.addRow(self.timer_countdown_lbl, dur_row)
         tg.addRow("", btn_row)
         tg.addRow("Status", self.timer_state_lbl)
+        # vertical scroll only (like Settings) so the extra Timer controls never
+        # grow the window: the fixed 1000x640 operator layout is untouched
+        tw = QtWidgets.QScrollArea()
+        tw.setWidgetResizable(True)
+        tw.setFrameShape(QtWidgets.QFrame.NoFrame)
+        tw.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        tw.setWidget(twc)
         tabs.addTab(tw, "Timer")
+        self._sync_timer_mode_controls()
 
         ow = QtWidgets.QWidget()
         og = QtWidgets.QFormLayout(ow)
@@ -529,6 +588,15 @@ class Main(QtWidgets.QWidget):
         self.timer_template_cb.currentIndexChanged.connect(self._timer_settings_changed)
         self.timer_min_sp.valueChanged.connect(self._timer_duration_changed)
         self.timer_sec_sp.valueChanged.connect(self._timer_duration_changed)
+        self.timer_source_cb.currentIndexChanged.connect(self._timer_settings_changed)
+        self.timer_mhour_sp.valueChanged.connect(self._timer_manual_changed)
+        self.timer_mmin_sp.valueChanged.connect(self._timer_manual_changed)
+        self.timer_msec_sp.valueChanged.connect(self._timer_manual_changed)
+        self.timer_message_le.textChanged.connect(self._timer_message_changed)
+        self.timer_font_cb.currentTextChanged.connect(self._timer_settings_changed)
+        self.timer_text_b.clicked.connect(lambda: self._timer_pick_color("timer_text_color"))
+        self.timer_bg_b.clicked.connect(lambda: self._timer_pick_color("timer_bg_color"))
+        self.timer_reset_colors_b.clicked.connect(self._timer_reset_colors)
         self.timer_start_b.clicked.connect(self._timer_start)
         self.timer_pause_b.clicked.connect(self._timer_pause)
         self.timer_reset_b.clicked.connect(self._timer_reset)
@@ -1023,12 +1091,53 @@ class Main(QtWidgets.QWidget):
         self.timer_start_b.setEnabled(cd and not self.timer.running)
         self.timer_pause_b.setEnabled(cd and self.timer.running)
         self.timer_reset_b.setEnabled(cd)
+        # operator-only status; nothing generic is drawn on the projection
         if self.timer_snap:
-            state = str(self.timer_snap.get("state", ""))
-            label = str(self.timer_snap.get("label", ""))
-            self.timer_state_lbl.setText(label + ((" - " + state) if state else ""))
+            mode_txt = "Countdown" if cd else "Time"
+            msg = str(self.timer_snap.get("message", ""))
+            self.timer_state_lbl.setText(mode_txt + ((": " + msg) if msg else ""))
         else:
             self.timer_state_lbl.setText("")
+
+    def _sync_timer_mode_controls(self):
+        """Mode-specific rows: manual time only for Time, countdown length/buttons only for Countdown."""
+        mode = self.timer_mode_cb.itemData(self.timer_mode_cb.currentIndex()) if hasattr(self, "timer_mode_cb") else "time"
+        is_time = mode != "countdown"
+        for w_ in (self.timer_source_cb, self.timer_mhour_sp, self.timer_mmin_sp, self.timer_msec_sp):
+            w_.setEnabled(is_time)
+        self.timer_countdown_lbl.setHidden(is_time)
+        for w_ in (self.timer_min_sp, self.timer_sec_sp, self.timer_start_b, self.timer_pause_b, self.timer_reset_b):
+            w_.setHidden(is_time)
+
+    def _timer_pick_color(self, key):
+        resolved = timermod.resolve(self.st["timer_template"], self.st["timer_text_color"], self.st["timer_bg_color"])
+        start = QtGui.QColor(resolved["text"] if key == "timer_text_color" else resolved["bg1"])
+        c = QtWidgets.QColorDialog.getColor(start, self, "Choose a colour")
+        if c.isValid():
+            self.st[key] = c.name()
+            self.timer_reset_colors_b.setEnabled(True)
+            self._timer_settings_changed()
+
+    def _timer_reset_colors(self):
+        self.st["timer_text_color"] = self.st["timer_bg_color"] = ""
+        self.timer_reset_colors_b.setEnabled(False)
+        self._timer_settings_changed()
+
+    def _timer_manual_changed(self, *_):
+        self.st["timer_manual_hour"], self.st["timer_manual_minute"], self.st["timer_manual_second"] = timermod.clamp_time(
+            self.timer_mhour_sp.value(), self.timer_mmin_sp.value(), self.timer_msec_sp.value())
+        self.timer.configure(manual_hour=self.st["timer_manual_hour"], manual_minute=self.st["timer_manual_minute"],
+                             manual_second=self.st["timer_manual_second"])
+        self.save_settings()
+        if self._timer_showing:
+            self._show_timer_slide()
+
+    def _timer_message_changed(self, *_):
+        self.st["timer_message"] = timermod.clean_message(self.timer_message_le.text())
+        self.timer.configure(message=self.st["timer_message"])
+        self.save_settings()
+        if self._timer_showing:
+            self._show_timer_slide()
 
     def _timer_settings_changed(self, *_):
         self.st["timer_mode"] = self.timer_mode_cb.itemData(self.timer_mode_cb.currentIndex())
@@ -1037,10 +1146,16 @@ class Main(QtWidgets.QWidget):
         self.st["timer_ampm"] = bool(self.timer_ampm_cb.isChecked())
         self.st["timer_show_seconds"] = bool(self.timer_seconds_cb.isChecked())
         self.st["timer_template"] = self.timer_template_cb.itemData(self.timer_template_cb.currentIndex())
+        self.st["timer_source"] = self.timer_source_cb.itemData(self.timer_source_cb.currentIndex())
+        self.st["timer_font_family"] = timermod.clean_font(self.timer_font_cb.currentText())
+        self.st["timer_message"] = timermod.clean_message(self.timer_message_le.text())
         self.timer_template_lbl.setText(timermod.blurb(self.st["timer_template"]))
         self.timer.configure(mode=self.st["timer_mode"], fmt=self.st["timer_format"], show_ampm=self.st["timer_ampm"],
                              template=self.st["timer_template"], style=self.st["timer_style"], show_seconds=self.st["timer_show_seconds"],
-                             duration=self.st["timer_duration"])
+                             duration=self.st["timer_duration"], text_color=self.st["timer_text_color"],
+                             bg_color=self.st["timer_bg_color"], source=self.st["timer_source"],
+                             message=self.st["timer_message"], font_family=self.st["timer_font_family"])
+        self._sync_timer_mode_controls()
         self.save_settings()
         if self._timer_showing:
             self._show_timer_slide()
@@ -1924,7 +2039,7 @@ class Main(QtWidgets.QWidget):
     def _preview_pair(self):
         # Timer tab wins while it is showing; otherwise verse/song slide
         if self.timer_snap is not None:
-            return (self.timer_snap.get("label", "Timer"), self.timer_snap.get("text", ""), "")
+            return (self.timer_snap.get("message", ""), self.timer_snap.get("text", ""), "")
         return self.slide
 
     def _refresh_live_state(self):
@@ -1967,7 +2082,7 @@ class Main(QtWidgets.QWidget):
             self.proj.transition(plan, change)
             self._step_hint = 0
             self._refresh_live_state()
-            self.say("On screen: " + str(snap.get("label", "Timer")))
+            self.say("On screen: " + (str(snap.get("message", "")) or str(snap.get("text", ""))))
             return
         pair = self._preview_pair()
         if not pair:
