@@ -57,6 +57,44 @@ MAX_MESSAGE = 120
 MESSAGE_RECT_FRAC = (0.10, 0.74, 0.80, 0.10)
 
 
+def analog_layout(w, h, has_subtext=True):
+    """Shared geometry for the analog timer render.
+
+    Layout (16:9 and common projector ratios):
+      dial ellipse occupies the upper region, digits below it, message
+      below digits. Dial marks/hands never sit under the digits or
+      message; remaining-time digits and message occupy distinct bands.
+
+    Returns dict with cx, cy, r, digits_rect, message_rect and arc
+    radius. Rects are (x, y, width, height) floats.
+    """
+    if w <= 0 or h <= 0:
+        # Callers pass real sizes; keep a safe zero-sized fallback rather
+        # than raising during paint.
+        return dict(cx=0.0, cy=0.0, r=0.0,
+                    digits_rect=(0.0, 0.0, 0.0, 0.0),
+                    message_rect=(0.0, 0.0, 0.0, 0.0),
+                    arc_r=0.0)
+    cy = h * 0.34
+    r = min(w, h) * 0.27
+    arc_r = r * 1.09
+    digits_h = h * 0.16
+    digits_rect = (w * 0.10, cy + arc_r + h * 0.015, w * 0.80, digits_h)
+    if has_subtext:
+        message_rect = (w * 0.10, digits_rect[1] + digits_h + h * 0.012, w * 0.80, h * 0.09)
+    else:
+        message_rect = (w * 0.10, 0.0, w * 0.80, 0.0)
+    return dict(cx=w / 2.0, cy=cy, r=r,
+                digits_rect=digits_rect, message_rect=message_rect, arc_r=arc_r)
+
+
+def rects_overlap(a, b):
+    """True when (x, y, w, h) rects share any positive area (edge touch okay)."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
 def inner_rect(w, h):
     """Inner shape every projected timer string must stay inside.
     Returns (x, y, width, height) as floats. Kept in one place so the

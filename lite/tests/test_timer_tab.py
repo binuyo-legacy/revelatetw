@@ -278,3 +278,80 @@ class TimerReportedFixes(unittest.TestCase):
         e2 = tm.TimerEngine(mode="countdown", style="analog", duration=60)
         pv.show_timer(e2.snapshot())
         assert pv._fall_frames is None or not pv._fall_timer.isActive()
+
+
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class AnalogLayoutSafety(unittest.TestCase):
+    """Regression for the photo: remaining digits and message must not
+    collide with the dial numerals/hands/ring (feedback after 25f495a)."""
+
+    SIZES = ((1280, 720), (1920, 1080), (640, 360), (320, 180), (800, 600), (1024, 768), (384, 216), (1366, 768))
+    MESSAGES = ("", "Prayer Time Limit", "A" * 120, "Prayer and intercession for the nations of the world today")
+
+    def test_dial_digits_message_never_overlap(self):
+        for w, h in self.SIZES:
+            for msg in self.MESSAGES:
+                lay = tm.analog_layout(w, h, has_subtext=bool(msg))
+                cx, cy, r, arc_r = lay["cx"], lay["cy"], lay["r"], lay["arc_r"]
+                dial_bbox = (cx - r, cy - r, r * 2, r * 2)
+                arc_bbox = (cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2)
+                digits = lay["digits_rect"]
+                message = lay["message_rect"]
+                # dial + full arc sit strictly above digits
+                assert cy + arc_r <= digits[1] + 1e-6, (w, h, lay)
+                assert not tm.rects_overlap(dial_bbox, digits), (w, h, lay)
+                assert not tm.rects_overlap(arc_bbox, digits), (w, h, lay)
+                # digits and message occupy distinct bands
+                if msg:
+                    assert not tm.rects_overlap(digits, message), (w, h, lay)
+                    assert digits[1] + digits[3] <= message[1] + 1e-6, (w, h, lay)
+                    # message stays on-screen and inside the card frame when present
+                    assert message[1] + message[3] <= h * 0.985, (w, h, lay)
+                # dial top stays inside the screen and above digits
+                assert cy - r >= 0, (w, h, lay)
+                # numerals drawn at 0.82r with 0.24r/0.16r boxes stay inside dial band
+                # and below them nothing of the face is under digits: digits start after arc.
+                # dial face must be at least 35% of height and not swallow the lower bands
+                assert r * 2 < h * 0.62, (w, h, lay)
+                assert lay["digits_rect"][1] + lay["digits_rect"][3] <= h, (w, h, lay)
+
+    def test_layout_is_sane_for_edge_sizes(self):
+        # zero size does not raise
+        lay = tm.analog_layout(0, 0)
+        assert lay["r"] == 0.0 and lay["digits_rect"][2] == 0.0
+        # tiny offscreen preview still keeps dial above digits
+        lay = tm.analog_layout(320, 180)
+        assert lay["cy"] + lay["arc_r"] <= lay["digits_rect"][1]
+
+    def test_analog_render_smoke_long_message_all_sizes(self):
+        from PyQt5 import QtCore, QtGui
+        from revelatelite.projection import SlideView
+        for w, h in self.SIZES:
+            for msg in self.MESSAGES:
+                v = SlideView()
+                v.resize(w, h)
+                snap = tm.TimerEngine(
+                    mode="countdown", style="analog", duration=300,
+                    message=msg, template="signal").snapshot()
+                # photo case: Prayer Time Limit with 02:25 remaining
+                if msg == "Prayer Time Limit":
+                    snap["text"] = "02:25"
+                v.set_timer(snap)
+                ppm = v.snapshot(QtCore.QSize(w, h))
+                self.assertFalse(ppm.isNull(), (w, h, msg))
+                # geometry must keep digits/message clear of dial for this snap too
+                lay = tm.analog_layout(w, h, has_subtext=bool(msg))
+                assert not tm.rects_overlap(
+                    (lay["cx"] - lay["r"], lay["cy"] - lay["r"], lay["r"] * 2, lay["r"] * 2),
+                    lay["digits_rect"]), (w, h, msg, lay)
+
+    def test_digital_unaffected_by_analog_geometry(self):
+        # digital snapshots still carry no dial and render without error
+        from revelatelite.projection import PreviewView
+        pv = PreviewView()
+        pv.resize(640, 360)
+        snap = tm.TimerEngine(mode="countdown", duration=60, message="Prayer Time Limit").snapshot()
+        assert snap["dial"] is None
+        pv.show_timer(snap)
+        assert pv.timer_snap is not None
+

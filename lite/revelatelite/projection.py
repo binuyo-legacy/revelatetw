@@ -398,13 +398,30 @@ class SlideView(QtWidgets.QWidget):
         dial = snap.get("dial") or {}
         if style == "analog" and dial:
             import math
-            cx, cy = w / 2.0, h * 0.50
-            r = min(w, h) * 0.34
+            # Shared, tested geometry: dial has its own upper band; the
+            # digits/marker and the message sit below the dial + arc and
+            # never overlap numerals, hands, or the ring.
+            lay = timermod.analog_layout(w, h, has_subtext=bool(message or marker))
+            cx, cy, r, arc_r = lay["cx"], lay["cy"], lay["r"], lay["arc_r"]
+            digits_rect = lay["digits_rect"]
+            message_rect = lay["message_rect"]
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setPen(QtGui.QPen(acc, max(2, int(r * 0.02))))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
             p.drawEllipse(QtCore.QRectF(cx - r, cy - r, r * 2, r * 2))
             p.setBrush(QtCore.Qt.NoBrush)
+            # Draw the drain arc (countdown only) behind the dial edge so
+            # it stays visible; it is outside the digits band.
+            if snap.get("mode") == "countdown":
+                try:
+                    frac_left = float(dial.get("fraction", 0.0))
+                except (TypeError, ValueError):
+                    frac_left = 0.0
+                frac_left = max(0.0, min(1.0, frac_left))
+                if frac_left > 0.0:
+                    p.setPen(QtGui.QPen(acc, max(3, int(r * 0.035))))
+                    p.drawArc(QtCore.QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2),
+                              -90 * 16, int(-360 * frac_left * 16))
             tf = QtGui.QFont(family)
             tf.setPixelSize(max(8, int(r * 0.14)))
             p.setFont(tf)
@@ -427,39 +444,64 @@ class SlideView(QtWidgets.QWidget):
             hand(dial.get("second", 0), 60, r * 0.82, 0.014, acc)
             p.setPen(acc)
             p.drawEllipse(QtCore.QRectF(cx - r * 0.04, cy - r * 0.04, r * 0.08, r * 0.08))
-            # Countdown: digits under the dial show the time LEFT and an arc
-            # drains as it runs. No generic mode word is needed for these.
+            # Countdown digits below the dial show the time LEFT (drain
+            # arc already drawn above). Time mode shows the AM/PM marker.
+            # Both live in digits_rect, strictly below dial+arc.
             if snap.get("mode") == "countdown":
-                try:
-                    frac_left = float(dial.get("fraction", 0.0))
-                except (TypeError, ValueError):
-                    frac_left = 0.0
-                frac_left = max(0.0, min(1.0, frac_left))
-                if frac_left > 0.0:
-                    p.setPen(QtGui.QPen(acc, max(3, int(r * 0.035))))
-                    p.drawArc(QtCore.QRectF(cx - r * 1.08, cy - r * 1.08, r * 2.16, r * 2.16),
-                              -90 * 16, int(-360 * frac_left * 16))
                 df = QtGui.QFont(family)
                 df.setBold(True)
-                df.setPixelSize(max(10, int(r * 0.22)))
+                # Largest size that fits the digits rect both ways.
+                frac = 0.13
+                while frac > 0.04:
+                    df.setPixelSize(max(10, int(h * frac)))
+                    fm = QtGui.QFontMetrics(df)
+                    if fm.horizontalAdvance(text) <= digits_rect[2] * 0.92 and fm.height() <= digits_rect[3]:
+                        break
+                    frac -= 0.01
                 p.setFont(df)
                 p.setPen(txt)
-                p.drawText(QtCore.QRectF(cx - r, cy + r * 0.42, r * 2, r * 0.34),
+                p.drawText(QtCore.QRect(int(digits_rect[0]), int(digits_rect[1]),
+                                        int(digits_rect[2]), int(digits_rect[3])),
                            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
             elif marker:
                 df = QtGui.QFont(family)
-                df.setPixelSize(max(10, int(r * 0.18)))
+                # Shrink to fit digits_rect (marker may be long, e.g. "PM").
+                mfrac = 0.11
+                while mfrac > 0.04:
+                    df.setPixelSize(max(10, int(h * mfrac)))
+                    if QtGui.QFontMetrics(df).horizontalAdvance(marker) <= digits_rect[2] * 0.92:
+                        break
+                    mfrac -= 0.01
                 p.setFont(df)
                 p.setPen(txt)
-                p.drawText(QtCore.QRectF(cx - r, cy + r * 0.42, r * 2, r * 0.34),
+                p.drawText(QtCore.QRect(int(digits_rect[0]), int(digits_rect[1]),
+                                        int(digits_rect[2]), int(digits_rect[3])),
                            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, marker)
             if message:
                 sf = QtGui.QFont(family)
-                sf.setPixelSize(max(10, int(h * 0.045)))
-                p.setFont(sf)
+                # Largest size whose wrapped height and longest line fit
+                # the message rect (inside card frame, above screen edge).
+                mfrac = 0.055
+                chosen = sf
+                while mfrac > 0.02:
+                    sf.setPixelSize(max(10, int(h * mfrac)))
+                    rh = QtGui.QFontMetrics(sf).boundingRect(
+                        0, 0, int(message_rect[2]), 100000,
+                        QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
+                        message).height()
+                    if rh <= message_rect[3]:
+                        chosen = sf
+                        break
+                    mfrac -= 0.005
+                else:
+                    chosen = sf
+                    chosen.setPixelSize(max(10, int(h * 0.02)))
+                p.setFont(chosen)
                 p.setPen(txt)
-                p.drawText(QtCore.QRect(int(mx), int(my), int(mwid), int(mhei)),
-                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap, message)
+                p.drawText(QtCore.QRect(int(message_rect[0]), int(message_rect[1]),
+                                        int(message_rect[2]), int(message_rect[3])),
+                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap,
+                           message)
             return
         # digital: bold Segoe UI readout with a subtle dark glass plate behind it
         # (original RevelateTW look; not copied from any reference app)
