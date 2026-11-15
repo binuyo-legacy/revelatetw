@@ -42,10 +42,10 @@ import PyQt5.QtGui as QtGui  # noqa: E402
 FLAGS = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
 
 
-def render_vsize(body, w=640, h=360, verse_theme=V.DEFAULT, meta=None, scale=100):
+def render_vsize(body, w=640, h=360, verse_theme=V.DEFAULT, meta=None, scale=100, show_ref=True):
     """Draw one slide; return (used body font pixel size, image)."""
     v = SlideView()
-    v.set_style("navy", scale, True, "Georgia", False, "", "", None, False, "", 3,
+    v.set_style("navy", scale, show_ref, "Georgia", False, "", "", None, False, "", 3,
                 songthemes.STANDARD, None, verse_theme)
     v.set_content("Luke 4:14", body, "KJV", meta)
     # The default _draw asks _body_font at the fitted size; record the maximum
@@ -105,7 +105,7 @@ class Autosize(unittest.TestCase):
         qapp()
 
     def _area(self, w=640, h=360):
-        mx, my = int(w * 0.03), int(h * 0.015)
+        mx, my = int(w * 0.015), int(h * 0.008)
         return w - 2 * mx, h - 2 * my
 
     def _bright_bounds(self, img, w, h):
@@ -251,6 +251,40 @@ class Autosize(unittest.TestCase):
         self.assertLessEqual(_paint_height(body_font(size), MEDIUM, aw, FLAGS), ah)
         # fills the height: next size up would clip
         self.assertGreater(_paint_height(body_font(size + 1), MEDIUM, aw, FLAGS), ah)
+
+    def test_hebrews_412_no_ref_uses_full_area(self):
+        heb = ("For the word of God is quick, and powerful, and sharper than any "
+               "twoedged sword, piercing even to the dividing asunder of soul "
+               "and spirit, and of the joints and marrow, and is a discerner "
+               "of the thoughts and intents of the heart.")
+        for w, h in [(640, 360), (1280, 720), (1920, 1080)]:
+            size, img = render_vsize(heb, w=w, h=h, show_ref=False)
+            self.assertFalse(img.isNull())
+            (r0, r1), (c0, c1) = self._bright_bounds(img, w, h)
+            self.assertGreaterEqual((r1 - r0 + 1) / h, 0.88, (w, h, r0, r1))
+            self.assertGreaterEqual((c1 - c0 + 1) / w, 0.88, (w, h, c0, c1))
+            self.assertGreaterEqual(r0, 1)
+            self.assertLessEqual(r1, h - 2)
+            self.assertGreaterEqual(c0, 1)
+            self.assertLessEqual(c1, w - 2)
+            aw, ah = self._area(w, h)
+            self.assertLessEqual(
+                _paint_height(body_font(size), heb, aw, FLAGS), ah, (w, h, size))
+
+    def test_hebrews_412_no_ref_uses_full_area_scaled(self):
+        heb = ("For the word of God is quick, and powerful, and sharper than any "
+               "twoedged sword, piercing even to the dividing asunder of soul "
+               "and spirit, and of the joints and marrow, and is a discerner "
+               "of the thoughts and intents of the heart.")
+        for scale in (50, 80, 200):
+            size, img = render_vsize(heb, w=640, h=360, show_ref=False, scale=scale)
+            self.assertFalse(img.isNull())
+            aw, ah = self._area()
+            self.assertLessEqual(
+                _paint_height(body_font(size), heb, aw, FLAGS), ah, (scale, size))
+            (r0, r1), (c0, c1) = self._bright_bounds(img, 640, 360)
+            self.assertGreaterEqual((r1 - r0 + 1) / 360, 0.85, (scale, r0, r1))
+            self.assertGreaterEqual((c1 - c0 + 1) / 640, 0.85, (scale, c0, c1))
 
 
 if __name__ == "__main__":

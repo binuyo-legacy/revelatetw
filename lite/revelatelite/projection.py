@@ -72,9 +72,21 @@ def _autosize_default_verse(body_font, text, max_w, max_h, current, scale):
     def fits(size):
         return _paint_height(body_font(size), text, max_w, flags) <= max_h
 
-    # If even the hand-off size does not fit, keep it (oldest behaviour).
+    # If even the hand-off size does not fit, rebase the search: a fallback
+    # metric (e.g. a missing serif face on Windows) can make the hand-off
+    # size fail fits(), and keeping it stranded there would under-fill the
+    # whole height. The closest smaller bounding size that still fits is
+    # both non-clipping and as full as clipping allows.
     if not fits(current):
-        return current
+        lo, hi, ceiling = 14, current - 1, current
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if fits(mid):
+                ceiling = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return ceiling if ceiling < current else current
 
     # Vertical ceiling: the largest size that still fits max_h.
     # Height is non-decreasing in size, so binary search is exact.
@@ -92,7 +104,10 @@ def _autosize_default_verse(body_font, text, max_w, max_h, current, scale):
     # Multi-line verse: the vertical ceiling already fills the
     # available height with many wrapped lines; growing further
     # is impossible without clipping, so ceiling IS the answer.
-    if measures(current)[2] >= 3:
+    # The line count is also re-checked at the ceiling: a verse that
+    # hands off as short may still wrap to 3+ lines up there, and the
+    # ceiling is then the right full-height answer.
+    if measures(current)[2] >= 3 or measures(ceiling)[2] >= 3:
         return ceiling
 
     # Primary aim: a short verse fills the width (>= 95%) at the
@@ -121,6 +136,20 @@ def _autosize_default_verse(body_font, text, max_w, max_h, current, scale):
         fill = measures(size)[0] / max_w
         if fill >= best_fill - 0.02:
             best, best_fill = size, max(best_fill, fill)
+    if best >= ceiling:
+        return ceiling
+    # A bigger size may still beat this one on fill (rewrap): take the
+    # largest size that beats `best` on fill; if none does, grown size
+    # can still be short of ceiling without losing fill.
+    narrower = 0.0
+    for size in range(current + 1, ceiling + 1):
+        fill = measures(size)[0] / max_w
+        if fill > narrower:
+            narrower = fill
+    if narrower > best_fill + 1e-9:
+        for size in range(ceiling, current, -1):
+            if measures(size)[0] / max_w > narrower - 1e-9:
+                return size
     return best
 
 
@@ -221,12 +250,12 @@ class SlideView(QtWidgets.QWidget):
         self._bgp.paint(p, rect, self.bg_spec, bg)
         w, h = rect.width(), rect.height()
         # Default (non-template) verses run nearly full-bleed like the
-        # EasyWorship comparison: a 3% side margin and ~1.5% top/bottom
-        # instead of the old 7%/6%, so long verses win bigger lines and
-        # more of the screen. Songs and other paths keep the old margins.
+        # EasyWorship comparison: a 1.5% side margin and ~0.8% top/bottom
+        # instead of the old 7%/6%, so text wins bigger lines and more of
+        # the screen. Songs and other paths keep the old margins.
         is_default_verse = self.meta is None and self.verse_theme == versethemes.DEFAULT
         if is_default_verse:
-            mx, my = int(w * 0.03), int(h * 0.015)
+            mx, my = int(w * 0.015), int(h * 0.008)
         else:
             mx, my = int(w * 0.07), int(h * 0.06)
         area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)
