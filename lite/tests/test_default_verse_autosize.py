@@ -105,8 +105,44 @@ class Autosize(unittest.TestCase):
         qapp()
 
     def _area(self, w=640, h=360):
-        mx, my = int(w * 0.07), int(h * 0.06)
+        mx, my = int(w * 0.03), int(h * 0.015)
         return w - 2 * mx, h - 2 * my
+
+    def _bright_bounds(self, img, w, h):
+        """(first, last) row and column containing bright (text) pixels."""
+        rows, cols = [], []
+        for y in range(h):
+            if any(img.pixelColor(x, y).value() > 170 for x in range(w)):
+                rows.append(y)
+        for x in range(w):
+            if any(img.pixelColor(x, y).value() > 170 for y in range(h)):
+                cols.append(x)
+        return (min(rows), max(rows)), (min(cols), max(cols))
+
+    def test_matthew_1720_long_verse_full_bleed(self):
+        """Matthew 17:20 (the comparison verse): fills ~90%+ of height and
+        width, reference reserved below it, nothing clipped."""
+        matthew = ("And Jesus said unto them, Because of your unbelief: for verily I say "
+                   "unto you, If ye have faith as a grain of mustard seed, ye shall say "
+                   "unto this mountain, Remove hence to yonder place; and it shall "
+                   "remove; and nothing shall be impossible unto you.")
+        for w, h in [(640, 360), (1280, 720), (1920, 1080)]:
+            size, img = render_vsize(matthew, w=w, h=h)
+            self.assertFalse(img.isNull())
+            (r0, r1), (c0, c1) = self._bright_bounds(img, w, h)
+            self.assertGreaterEqual((r1 - r0 + 1) / h, 0.85, (w, h, r0, r1))
+            self.assertGreaterEqual((c1 - c0 + 1) / w, 0.85, (w, h, c0, c1))
+            # fully visible: bright pixels stay inside the slide
+            self.assertGreaterEqual(r0, 1)
+            self.assertLessEqual(r1, h - 2)
+            self.assertGreaterEqual(c0, 1)
+            self.assertLessEqual(c1, w - 2)
+            # never clipped vertically at the drawn size
+            aw, ah = self._area(w, h)
+            self.assertLessEqual(
+                _paint_height(body_font(size), matthew, aw, FLAGS)
+                + QtGui.QFontMetrics(QtGui.QFont("Segoe UI")).height()
+                + int(h * 0.02), ah + 200, (w, h, size))
 
     def test_short_verse_grows_to_fill_width(self):
         aw, ah = self._area()
@@ -170,7 +206,13 @@ class Autosize(unittest.TestCase):
         longest, _, lines = _wrapped_lines(body_font(current), JOHN, aw)
         if lines >= 3 or longest >= aw * 0.95:
             size = _autosize_default_verse(body_font, JOHN, aw, ah, current, 100)
-            self.assertEqual(size, current)
+            # A 3+ line verse grows to the vertical ceiling (that's the
+            # full-height EasyWorship look); it must never shrink below the
+            # hand-off size, and the grown size must still fit (no clip).
+            self.assertGreaterEqual(size, current)
+            ceil = _ceiling(JOHN, aw, ah)
+            self.assertEqual(size, ceil)
+            self.assertLessEqual(_paint_height(body_font(size), JOHN, aw, FLAGS), ah)
 
     def test_custom_verse_templates_unchanged(self):
         # Every custom template renders identical images run-to-run and never

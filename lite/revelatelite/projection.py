@@ -220,7 +220,15 @@ class SlideView(QtWidgets.QWidget):
             return
         self._bgp.paint(p, rect, self.bg_spec, bg)
         w, h = rect.width(), rect.height()
-        mx, my = int(w * 0.07), int(h * 0.06)
+        # Default (non-template) verses run nearly full-bleed like the
+        # EasyWorship comparison: a 3% side margin and ~1.5% top/bottom
+        # instead of the old 7%/6%, so long verses win bigger lines and
+        # more of the screen. Songs and other paths keep the old margins.
+        is_default_verse = self.meta is None and self.verse_theme == versethemes.DEFAULT
+        if is_default_verse:
+            mx, my = int(w * 0.03), int(h * 0.015)
+        else:
+            mx, my = int(w * 0.07), int(h * 0.06)
         area = QtCore.QRect(mx, my, w - 2 * mx, h - 2 * my)
         ref_h = 0
         if self.show_ref and self.ref:
@@ -247,12 +255,18 @@ class SlideView(QtWidgets.QWidget):
         # vertically anyway, so its longest wrapped line nearly fills the width.
         # The hard limit stays the vertical fit; a size that would clip vertically
         # is never picked. Songs keep the exact old sizing.
-        if self.meta is None and self.verse_theme == versethemes.DEFAULT:
+        if is_default_verse:
             size = _autosize_default_verse(self._body_font, self.body, text_area.width(),
                                            text_area.height(), size, self.scale)
         p.setFont(self._body_font(size))
         p.setPen(QtGui.QColor(fg))
-        self._text(p, text_area, flags, self.body, fg, h)
+        # Default verses paint vertically centred in their area so a grown
+        # long verse sits in the middle of the full height (the EasyWorship
+        # look) instead of hugging the top; other paths are unchanged.
+        if is_default_verse:
+            self._text(p, text_area, flags | QtCore.Qt.AlignVCenter, self.body, fg, h)
+        else:
+            self._text(p, text_area, flags, self.body, fg, h)
         if self.credit:
             f2 = QtGui.QFont("Segoe UI")
             f2.setPixelSize(max(11, int(h * 0.02)))
