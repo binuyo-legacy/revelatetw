@@ -142,7 +142,7 @@ class ImportTranslationDialog(QDialog):
         drop_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         drop_text.setStyleSheet("color:#f3f4f6;font-size:14px;")
         drop_text.linkActivated.connect(lambda _: self._browse())
-        hint = _label("USFM, OSIS or XML", "color:#9ca3af;font-size:12px;")
+        hint = _label("USFM, OSIS, Zefania XML or plain text", "color:#9ca3af;font-size:12px;")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dl.addWidget(drop_text)
         dl.addWidget(hint)
@@ -325,8 +325,8 @@ class ImportTranslationDialog(QDialog):
         else:
             title = "Could not import"
             body = str(exc)
-        self.error_card.setText(f"{title}\n{body}\n\nRevelateTW reads USFM and OSIS exports. "
-                                f"Export the translation as USFM or OSIS from its publisher's software.")
+        self.error_card.setText(f"{title}\n{body}\n\nRevelateTW reads USFM, OSIS, Zefania XML and plain text exports. "
+                                f"Export the translation in one of those formats from its publisher's software.")
         self.error_card.show()
         self.help_widget.show()
 

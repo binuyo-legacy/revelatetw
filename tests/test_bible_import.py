@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from revelatetw.bible import BibleLibrary, installed_ids, remove_user_translation, verse_count
-from revelatetw.bible_import import UnsupportedFormatError, convert_file, write_import
+from revelatetw.bible import BibleImportError
+from revelatetw.bible_import import UnsupportedFormatError, convert_file, detect_format, write_import
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "bible_import"
 
@@ -157,3 +158,108 @@ def test_dialog_import_flow_and_unsupported_card(folder, tmp_path):
     assert bad.error_card.text().startswith("Unsupported format")
     assert bad.help_widget.isHidden() is False
     assert bad.btn_import.isEnabled() is False
+
+
+def _write(tmp_path, name, text):
+    p = tmp_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_zefania_xml_round_trip_structure_from_screenshot():
+    r = convert_file(FIX / "sample.zefania.xml")
+    assert r.format == "zefania"
+    assert r.format_label == "Zefania XML"
+    assert r.source_biblename == "Fixture Text (synthetic)"  # header metadata only
+    assert r.book_count == 3 and r.chapter_count == 4        # Gen 1, Gen 2, John 3, Ps 23
+    assert r.verse_count == 6                                # John 3:18 empty and skipped
+    rows = {(b, c, v): t for b, c, v, t in r.rows()}
+    assert rows[(1, 1, 1)] == "In the very beginning God made the heavens and the earth."
+    assert rows[(43, 3, 16)] == ("For God loved the world so much that he gave his only Son, "
+                                  "so that everyone who believes in him will not die but will have life that never ends.")
+    assert (43, 3, 18) not in rows
+    assert any("no text" in n for n in r.notes)
+    assert any("63 book(s) not in the file" in n for n in r.notes)
+
+
+def test_zefania_no_namespace_lowercase_and_bnumber():
+    r = convert_file(FIX / "sample.zefania.plain.xml")
+    assert r.format == "zefania"
+    rows = {(b, c, v): t for b, c, v, t in r.rows()}
+    assert rows[(1, 1, 1)] == "At the start God shaped the sky and the ground."
+    assert rows[(43, 3, 16)] == "God valued the world so highly that he sent his only Son."
+    assert r.verse_count == 2
+
+
+def test_zefania_default_namespace():
+    r = convert_file(FIX / "sample.zefania.ns.xml")
+    assert r.format == "zefania"
+    rows = {(b, c, v): t for b, c, v, t in r.rows()}
+    assert rows[(1, 2, 1)] == "Everything God had made was complete."
+    assert r.verse_count == 1
+
+
+def test_zefania_detection_requires_xmlbible_root(tmp_path):
+    zefania = _write(tmp_path, "book.xml",
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<XMLBIBLE biblename="X"><BIBLEBOOK number="1" bname="Genesis">'
+        '<CHAPTER cnumber="1"><VERS vnumber="1">Synthetic text.</VERS></CHAPTER></BIBLEBOOK></XMLBIBLE>')
+    assert detect_format(zefania, zefania.read_text(encoding="utf-8")) == "zefania"
+
+    arbitrary = _write(tmp_path, "data.xml", '<?xml version="1.0"?><catalog><item>1</item></catalog>')
+    with pytest.raises(UnsupportedFormatError) as exc:  # arbitrary XML is not Zefania
+        detect_format(arbitrary, arbitrary.read_text(encoding="utf-8"))
+    assert "Zefania" in str(exc.value)
+
+    osis = _write(tmp_path, "book.osis.xml", '<?xml version="1.0"?><osis><div><verse osisID="Gen.1.1">x</verse></div></osis>')
+    assert detect_format(osis, osis.read_text(encoding="utf-8")) == "osis"  # OSIS still wins by osisID
+
+
+def test_zefania_malformed_incomplete_and_no_verses_raise(tmp_path):
+    malformed = _write(tmp_path, "bad.xml", '<XMLBIBLE biblename="X"><BIBLEBOOK number="1">')
+    with pytest.raises(BibleImportError) as exc:
+        convert_file(malformed)
+    assert "could not be read" in str(exc.value)
+
+    empty_books = _write(tmp_path, "empty.xml", '<?xml version="1.0"?><XMLBIBLE biblename="X"></XMLBIBLE>')
+    with pytest.raises(BibleImportError) as exc:
+        convert_file(empty_books)
+    assert "BIBLEBOOK" in str(exc.value)
+
+    no_text = _write(tmp_path, "notext.xml",
+        '<?xml version="1.0"?><XMLBIBLE biblename="X"><BIBLEBOOK number="1" bname="Genesis">'
+        '<CHAPTER cnumber="1"><VERS vnumber="1"></VERS></CHAPTER></BIBLEBOOK></XMLBIBLE>')
+    with pytest.raises(BibleImportError) as exc:
+        convert_file(no_text)
+    assert "no verses with text" in str(exc.value)
+
+    incomplete = _write(tmp_path, "missing.xml",
+        '<?xml version="1.0"?><XMLBIBLE biblename="X"><BIBLEBOOK number="1" bname="Genesis">'
+        '<CHAPTER cnumber="1"><VERS>Text with no vnumber.</VERS></CHAPTER></BIBLEBOOK></XMLBIBLE>')
+    with pytest.raises(BibleImportError):
+        convert_file(incomplete)
+
+    wrong_root = _write(tmp_path, "wrong.xml",
+        '<?xml version="1.0"?><BIBLE><BOOK>1</BOOK></BIBLE>')
+    with pytest.raises(UnsupportedFormatError):
+        convert_file(wrong_root)
+
+
+def test_zefania_import_round_trip_via_write_import(folder):
+    r = convert_file(FIX / "sample.zefania.xml")
+    t = write_import(r, name="Fixture Text", code="FZ", license_text="Test fixture, for tests only",
+                     folder=folder)
+    assert t.user_imported and not t.bundled
+    assert verse_count(t.path) == 6
+    lib = _lib(folder)
+    assert lib.get("FZ", 1, 1, 1) == "In the very beginning God made the heavens and the earth."
+    lib.close()
+
+
+def test_help_mentions_zefania_and_other_formats_still_detected():
+    from revelatetw.bible_import import SUPPORTED_FORMATS_HELP
+    assert "Zefania" in SUPPORTED_FORMATS_HELP
+    assert "USFM" in SUPPORTED_FORMATS_HELP and "OSIS" in SUPPORTED_FORMATS_HELP
+    assert convert_file(FIX / "sample.usfm").format == "usfm"
+    assert convert_file(FIX / "sample.osis.xml").format == "osis"
+    assert convert_file(FIX / "sample.txt").format == "text"

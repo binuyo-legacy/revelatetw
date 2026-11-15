@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic namespace-free, lower-case variant of the Zefania structure.
+     Made-up sentences only; no published translation text. -->
+<xmlbible biblename="Fixture Text (synthetic, plain)">
+  <biblebook bnumber="1" bname="Genesis">
+    <chapter cnumber="1">
+      <vers vnumber="1">At the start God shaped the sky and the ground.</vers>
+    </chapter>
+  </biblebook>
+  <biblebook number="43" bname="John">
+    <chapter cnumber="3">
+      <vers vnumber="16">God valued the world so highly that he sent his only Son.</vers>
+      <vers vnumber="18"></vers>
+    </chapter>
+  </biblebook>
+</xmlbible>

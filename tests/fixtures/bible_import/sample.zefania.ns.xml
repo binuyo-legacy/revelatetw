@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic default-namespace variant. Made-up sentences only. -->
+<XMLBIBLE xmlns="http://example.com/zefania" biblename="Fixture Text (synthetic, namespaced)">
+  <BIBLEBOOK number="1" bname="Genesis">
+    <CHAPTER cnumber="2">
+      <VERS vnumber="1">Everything God had made was complete.</VERS>
+    </CHAPTER>
+  </BIBLEBOOK>
+</XMLBIBLE>

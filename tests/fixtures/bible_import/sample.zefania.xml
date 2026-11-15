@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic Zefania XML fixture (built for tests, not a Bible translation).
+     Structure mirrors the format RevelateTW imports: XMLBIBLE root, BIBLEBOOK
+     with number/bname, CHAPTER with cnumber, VERS with vnumber. The verses are
+     short made-up sentences, not copied from any published translation. The
+     biblename line is plain header metadata and is never stored as a pack. -->
+<XMLBIBLE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" biblename="Fixture Text (synthetic)">
+  <BIBLEBOOK number="1" bname="Genesis">
+    <CHAPTER cnumber="1">
+      <VERS vnumber="1">In the very beginning God made the heavens and the earth.</VERS>
+      <VERS vnumber="2">The earth was empty and dark, and the wind of God hovered over the waters.</VERS>
+    </CHAPTER>
+    <CHAPTER cnumber="2">
+      <VERS vnumber="1">So the heavens and the earth were finished.</VERS>
+    </CHAPTER>
+  </BIBLEBOOK>
+  <BIBLEBOOK number="43" bname="John">
+    <CHAPTER cnumber="3">
+      <VERS vnumber="16">For God loved the world so much that he gave his only Son, <CHRIST>so that everyone who believes in him will not die but will have life that never ends.</CHRIST></VERS>
+      <VERS vnumber="17">God did not send his Son into the world to judge it.</VERS>
+      <VERS vnumber="18"></VERS>
+    </CHAPTER>
+  </BIBLEBOOK>
+  <BIBLEBOOK number="19" bname="Psalms">
+    <CHAPTER cnumber="23">
+      <VERS vnumber="1">The Lord is my shepherd; I lack nothing.</VERS>
+    </CHAPTER>
+  </BIBLEBOOK>
+</XMLBIBLE>

@@ -1,4 +1,4 @@
-"""Import a user's own licensed Bible translation: USFM, OSIS/XML or plain text.
+"""Import a user's own licensed Bible translation: USFM, OSIS/XML, Zefania XML or plain text.
 
 convert_file() reads a file, detects its format (by extension and by content), parses it and
 returns an ImportResult with the canonical verses plus a list of anomalies. Nothing is written.
@@ -7,12 +7,19 @@ bundled packs use (VerseStore.write_pack, the writer scripts/build_bible_bundle.
 the pack user_imported=1 so it is never treated as one of the bundled public-domain translations.
 
 Supported input:
-  USFM   (.usfm, .usfm3, .sfm): \\id, \\c and \\v markers. Footnotes, cross-references, headings and
-         character markers are dropped; the verse text is kept.
-  OSIS   (.osis, or .xml with osisID attributes): <verse osisID="John.3.16"> container verses and
-         sID/eID milestone verses. Notes and titles are dropped.
-  Text   (.txt, or any other plain file that has "Book C:V text" lines): lenient, one verse per line.
-Anything else (PDF, Word, images, XML without OSIS verse IDs) raises UnsupportedFormatError.
+  USFM     (.usfm, .usfm3, .sfm): \\id, \\c and \\v markers. Footnotes, cross-references, headings and
+           character markers are dropped; the verse text is kept.
+  OSIS     (.osis, or .xml with osisID attributes): <verse osisID="John.3.16"> container verses and
+           sID/eID milestone verses. Notes and titles are dropped.
+  Zefania  (.xml with root <XMLBIBLE>): <BIBLEBOOK number="1" bname="Genesis"> holding
+           <CHAPTER cnumber="1"> holding <VERS vnumber="1">text</VERS>. Tag and
+           attribute names are matched case-insensitively, namespaces are ignored, and
+           nested markup text is kept via itertext. Headings and metadata are skipped.
+           The file header (biblename, copyright) is read as metadata only and is never
+           stored as a translation; the user still supplies name, code and licence.
+  Text     (.txt, or any other plain file that has "Book C:V text" lines): lenient, one verse per line.
+Anything else (PDF, Word, images, XML that is neither OSIS nor Zefania) raises
+UnsupportedFormatError.
 """
 from __future__ import annotations
 
@@ -25,14 +32,15 @@ from .bible import (DEFAULT_BIBLE_DIR, ID_RE, PACK_SUFFIX, RESERVED_IDS, BibleIm
 from .books import BOOK_BY_ID, BOOKS, name_forms
 from .store import VerseStore
 
-FORMAT_LABELS = {"usfm": "USFM", "osis": "OSIS", "text": "Plain text"}
+FORMAT_LABELS = {"usfm": "USFM", "osis": "OSIS", "zefania": "Zefania XML", "text": "Plain text"}
 SUPPORTED_FORMATS_HELP = (
-    "RevelateTW reads three formats:\n"
+    "RevelateTW reads four formats:\n"
     "- USFM (.usfm or .usfm3): the standard Bible text format used by Paratext and most publishers.\n"
     "- OSIS (.osis, or .xml that uses osisID verse references).\n"
+    "- Zefania XML (.xml with an <XMLBIBLE> root and <BIBLEBOOK>/<CHAPTER>/<VERS> verses).\n"
     "- Plain text (.txt) with one verse per line, like: John 3:16 For God so loved the world ...\n\n"
     "PDF, Word, EPUB and image files are not supported. Export the translation from its publisher's "
-    "software as USFM or OSIS, then choose that file."
+    "software as USFM, OSIS or Zefania XML, then choose that file."
 )
 UNSUPPORTED_EXTS = {".pdf", ".doc", ".docx", ".odt", ".rtf", ".epub", ".mobi", ".zip", ".rar", ".7z",
                     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".mp3", ".mp4", ".wav", ".exe", ".html", ".htm"}
@@ -65,6 +73,9 @@ OSIS_CODES = {
     "Jas": 59, "1Pet": 60, "2Pet": 61, "1John": 62, "2John": 63, "3John": 64, "Jude": 65, "Rev": 66,
 }
 _OSIS_SKIP = {"note", "title", "head", "figure", "caption"}
+# Zefania XML: local tag names (namespace stripped, lower-cased) treated as metadata, dropped with
+# their children. Inline highlights (christ, gram) carry verse text and are kept via itertext.
+_ZEFANIA_SKIP = {"heading", "footnote", "font", "br", "link"}
 _USFM_FOOTNOTE = re.compile(r"\\[fxFX]\s.*?\\[fxFX]\*", re.S)
 _USFM_MARK = re.compile(r"\\(id|c|v)(?=\s)")
 _USFM_VERSE_NUM = re.compile(r"\s*(\d+)([a-z]?)(\s*-\s*\d+[a-z]?)?")
@@ -118,7 +129,7 @@ class _Collector:
 
 @dataclass
 class ImportResult:
-    format: str                       # "usfm" | "osis" | "text"
+    format: str                       # "usfm" | "osis" | "zefania" | "text"
     source_name: str
     verses: dict = field(default_factory=dict)   # (book_id, chapter, verse) -> text
     empty_verses: int = 0
@@ -128,6 +139,7 @@ class ImportResult:
     unparseable: int = 0
     unparseable_samples: list = field(default_factory=list)
     decode_replacements: int = 0
+    source_biblename: str = ""        # header metadata only (e.g. XMLBIBLE biblename); never stored
 
     @property
     def format_label(self) -> str:
@@ -201,17 +213,64 @@ def _decode(raw: bytes) -> tuple[str, int]:
         return text.lstrip("\ufeff"), text.count("\ufffd")
 
 
+def _xml_root_local(text: str) -> str | None:
+    """Local name of the XML root element, lower-cased, or None when there is no usable tag.
+
+    Skips the XML declaration, processing instructions, comments and DOCTYPE so a
+    namespaced or decorated header still yields the root name. Only the head of the
+    document is scanned; a full parse is left to the format parser.
+    """
+    head = text[:8192]
+    i = 0
+    n = len(head)
+    while i < n:
+        if head[i] != "<":
+            i += 1
+            continue
+        rest = head[i:]
+        if rest.startswith("<?") or rest.startswith("<!--"):
+            end = rest.find("?>") if rest.startswith("<?") else rest.find("-->")
+            close = "?>" if rest.startswith("<?") else "-->"
+            if end == -1:
+                return None
+            i += end + len(close)
+            continue
+        if rest.startswith("<!") or rest.startswith("</"):
+            end = rest.find(">")
+            if end == -1:
+                return None
+            i += end + 1
+            continue
+        m = re.match(r"<([A-Za-z_][\w:.-]*)", rest)
+        if m:
+            return m.group(1).rsplit(":", 1)[-1].rsplit("}", 1)[-1].lower()
+        return None
+    return None
+
+
+def _is_zefania_xml(text: str) -> bool:
+    """True only for Zefania XML: root element is <XMLBIBLE> (case-insensitive, any namespace)."""
+    return _xml_root_local(text) == "xmlbible"
+
+
 def detect_format(path: Path, text: str) -> str:
-    """Return "usfm", "osis" or "text". Raises UnsupportedFormatError with a plain message otherwise."""
+    """Return "usfm", "osis", "zefania" or "text". Raises UnsupportedFormatError otherwise."""
     ext = path.suffix.lower()
     if ext in UNSUPPORTED_EXTS:
         raise UnsupportedFormatError(f"{path.name} is a {ext[1:].upper()} file. " + SUPPORTED_FORMATS_HELP)
     head = text.lstrip(" \t\r\n")
     if head.startswith("<"):
+        root = _xml_root_local(text)
+        if root == "xmlbible":
+            return "zefania"
         if "osisID" in text:
             return "osis"
-        raise UnsupportedFormatError(
-            f"{path.name} is XML, but it has no OSIS verse references (osisID). " + SUPPORTED_FORMATS_HELP)
+        if root is not None:
+            raise UnsupportedFormatError(
+                f"{path.name} is XML with root <{root}>, but it is neither OSIS (no osisID) nor "
+                f"Zefania (no <XMLBIBLE> root). " + SUPPORTED_FORMATS_HELP)
+        raise UnsupportedFormatError(f"{path.name} is XML, but its root element could not be read. "
+                                     + SUPPORTED_FORMATS_HELP)
     if _USFM_MARK.search(text[:200000]):
         return "usfm"
     if ext == ".txt" or any(_TEXT_LINE.match(ln) for ln in head[:4000].splitlines()[:50]):
@@ -326,6 +385,138 @@ def _parse_osis(raw: bytes, col: _Collector) -> None:
     flush()
 
 
+
+def _local_tag(tag: str) -> str:
+    """Element tag with namespace stripped and lower-cased."""
+    return tag.rsplit("}", 1)[-1].rsplit(":", 1)[-1].lower()
+
+
+def _attr_case_insensitive(el, *names: str) -> str | None:
+    """First attribute value matching any name, case-insensitively (and namespace-prefix apart)."""
+    attrs = {k.rsplit(":", 1)[-1].lower(): v for k, v in el.attrib.items()}
+    for n in names:
+        v = attrs.get(n.lower())
+        if v is not None:
+            return v
+    return None
+
+
+def _positive_int(value: str | None) -> int | None:
+    """Strict positive integer, or None. Rejects 0, negatives, ranges and non-numeric junk."""
+    if value is None:
+        return None
+    v = value.strip()
+    if not re.fullmatch(r"\d+", v):
+        return None
+    n = int(v)
+    return n if n > 0 else None
+
+
+def _zefania_book_id(el, col: _Collector) -> int | None:
+    """Resolve a BIBLEBOOK element to a canonical book id.
+
+    A numeric ``number`` (or ``bnumber``) in 1..66 wins; otherwise the ``bname``
+    text is matched against the canonical book names/aliases. Unresolvable books
+    are reported once and their verses skipped.
+    """
+    num = _positive_int(_attr_case_insensitive(el, "number", "bnumber"))
+    if num is not None and 1 <= num <= 66:
+        return num
+    bname = _attr_case_insensitive(el, "bname", "bookname", "name", "bsname")
+    if bname and bname.strip():
+        book = NAME_INDEX.get(_norm_name(bname))
+        if book is not None:
+            return book
+        col.unknown(bname.strip())
+        return None
+    if num is not None:
+        col.unknown(str(num))
+    else:
+        col.unknown("(book without number or name)")
+    return None
+
+
+def _zefania_verse_text(el) -> str:
+    """Verse text: itertext keeps nested markup (e.g. <christ>/<gram> highlights) inline.
+
+    Metadata-only children are skipped entirely, including their tails' neighbours
+    being kept intact.
+    """
+    parts = []
+    if el.text:
+        parts.append(el.text)
+    for child in el:
+        if _local_tag(child.tag) not in _ZEFANIA_SKIP:
+            parts.append("".join(child.itertext()))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
+
+
+def _parse_zefania(raw: bytes, col: _Collector) -> str:
+    """Parse Zefania XML. Returns the root biblename for metadata only (never stored).
+
+    Strict: the file must be well-formed XML with root <XMLBIBLE>, books must carry
+    a number in 1..66 or a recognised name, and every verse needs a positive
+    integer cnumber/vnumber. Raises BibleImportError on malformed or incomplete
+    files instead of silently returning a partial pack.
+    """
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise BibleImportError(f"the XML file could not be read (not well-formed XML): {exc}") from exc
+    if _local_tag(root.tag) != "xmlbible":
+        raise BibleImportError(
+            f"the XML root is <{_local_tag(root.tag)}>, not <XMLBIBLE>. "
+            "This file is not a Zefania XML export.")
+    biblename = (_attr_case_insensitive(root, "biblename", "name") or "").strip()
+
+    books = [el for el in root.iter() if _local_tag(el.tag) == "biblebook"]
+    if not books:
+        raise BibleImportError(
+            "no <BIBLEBOOK> elements were found. Check that this is a complete "
+            "Zefania XML export, not an empty or index file.")
+    no_chapter = no_verse = 0
+    seen_refs: set[tuple[int, int, int]] = set()
+    for book_el in books:
+        book_id = _zefania_book_id(book_el, col)
+        chapters = [el for el in book_el.iter() if _local_tag(el.tag) == "chapter"]
+        if not chapters:
+            no_chapter += 1
+            continue
+        if book_id is None:
+            continue                      # already reported as unknown; skip its verses
+        for ch_el in chapters:
+            chapter = _positive_int(_attr_case_insensitive(ch_el, "cnumber", "number", "c.number"))
+            if chapter is None:
+                col.bad_line("chapter without a valid cnumber")
+                continue
+            verses = [el for el in ch_el.iter() if _local_tag(el.tag) == "vers"]
+            if not verses:
+                no_verse += 1
+                continue
+            for v_el in verses:
+                verse = _positive_int(_attr_case_insensitive(v_el, "vnumber", "number", "v.number"))
+                if verse is None:
+                    col.bad_line("verse without a valid vnumber")
+                    continue
+                seen_refs.add((book_id, chapter, verse))
+                col.add(book_id, chapter, verse, _zefania_verse_text(v_el))
+    if not col.verses:
+        detail = (" The file has no verses with text: "
+                  + ", ".join(part for part, n in
+                              ((f"{no_chapter} book(s) had no chapter", no_chapter),
+                               (f"{no_verse} chapter(s) had no verse", no_verse)) if n)
+                  + "." if (no_chapter or no_verse) else " It may be an empty or index file.")
+        raise BibleImportError(
+            "no verses with text were found. Check that it is a complete Zefania XML "
+            f"export, not an empty or index file.{detail}")
+    if no_chapter:
+        col.bad_line(f"{no_chapter} book(s) had no chapter")
+    if no_verse:
+        col.bad_line(f"{no_verse} chapter(s) had no verse")
+    return biblename
+
 def _parse_text(text: str, col: _Collector) -> None:
     for line in text.splitlines():
         if not line.strip():
@@ -353,10 +544,13 @@ def convert_file(path: Path | str) -> ImportResult:
     text, repl = _decode(raw)
     fmt = detect_format(p, text)
     col = _Collector()
+    source_biblename = ""
     if fmt == "usfm":
         _parse_usfm(text, col)
     elif fmt == "osis":
         _parse_osis(raw, col)
+    elif fmt == "zefania":
+        source_biblename = _parse_zefania(raw, col)
     else:
         _parse_text(text, col)
     if not col.verses:
@@ -366,7 +560,8 @@ def convert_file(path: Path | str) -> ImportResult:
     return ImportResult(format=fmt, source_name=p.name, verses=col.verses, empty_verses=col.empty_verses,
                         duplicate_verses=col.duplicate_verses, range_verses=col.range_verses,
                         unknown_books=col.unknown_books, unparseable=col.unparseable,
-                        unparseable_samples=col.unparseable_samples, decode_replacements=repl)
+                        unparseable_samples=col.unparseable_samples, decode_replacements=repl,
+                        source_biblename=source_biblename)
 
 
 def installed_ids(folder: Path | str | None = None) -> set:
