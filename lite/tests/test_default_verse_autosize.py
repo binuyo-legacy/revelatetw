@@ -1,5 +1,11 @@
-"""Default verse auto-sizing: a short default verse should grow until its longest
-wrapped line nearly fills the width, never clipping vertically.
+"""Default verse auto-sizing: maximize size to fill BOTH width and
+height while the full verse stays inside the visible area.
+
+* Short default verse (1-2 wrapped lines at hand-off): grows until
+  its longest wrapped line is >= 95% of the width.
+* Long default verse (3+ lines): uses the vertical ceiling, so the
+  block fills nearly the whole available height (EasyWorship look) and
+  every wrapped line stays inside the width (no clipping).
 Custom verse templates and song slides keep the exact old sizing.
 Headless (offscreen Qt); not a Windows 8.1 hardware check.
 Run: python -m pytest lite/tests/test_default_verse_autosize.py
@@ -13,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from PyQt5 import QtCore, QtWidgets  # noqa: E402
 from revelatelite import app as lite_app, songthemes, versethemes as V  # noqa: E402
-from revelatelite.projection import SlideView, _autosize_default_verse, _wrapped_lines  # noqa: E402
+from revelatelite.projection import SlideView, _autosize_default_verse, _wrapped_lines, _paint_height  # noqa: E402
 
 _QA = []
 
@@ -33,6 +39,8 @@ def body_font(size):
 
 import PyQt5.QtGui as QtGui  # noqa: E402
 
+FLAGS = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
+
 
 def render_vsize(body, w=640, h=360, verse_theme=V.DEFAULT, meta=None, scale=100):
     """Draw one slide; return (used body font pixel size, image)."""
@@ -49,17 +57,47 @@ def render_vsize(body, w=640, h=360, verse_theme=V.DEFAULT, meta=None, scale=100
         return orig(size, bold, family)
     v._body_font = spy
     img = v.snapshot(QtCore.QSize(w, h)).toImage()
-    # The default _draw paints the body once, at the fitted (possibly grown)
-    # size: the largest _body_font request is the drawn size. (Seen sizes are
-    # the fit binary-search probes plus the final paint.)
-    return (max(seen) if seen else None), img
+    # The default _draw first probes fits() (binary-search sizes capped
+    # at the old 12%-of-height cap) and then paints once at the final
+    # (possibly grown) size. The painted call is a _body_font request
+    # after the binary search but before the credit font; the last
+    # request during the body paint is the painted size.
+    return (seen[-1] if seen else None), img
 
 
 SHORT = ("And Jesus returned in the power of the Spirit into Galilee: and there "
          "went out a fame of him through all the region round about.")
 LONG = " ".join(["word"] * 120)
+MEDIUM = " ".join(["word"] * 60)
 JOHN = ("For God so loved the world, that he gave his only begotten Son, that "
         "whosoever believeth in him should not perish, but have everlasting life.")
+TITLE = "In the beginning God created the heaven and the earth."   # one short line
+
+
+def _fit_size(text, aw, ah, cap):
+    """The size the old height-only fit (layout.fit_font_size) picks for
+    this text within the 12%-of-height cap: just selects the biggest
+    size in [14, cap] whose painted height fits ah."""
+    lo, hi, best = 14, cap, 14
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if _paint_height(body_font(mid), text, aw, FLAGS) <= ah:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def _ceiling(text, aw, ah):
+    """Largest size whose painted height still fits ah (vertical ceiling)."""
+    size = 14
+    for cand in range(14, ah + 1):
+        if _paint_height(body_font(cand), text, aw, FLAGS) <= ah:
+            size = cand
+        else:
+            break
+    return size
 
 
 class Autosize(unittest.TestCase):
@@ -72,40 +110,71 @@ class Autosize(unittest.TestCase):
 
     def test_short_verse_grows_to_fill_width(self):
         aw, ah = self._area()
-        current = 43  # old cap: int(360 * 0.12) at scale 100
+        current = _fit_size(SHORT, aw, ah, 43)  # old cap: int(360 * 0.12) at scale 100
         size = _autosize_default_verse(body_font, SHORT, aw, ah, current, 100)
         self.assertGreater(size, current)
-        longest, height = _wrapped_lines(body_font(size), SHORT, aw)
-        self.assertGreaterEqual(longest / aw, 0.90)
-        self.assertLessEqual(height, ah)
+        longest, height, _lines = _wrapped_lines(body_font(size), SHORT, aw)
+        self.assertGreaterEqual(longest / aw, 0.95)
+        self.assertLessEqual(_paint_height(body_font(size), SHORT, aw, FLAGS), ah)
 
-    def test_grown_size_never_clips_vertically(self):
-        for w, h in [(640, 360), (320, 180), (960, 540), (400, 225)]:
+    def test_one_line_verse_fills_width(self):
+        aw, ah = self._area()
+        current = _fit_size(TITLE, aw, ah, 43)
+        size = _autosize_default_verse(body_font, TITLE, aw, ah, current, 100)
+        longest, height, lines = _wrapped_lines(body_font(size), TITLE, aw)
+        if _wrapped_lines(body_font(current), TITLE, aw)[2] <= 2:
+            self.assertLessEqual(lines, 2)
+        self.assertGreaterEqual(longest / aw, 0.90)
+
+    def test_long_verse_fills_height_and_width(self):
+        """Long verses (3+ lines): block fills nearly the whole height,
+        every wrapped line inside the width, and uses the largest size."""
+        for w, h in [(640, 360), (1280, 720), (960, 540), (1920, 1080)]:
             aw, ah = self._area(w, h)
-            current = max(16, int(h * 0.12))
-            size = _autosize_default_verse(body_font, SHORT, aw, ah, current, 100)
-            _, height = _wrapped_lines(body_font(size), SHORT, aw)
-            self.assertLessEqual(height, ah, (w, h, size))
+            cap = max(16, int(h * 0.12))
+            current = _fit_size(MEDIUM, aw, ah, cap)
+            self.assertEqual(_wrapped_lines(body_font(current), MEDIUM, aw)[2] >= 3,
+                             True, (w, h, current))
+            size = _autosize_default_verse(body_font, MEDIUM, aw, ah, current, 100)
+            # height filled: within one line-height row of the ceiling
+            self.assertEqual(size, _ceiling(MEDIUM, aw, ah), (w, h))
+            longest, height, _lines = _wrapped_lines(body_font(size), MEDIUM, aw)
+            self.assertLessEqual(longest, aw)
+            self.assertLessEqual(_paint_height(body_font(size), MEDIUM, aw, FLAGS), ah)
+            headroom = _paint_height(body_font(size + 1), MEDIUM, aw, FLAGS)
+            self.assertGreater(headroom, ah)
 
     def test_long_verse_stays_put_and_fits(self):
         aw, ah = self._area()
-        current = 19          # the size the old fit actually picks for LONG
+        current = _fit_size(LONG, aw, ah, 43)
         size = _autosize_default_verse(body_font, LONG, aw, ah, current, 100)
-        self.assertEqual(size, current)
-        _, height = _wrapped_lines(body_font(size), LONG, aw)
-        self.assertLessEqual(height, ah)
+        self.assertEqual(size, current)          # already at ceiling
+        _, height, _lines = _wrapped_lines(body_font(size), LONG, aw)
+        self.assertLessEqual(_paint_height(body_font(size), LONG, aw, FLAGS), ah)
+
+    def test_grown_size_never_clips_vertically(self):
+        for text in (SHORT, MEDIUM, LONG, JOHN, TITLE):
+            for w, h in [(640, 360), (320, 180), (960, 540), (400, 225)]:
+                aw, ah = self._area(w, h)
+                current = _fit_size(text, aw, ah, max(16, int(h * 0.12)))
+                size = _autosize_default_verse(body_font, text, aw, ah, current, 100)
+                if _paint_height(body_font(current), text, aw, FLAGS) <= ah:
+                    self.assertLessEqual(_paint_height(body_font(size), text, aw, FLAGS), ah,
+                                         (text[:20], w, h, size))
+                else:
+                    self.assertEqual(size, current)
 
     def test_already_wide_verse_unchanged(self):
         aw, ah = self._area()
-        current = 43
-        size = _autosize_default_verse(body_font, JOHN, aw, ah, current, 100)
-        longest, _ = _wrapped_lines(body_font(current), JOHN, aw)
-        if longest >= aw * 0.95:      # already full: helper must not grow it
+        current = _fit_size(JOHN, aw, ah, 43)
+        longest, _, lines = _wrapped_lines(body_font(current), JOHN, aw)
+        if lines >= 3 or longest >= aw * 0.95:
+            size = _autosize_default_verse(body_font, JOHN, aw, ah, current, 100)
             self.assertEqual(size, current)
 
     def test_custom_verse_templates_unchanged(self):
-        # Every custom template must render pixel-identical (the patch never
-        # touches _draw_verse, and the default path is verse-only).
+        # Every custom template renders identical images run-to-run and never
+        # sizes through the default autosize (separate _draw_verse path).
         for k in V.TEMPLATES:
             s1, im1 = render_vsize(SHORT, verse_theme=k)
             s2, im2 = render_vsize(SHORT, verse_theme=k)
@@ -124,11 +193,22 @@ class Autosize(unittest.TestCase):
         self.assertFalse(img.isNull())
         # Longest wrapped line at the drawn size must nearly fill the width.
         aw, ah = self._area()
-        longest, height = _wrapped_lines(body_font(size), SHORT, aw)
+        longest, height, _lines = _wrapped_lines(body_font(size), SHORT, aw)
         self.assertGreaterEqual(longest / aw, 0.90, (size, longest / aw))
-        # pushed past the old height-only fit means bigger than the smallest
-        # size that already filled the width
-        self.assertLessEqual(height, ah)
+        self.assertLessEqual(_paint_height(body_font(size), SHORT, aw, FLAGS), ah)
+        # drawn size fits the vertical ceiling.
+        self.assertLessEqual(size, _ceiling(SHORT, aw, ah))
+
+    def test_long_default_rendered_fills_height(self):
+        size, img = render_vsize(MEDIUM, w=640, h=360)
+        self.assertFalse(img.isNull())
+        aw, ah = self._area()
+        longest, height, lines = _wrapped_lines(body_font(size), MEDIUM, aw)
+        self.assertGreaterEqual(lines, 3)
+        self.assertLessEqual(longest, aw)
+        self.assertLessEqual(_paint_height(body_font(size), MEDIUM, aw, FLAGS), ah)
+        # fills the height: next size up would clip
+        self.assertGreater(_paint_height(body_font(size + 1), MEDIUM, aw, FLAGS), ah)
 
 
 if __name__ == "__main__":

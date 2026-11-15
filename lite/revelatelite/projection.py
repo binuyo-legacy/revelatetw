@@ -7,12 +7,12 @@ from . import background, layout, settings, songthemes, transitions, versethemes
 
 
 def _wrapped_lines(font, text, width):
-    """(longest line width, total height) for text word-wrapped into width."""
+    """(longest line width, total height, number of lines) word-wrapped into width."""
     if width <= 0:
-        return 0.0, 0
+        return 0.0, 0, 0
     lay = QtGui.QTextLayout(text, font)
     lay.beginLayout()
-    longest, total = 0.0, 0.0
+    longest, total, lines = 0.0, 0.0, 0
     while True:
         line = lay.createLine()
         if not line.isValid():
@@ -21,61 +21,108 @@ def _wrapped_lines(font, text, width):
         line.setPosition(QtCore.QPointF(0, total))
         longest = max(longest, line.naturalTextWidth())
         total += line.height()
+        lines += 1
         if total > 100000:      # plain-text sanity stop; never hit on a slide
             break
     lay.endLayout()
-    return longest, int(total)
+    return longest, int(total), lines
+
+
+def _paint_height(font, text, width, flags):
+    """Height the actual paint draws at this size (boundingRect, same flags)."""
+    if width <= 0:
+        return 0
+    return QtGui.QFontMetrics(font).boundingRect(
+        0, 0, width, 100000, flags, text).height()
 
 
 def _autosize_default_verse(body_font, text, max_w, max_h, current, scale):
-    """Grow a short default verse until its longest wrapped line nearly fills max_w.
+    """Largest default-verse size that still fits BOTH max_w and max_h.
 
-    Only ever returns a size in [14, current] that still fits max_h tall, or current
-    when the text is already wide enough. Width fill is not monotonic in the size
-    (rewrapping changes the lines), so candidates above current are sampled and the
-    fullest one that fits vertically wins; ties go to the larger size.
+    Two regimes, both bounded by the vertical ceiling (the largest
+    size whose painted height fits max_h, so nothing ever clips):
+
+    * Short verse (wrapped into at most 2 lines at the hand-off
+      size): grow until the longest wrapped line reaches 95% of
+      max_w. The one short size that keeps the text on a single line
+      full-width can beat a bigger size that wraps to two narrow
+      lines, so re-wrapping beats raw pixel size here.
+    * Multi-line verse (3+ lines at the hand-off size): keep the
+      vertical ceiling, so the block fills the whole available
+      height while every wrapped line stays inside max_w. This is
+      the EasyWorship look the user asked for: many large lines
+      nearly filling the text area.
+
+    Verified fact: the wrapped block height is non-decreasing in the
+    size, so the vertical ceiling is found with a binary search.
+    Paint parity uses the same boundingRect call _draw's fits()
+    uses, so the ceiling can never paint taller than max_h.
+
+    Only called for default (non-template) verse slides; templates
+    and songs never reach this helper.
     """
     if max_w <= 0 or max_h <= 0 or not text:
         return current
+    flags = QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap
+    _cache = {}
     def measures(size):
-        longest, height = _wrapped_lines(body_font(size), text, max_w)
-        return longest, height
+        if size not in _cache:
+            _cache[size] = _wrapped_lines(body_font(size), text, max_w)
+        return _cache[size]
+    def fits(size):
+        return _paint_height(body_font(size), text, max_w, flags) <= max_h
 
-    longest, height = measures(current)
-    if current <= 14 or longest >= max_w * 0.95:
+    # If even the hand-off size does not fit, keep it (oldest behaviour).
+    if not fits(current):
         return current
-    # Vertical ceiling: the largest size that still fits, so nothing ever clips.
-    if height > max_h:
-        return current
+
+    # Vertical ceiling: the largest size that still fits max_h.
+    # Height is non-decreasing in size, so binary search is exact.
     lo, hi, ceiling = current, max(current, int(max_h)), current
     while lo <= hi:
         mid = (lo + hi) // 2
-        if measures(mid)[1] <= max_h:
+        if fits(mid):
             ceiling = mid
             lo = mid + 1
         else:
             hi = mid - 1
     if ceiling <= current:
         return current
-    # Search a little past the old cap (25% of the old cap's headroom is plenty for
-    # a short verse); a step of 2 then a 1px settle keeps repaints cheap.
-    top = min(ceiling, max(current + 2, int(current * 1.25)))
-    best, best_fill = current, longest / max_w
-    size = current + 2
-    while size <= top:
-        longest, height = measures(size)
-        if height <= max_h:
-            fill = longest / max_w
-            if fill >= best_fill - 0.02:      # near tie: take the bigger size
-                best, best_fill = size, max(best_fill, fill)
-                if fill >= 0.96:
-                    return size
-        size += 2
-    if best > current and best < top:
-        longest, height = measures(best + 1)
-        if height <= max_h and longest / max_w >= best_fill - 0.02:
-            best += 1
+
+    # Multi-line verse: the vertical ceiling already fills the
+    # available height with many wrapped lines; growing further
+    # is impossible without clipping, so ceiling IS the answer.
+    if measures(current)[2] >= 3:
+        return ceiling
+
+    # Primary aim: a short verse fills the width (>= 95%) at the
+    # smallest such size that still fits; that is the first size
+    # found descending from the ceiling when the full set of 95%
+    # sizes is examined from the bottom up. Every candidate examined
+    # fits, so width fill decides; longest-line fill is not monotonic
+    # (rewrapping changes the lines), so walk UP from current and
+    # remember the smallest size reaching 95%.
+    target = None
+    best_fill, best_size = 0.0, current
+    for size in range(current + 1, ceiling + 1):
+        fill = measures(size)[0] / max_w
+        if fill > best_fill + 1e-9 or (fill == best_fill and size > best_size):
+            best_fill, best_size = fill, size
+        if fill >= 0.95:
+            target = size
+            break
+    if target is not None:
+        return target
+    # No size reaches 95% width: take the largest size whose fill is
+    # within 0.02 of the best fill seen (prefer bigger text on a near
+    # tie), which keeps the width as full as re-wrapping allows.
+    best, best_fill = current, measures(current)[0] / max_w
+    for size in range(current + 1, ceiling + 1):
+        fill = measures(size)[0] / max_w
+        if fill >= best_fill - 0.02:
+            best, best_fill = size, max(best_fill, fill)
     return best
+
 
 
 class SlideView(QtWidgets.QWidget):
