@@ -35,7 +35,8 @@ class Main(QtWidgets.QWidget):
         self.song_all = self.songs.load_all()
         self.song = None          # the song open in the Songs tab
         self.slide_meta = None    # song slide details (None for verses)
-        self.slide = None         # (heading, body, credit): THE one slide the preview shows (verse or song slide)
+        self.slide = None         # (heading, body, credit): THE one slide the preview shows (verse or song slide). The credit slot is
+                                  # kept for song slides only; verses pass "" so no translation/licence text reaches the projector.
         self.proj = ProjectionWindow()
         self.preview = PreviewView()
         self.cur = None   # (book, chapter, v1, v2, translation)
@@ -1233,7 +1234,7 @@ class Main(QtWidgets.QWidget):
         self.cur = (b, ch, v1, v2, t)
         self.ref_lbl.setText("%s  (%s)" % (ref, t))
         self.verse_lbl.setText("")
-        self._set_slide(("%s  (%s)" % (ref, t), body, self.bible.short_credit(t)))
+        self._set_slide((ref, body, ""))
         self.box.set_reference(ref, reference_spans(b, ch, v1, v2),
                                self.box.hasFocus() or self.box.segment() is not None, segment)
         self.st["last_reference"] = ref

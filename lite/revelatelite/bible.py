@@ -293,7 +293,12 @@ class BibleStore:
         return self.meta(translation, "attribution") or lic
 
     def short_credit(self, translation):
-        """One short line for the projector (first sentence of the credit)."""
+        """One short line for the projector (first sentence of the credit).
+
+        Retained for API compatibility only. The projector never paints a
+        credit: it places the reference at the bottom centre and the old credit
+        used the same band, so the two overprinted on licensed translations.
+        """
         c = self.credit(translation)
         return c.split(". Source")[0].strip() if c else ""
 

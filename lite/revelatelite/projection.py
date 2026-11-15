@@ -297,13 +297,12 @@ class SlideView(QtWidgets.QWidget):
         else:
             self._text(p, text_area, flags, self.body, fg, h)
         if self.credit:
-            f2 = QtGui.QFont("Segoe UI")
-            f2.setPixelSize(max(11, int(h * 0.02)))
-            p.setFont(f2)
-            p.setPen(QtGui.QColor(fg))
-            p.setOpacity(0.55)
-            self._text(p, QtCore.QRect(0, h - int(h * 0.04) - 4, w, int(h * 0.04)),
-                       QtCore.Qt.AlignCenter, self.credit, fg, h)
+            # Never painted: the translation name and licence are operator-side
+            # metadata (they stay in the pack and the operator's credit line),
+            # not slide content. The credit text and the bottom-centre reference
+            # both used to default to this same bottom band, so they overprinted
+            # each other on every licensed translation.
+            pass
 
     # ---- song templates (songs only; verses never come here) ----
     def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):
@@ -571,12 +570,8 @@ class SlideView(QtWidgets.QWidget):
                 p.setPen(acc)
                 self._text(p, ref_rect, h_al | A.AlignVCenter, self.ref, t["accent"], h)
         if self.credit:
-            f2 = QtGui.QFont("Segoe UI")
-            f2.setPixelSize(max(11, int(h * 0.02)))
-            p.setFont(f2)
-            p.setPen(dim)
-            cy = h - int(h * (0.105 if frame in ("single", "double") else 0.04)) - 4
-            p.drawText(QtCore.QRect(0, cy, w, int(h * 0.04)), A.AlignCenter, self.credit)
+            # Never painted: same rule as the default verse path above.
+            pass
 
     def _body_font(self, size, bold=None, family=None):
         fam = family or self.font_family or "Georgia"

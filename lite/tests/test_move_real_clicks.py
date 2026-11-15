@@ -53,7 +53,7 @@ class MoveWithRealEvents(unittest.TestCase):
         it = w.services.items[r]
         self.assertEqual(w.service_list.item(r).text(), "%s  (%s)" % (it["ref"], it["translation"]))
         self.assertEqual(w.box.text(), it["ref"])
-        self.assertEqual(w.preview.ref, "%s  (%s)" % (it["ref"], it["translation"]))
+        self.assertEqual(w.preview.ref, it["ref"])
         self.assertEqual(w.trans.currentData(), it["translation"])
 
     def test_click_row_then_repeated_move_buttons(self):
