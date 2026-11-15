@@ -237,6 +237,76 @@ class WithQt(unittest.TestCase):
         w.proj.finish_transition()
         w.close()
 
+    def test_timer_to_existing_verse_animates(self):
+        w = self.make(transition_effect="fade", transition_ms=500)
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        service_idx = labels.index("Service list")
+        timer_idx = labels.index("Timer")
+        w.lookup("John 3:16")
+        # live: verse on screen, then Timer projected over it
+        w.project()
+        w.proj.finish_transition()
+        self.assertIn("John 3:16", w.proj.ref)
+        w.tabs.setCurrentIndex(timer_idx)
+        self.qa.processEvents()
+        w._show_timer_slide()
+        w.project()
+        w.proj.finish_transition()
+        self.qa.processEvents()
+        self.assertIsNotNone(w.proj.timer_snap)
+        self.assertTrue(w.proj.live)
+        # back to Service list WITHOUT changing the verse: preview
+        # auto-restores the already-selected verse
+        w.tabs.setCurrentIndex(service_idx)
+        self.qa.processEvents()
+        self.assertIsNone(w.timer_snap)
+        self.assertIn("John 3:16", w.preview.ref)
+        self.assertEqual(w.preview.body, w.proj.body)
+        self.assertEqual(w.preview.ref, w.proj.ref)
+        # timer is still ticking live off-tab before F5
+        self.assertIsNotNone(w.proj.timer_snap)
+        # F5 must animate Timer -> verse, not cut via stale same-picture
+        w.project()
+        self.assertTrue(w.proj.transitioning, "Timer->verse F5 cut instantly, no transition ran")
+        self.assertIsNotNone(w.proj._tx)
+        self.assertFalse(w.proj._tx.get("effect") == "cut")
+        w.proj.finish_transition()
+        self.assertFalse(w.proj.transitioning)
+        self.assertIsNone(w.proj.timer_snap)
+        self.assertIn("John 3:16", w.proj.ref)
+        self.assertTrue(w.proj.live)
+        # same-verse reproject with no timer in the way still does not animate
+        w.project()
+        self.assertFalse(w.proj.transitioning)
+        # off-tab ticking is untouched by the fix: still active while live timer
+        w.tabs.setCurrentIndex(timer_idx)
+        self.qa.processEvents()
+        w._show_timer_slide()
+        w.project()
+        w.proj.finish_transition()
+        w.tabs.setCurrentIndex(service_idx)
+        self.qa.processEvents()
+        self.assertTrue(w._timer_tick.isActive())
+        w.close()
+
+    def test_live_badge_not_naive_same_while_timer_live(self):
+        w = self.make()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.lookup("John 3:16")
+        w.project()
+        w.proj.finish_transition()
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        w._show_timer_slide()
+        w.project()
+        w.proj.finish_transition()
+        self.qa.processEvents()
+        w.tabs.setCurrentIndex(labels.index("Service list"))
+        self.qa.processEvents()
+        w._refresh_live_state()
+        self.assertEqual(w.live_badge.text(), "LIVE (preview not sent yet)")
+        w.close()
+
     def test_frames_paint_without_error(self):
         w = self.make(transition_effect="blinds", transition_ms=500)
         w.lookup("John 3:16")

@@ -2073,7 +2073,8 @@ class Main(QtWidgets.QWidget):
             self.live_badge.setStyleSheet("")
             return
         pair = self._preview_pair()
-        same = bool(pair) and (pair[0], pair[1]) == (self.proj.ref, self.proj.body) \
+        live_timer = bool(getattr(self.proj, "timer_snap", None) is not None)
+        same = bool(pair) and not live_timer and (pair[0], pair[1]) == (self.proj.ref, self.proj.body) \
             and getattr(self, "_style_args", None) == self._sent_style
         self.live_badge.setText("LIVE" if same else "LIVE (preview not sent yet)")
         self.live_badge.setStyleSheet(
@@ -2110,7 +2111,14 @@ class Main(QtWidgets.QWidget):
         ref, body, credit = pair
         args = getattr(self, "_style_args", None)
         was_live = bool(self.proj.live and self.proj.isVisible())
-        same = was_live and (ref, body, credit) == (self.proj.ref, self.proj.body, self.proj.credit) \
+        # A timer live on the projector is never "the same picture" as a
+        # verse/song, even though set_timer() left self.proj.ref/body
+        # untouched (they still describe the last verse/song). Without
+        # this check, coming back from the Timer tab and pressing F5 on
+        # the already-selected verse cut instantly through a stale
+        # same-picture shortcut.
+        live_timer = bool(getattr(self.proj, "timer_snap", None) is not None)
+        same = was_live and not live_timer and (ref, body, credit) == (self.proj.ref, self.proj.body, self.proj.credit) \
             and args == self._sent_style
         plan = trn.plan(trn.SWITCH if was_live else trn.ON, self.st, self._step_hint, same_picture=same)
         windowed = []
