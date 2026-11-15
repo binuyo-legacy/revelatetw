@@ -115,6 +115,18 @@ def clean_font(f):
     return f if f in FONT_FAMILIES else "Segoe UI"
 
 
+def analog_time_readout(text, marker=""):
+    """Combined digital readout shown under an analog Time dial.
+
+    Returns the clock text plus the AM/PM marker when present (for example
+    ``5:04 PM``), or just the clock text in 24-hour mode (``17:04``).
+    Headless so callers and tests share the exact string the renderer draws.
+    """
+    text = " ".join(str(text or "").split())
+    marker = " ".join(str(marker or "").split()).upper()
+    return "%s %s" % (text, marker) if text and marker else (text or marker)
+
+
 def clamp_time(hour, minute, second=0, ampm=None):
     """Normalise a manually entered clock time to a plain (h, m, s) 24h tuple."""
     try:

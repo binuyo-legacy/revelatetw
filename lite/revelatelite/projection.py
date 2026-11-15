@@ -444,9 +444,11 @@ class SlideView(QtWidgets.QWidget):
             hand(dial.get("second", 0), 60, r * 0.82, 0.014, acc)
             p.setPen(acc)
             p.drawEllipse(QtCore.QRectF(cx - r * 0.04, cy - r * 0.04, r * 0.08, r * 0.08))
-            # Countdown digits below the dial show the time LEFT (drain
-            # arc already drawn above). Time mode shows the AM/PM marker.
-            # Both live in digits_rect, strictly below dial+arc.
+            # Time mode shows the full digital readout (time plus AM/PM when
+            # the 12-hour format is on) in digits_rect, directly below the
+            # dial, so viewers can read the analog hands at a glance. The
+            # marker alone is never drawn there any more. Countdown digits
+            # (time LEFT) and the message keep their own bands below.
             if snap.get("mode") == "countdown":
                 df = QtGui.QFont(family)
                 df.setBold(True)
@@ -463,20 +465,24 @@ class SlideView(QtWidgets.QWidget):
                 p.drawText(QtCore.QRect(int(digits_rect[0]), int(digits_rect[1]),
                                         int(digits_rect[2]), int(digits_rect[3])),
                            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
-            elif marker:
-                df = QtGui.QFont(family)
-                # Shrink to fit digits_rect (marker may be long, e.g. "PM").
-                mfrac = 0.11
-                while mfrac > 0.04:
-                    df.setPixelSize(max(10, int(h * mfrac)))
-                    if QtGui.QFontMetrics(df).horizontalAdvance(marker) <= digits_rect[2] * 0.92:
-                        break
-                    mfrac -= 0.01
-                p.setFont(df)
-                p.setPen(txt)
-                p.drawText(QtCore.QRect(int(digits_rect[0]), int(digits_rect[1]),
-                                        int(digits_rect[2]), int(digits_rect[3])),
-                           QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, marker)
+            else:
+                readout = timermod.analog_time_readout(text, marker)
+                if readout:
+                    df = QtGui.QFont(family)
+                    df.setBold(True)
+                    # Largest size that fits the digits rect both ways.
+                    frac = 0.13
+                    while frac > 0.04:
+                        df.setPixelSize(max(10, int(h * frac)))
+                        fm = QtGui.QFontMetrics(df)
+                        if fm.horizontalAdvance(readout) <= digits_rect[2] * 0.92 and fm.height() <= digits_rect[3]:
+                            break
+                        frac -= 0.01
+                    p.setFont(df)
+                    p.setPen(txt)
+                    p.drawText(QtCore.QRect(int(digits_rect[0]), int(digits_rect[1]),
+                                            int(digits_rect[2]), int(digits_rect[3])),
+                               QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, readout)
             if message:
                 sf = QtGui.QFont(family)
                 # Largest size whose wrapped height and longest line fit

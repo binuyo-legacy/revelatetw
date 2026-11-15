@@ -47,7 +47,10 @@ class Main(QtWidgets.QWidget):
                                          manual_second=self.st["timer_manual_second"],
                                          font_family=self.st["timer_font_family"])
         self.timer_snap = None    # the timer snapshot currently in the preview (None = verse/song is showing)
-        self._timer_showing = False  # True once the Timer tab has been opened and its slide put in the preview
+        self._timer_showing = False  # True while the Timer tab is selected (its slide is in the preview)
+        self._timer_live = False     # True while a timer slide is on the live projector. The
+                                     # tick must keep running off-tab while this is set: the
+                                     # audience sees the clock/countdown, not the operator tab.
         self.proj = ProjectionWindow()
         self.preview = PreviewView()
         self.cur = None   # (book, chapter, v1, v2, translation)
@@ -1071,13 +1074,21 @@ class Main(QtWidgets.QWidget):
             self._show_timer_slide()
             self._timer_tick.start()
         else:
+            # Off the Timer tab: the preview goes back to the verse/song
+            # slide, but a timer live on the projector must keep ticking
+            # there. Stopping the tick here froze the audience's clock at
+            # the tab switch and only resumed on return. So only leave the
+            # timer running when it is not live; when it is live, keep the
+            # tick alive and let _on_timer_tick push to the projector alone.
             if self._timer_showing and self.timer_snap is not None:
-                # leaving to verses/songs clears timer from preview, live projection keeps last sent until next Project
-                self._timer_tick.stop()
+                timer_live = bool(self._timer_live and self.proj.live
+                                  and self.proj.isVisible() and self.proj.timer_snap is not None)
                 self.timer_snap = None
                 self.preview.show_slide("", "") if not self.slide else self.preview.show_slide(*self.slide, meta=self.slide_meta)
                 self.project_b.setEnabled(bool(self.slide))
                 self._timer_showing = False
+                if not timer_live:
+                    self._timer_tick.stop()
 
     def _show_timer_slide(self):
         snap = self.timer.snapshot()
@@ -1184,15 +1195,22 @@ class Main(QtWidgets.QWidget):
         self._show_timer_slide()
 
     def _on_timer_tick(self):
-        if not self._timer_showing:
+        live = bool(self.proj.live and self.proj.isVisible() and self.proj.timer_snap is not None)
+        if not self._timer_showing and not (self._timer_live and live):
             return
         snap = self.timer.tick()
-        self.timer_snap = snap
-        self.preview.show_timer(snap)
+        # Off the Timer tab there is no hidden preview work: only the live
+        # projector gets the tick, so the audience's clock never freezes on
+        # a tab switch.
+        if self._timer_showing:
+            self.timer_snap = snap
+            self.preview.show_timer(snap)
         # push live to the shared projector if it is already live (no new Project needed for ticking)
-        if self.proj.live and self.proj.isVisible() and self.proj.timer_snap is not None:
+        if live:
             self.proj.set_timer(snap)
-        self._sync_timer_buttons()
+            self._timer_live = True
+        if self._timer_showing:
+            self._sync_timer_buttons()
 
     def _verse_theme_changed(self, row):
         """Only stores the choice and redraws the preview. The screen changes after Project."""
@@ -2076,6 +2094,7 @@ class Main(QtWidgets.QWidget):
 
             def change():
                 self.proj.set_timer(snap)
+                self._timer_live = True
                 if not self.proj.isVisible():
                     self.proj.open_on(self.st["display"], self)
 
@@ -2115,6 +2134,9 @@ class Main(QtWidgets.QWidget):
 
     def project_off(self):
         """Close the full-screen display. Preview, selection, service list and settings stay as they are."""
+        self._timer_live = False
+        if not self._timer_showing:
+            self._timer_tick.stop()
         was_live = bool(self.proj.live and self.proj.isVisible())
         plan = trn.plan(trn.OFF, self.st, 0, same_picture=not was_live)
 
@@ -2136,6 +2158,9 @@ class Main(QtWidgets.QWidget):
         """Projector window closed by Alt+F4 or similar: treat it like Project Off."""
         self.proj.live = False
         self._sent_style = None
+        self._timer_live = False
+        if not self._timer_showing:
+            self._timer_tick.stop()
         self._refresh_live_state()
         self.say("Projection window closed. Your preview is unchanged.")
 

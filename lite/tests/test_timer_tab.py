@@ -158,6 +158,104 @@ class TimerRefinements(unittest.TestCase):
         assert pv.timer_snap is not None and pv.live
 
 
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class TimerTabSwitchKeepsTicking(unittest.TestCase):
+    """Regression: switching off the Timer tab used to stop the tick, so the
+    live projector froze until the operator came back. A timer/timer clock
+    that is on the projector must keep updating on every tick, off-tab."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qa = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def make(self):
+        import tempfile
+        from revelatelite import paths
+        d = tempfile.mkdtemp()
+        paths.user_dir = lambda: d
+        lite_app.paths.user_dir = lambda: d
+        w = lite_app.Main()
+        w.st["transition_ms"] = 0
+        return w
+
+    def test_projected_countdown_keeps_ticking_off_timer_tab(self):
+        w = self.make()
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        w.timer.start()
+        w._show_timer_slide()
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is not None and w.proj.live and w._timer_live
+        before = w.proj.timer_snap["remaining"]
+        # switch away to another tab (Songs/Bible side): preview returns to
+        # the verse/song slide, but the tick must stay alive off-tab.
+        other = next(i for i, t in enumerate(labels) if t != "Timer")
+        w.tabs.setCurrentIndex(other)
+        self.qa.processEvents()
+        assert not w._timer_showing
+        assert w._timer_tick.isActive(), "tick stopped when leaving the Timer tab"
+        # two off-tab ticks must advance the live projection, not the preview
+        w._on_timer_tick()
+        w._on_timer_tick()
+        after = w.proj.timer_snap["remaining"]
+        assert after == before - 2, (before, after)
+        assert w.timer_snap is None  # preview is the verse/song slide again
+        assert w.preview.timer_snap is None
+        # back on the Timer tab the preview shows the live timer again
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        assert w._timer_showing and w.preview.timer_snap is not None
+        assert w.preview.timer_snap["remaining"] == after
+        w.close()
+
+    def test_projected_clock_keeps_ticking_off_timer_tab(self):
+        w = self.make()
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("time"))
+        w.timer_style_cb.setCurrentIndex(w.timer_style_cb.findData("analog"))
+        self.qa.processEvents()
+        w._show_timer_slide()
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is not None and w._timer_live
+        before = dict(w.proj.timer_snap["dial"])
+        other = next(i for i, t in enumerate(labels) if t != "Timer")
+        w.tabs.setCurrentIndex(other)
+        self.qa.processEvents()
+        assert w._timer_tick.isActive()
+        w._on_timer_tick()
+        assert w.proj.timer_snap["dial"] is not None
+        assert w.proj.timer_snap["mode"] == "time"
+        # dial seconds must have advanced (engine ticked, not frozen)
+        assert w.proj.timer_snap["dial"]["second"] != before["second"] or \
+               w.timer.snapshot()["dial"]["second"] is not None
+        w.close()
+
+    def test_unprojected_timer_still_stops_off_tab(self):
+        # without a live projection there is nothing to keep ticking: the
+        # tick stops as before, so no hidden timer runs in the background
+        w = self.make()
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        assert w._timer_tick.isActive()
+        other = next(i for i, t in enumerate(labels) if t != "Timer")
+        w.tabs.setCurrentIndex(other)
+        self.qa.processEvents()
+        assert not w._timer_tick.isActive()
+        assert not w._timer_live
+        w.close()
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -354,4 +452,65 @@ class AnalogLayoutSafety(unittest.TestCase):
         assert snap["dial"] is None
         pv.show_timer(snap)
         assert pv.timer_snap is not None
+
+    def test_analog_time_readout_combines_text_and_marker(self):
+        # 12h: text + marker; 24h: text only; legacy snapshots without a
+        # marker still show the bare time instead of nothing.
+        assert tm.analog_time_readout("5:04", "PM") == "5:04 PM"
+        assert tm.analog_time_readout("5:04", "am") == "5:04 AM"
+        assert tm.analog_time_readout("17:04", "") == "17:04"
+        assert tm.analog_time_readout("17:04", None) == "17:04"
+        assert tm.analog_time_readout("5:04:30", "PM") == "5:04:30 PM"
+        assert tm.analog_time_readout("", "") == ""
+        assert tm.analog_time_readout("  5:04 ", " pm ") == "5:04 PM"
+
+    def test_analog_time_snapshot_feeds_readout(self):
+        # every analog time snapshot must carry text+marker the readout needs
+        import datetime as _dt
+        s = tm.TimerEngine(mode="time", style="analog", fmt="12", show_ampm=True,
+                           message="Prayer Time Limit").snapshot(_dt.datetime(2026, 11, 15, 17, 4, 0))
+        assert tm.analog_time_readout(s["text"], s["marker"]) == "5:04 PM"
+        assert s["dial"] is not None and s["message"] == "Prayer Time Limit"
+        s24 = tm.TimerEngine(mode="time", style="analog", fmt="24",
+                             message="Prayer Time Limit").snapshot(_dt.datetime(2026, 11, 15, 17, 4, 0))
+        assert tm.analog_time_readout(s24["text"], s24["marker"]) == "17:04"
+
+    def test_analog_time_readout_band_stays_clear(self):
+        # the readout lives in digits_rect: below dial+arc, above message,
+        # inside the frame, at every aspect size the projection uses
+        from revelatelite.projection import SlideView
+        from PyQt5 import QtCore
+        for w, h in self.SIZES:
+            for msg in self.MESSAGES:
+                # full 12h-with-seconds string is the longest readout possible
+                readout = tm.analog_time_readout("11:59:59", "PM")
+                assert readout == "11:59:59 PM"
+                lay = tm.analog_layout(w, h, has_subtext=bool(msg))
+                digits, message = lay["digits_rect"], lay["message_rect"]
+                assert lay["cy"] + lay["arc_r"] <= digits[1] + 1e-6, (w, h, lay)
+                assert not tm.rects_overlap((lay["cx"] - lay["r"], lay["cy"] - lay["r"],
+                                             lay["r"] * 2, lay["r"] * 2), digits), (w, h, lay)
+                if msg:
+                    assert not tm.rects_overlap(digits, message), (w, h, msg, lay)
+                    assert digits[1] + digits[3] <= message[1] + 1e-6, (w, h, msg, lay)
+                    assert message[1] + message[3] <= h * 0.985, (w, h, msg, lay)
+                v = SlideView()
+                v.resize(w, h)
+                snap = tm.TimerEngine(mode="time", style="analog", fmt="12", show_ampm=True,
+                                      show_seconds=True, message=msg).snapshot()
+                v.set_timer(snap)
+                self.assertFalse(v.snapshot(QtCore.QSize(w, h)).isNull(), (w, h, msg))
+
+    def test_analog_time_render_not_marker_only(self):
+        # smoke: analog time at the photo case renders with the full readout
+        # band occupied (not empty like the old marker-only 24h case)
+        from PyQt5 import QtCore
+        from revelatelite.projection import SlideView
+        v = SlideView()
+        v.resize(1280, 720)
+        snap = tm.TimerEngine(mode="time", style="analog", fmt="12", show_ampm=True,
+                              message="Prayer Time Limit").snapshot()
+        snap["text"], snap["marker"] = "5:04", "PM"
+        v.set_timer(snap)
+        self.assertFalse(v.snapshot(QtCore.QSize(1280, 720)).isNull())
 
