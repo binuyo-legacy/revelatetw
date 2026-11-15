@@ -95,6 +95,9 @@ class Main(QtWidgets.QWidget):
         go = QtWidgets.QPushButton("Look up")
         self.add_bible_b = QtWidgets.QPushButton("Add Bible...")
         self.add_bible_b.setToolTip("Convert and add your own licensed Bible file (USFM, OSIS or text)")
+        self.delete_bible_b = QtWidgets.QPushButton("Delete imported...")
+        self.delete_bible_b.setToolTip("Delete a Bible you imported earlier. Bundled Bibles cannot be deleted.")
+        self.delete_bible_b.setEnabled(any(self.bible.is_user_imported(t) for t in names))
         self.sug_model = QtCore.QStringListModel(self)
         self.completer = QtWidgets.QCompleter(self.sug_model, self)
         self.completer.setCompletionMode(QtWidgets.QCompleter.UnfilteredPopupCompletion)
@@ -105,6 +108,7 @@ class Main(QtWidgets.QWidget):
         row.addWidget(self.box, 1)
         row.addWidget(go)
         row.addWidget(self.add_bible_b)
+        row.addWidget(self.delete_bible_b)
         fl.addLayout(row)
         # message line only (errors / hints). The verse text itself lives ONLY in the preview.
         self.verse_lbl = QtWidgets.QLabel("")
@@ -440,6 +444,7 @@ class Main(QtWidgets.QWidget):
         self.song_imp_b.clicked.connect(self.import_songs)
         self.song_exp_b.clicked.connect(self.export_song)
         self.add_bible_b.clicked.connect(self.import_bible)
+        self.delete_bible_b.clicked.connect(self.delete_bible_chooser)
         self.song_expall_b.clicked.connect(self.export_all_songs)
         self.project_b.clicked.connect(self.project)
         self.blank_b.clicked.connect(self.project_off)
@@ -1232,7 +1237,10 @@ class Main(QtWidgets.QWidget):
             self.verse_lbl.setText("%s is not in %s." % (ref, t))
             return
         self.cur = (b, ch, v1, v2, t)
-        self.ref_lbl.setText("%s  (%s)" % (ref, t))
+        # The reference line shows only book/chapter/verse. The chosen
+        # translation is operator context (the combo box); appending its code
+        # beside the reference (or painting it on the slide) is wrong.
+        self.ref_lbl.setText(ref)
         self.verse_lbl.setText("")
         self._set_slide((ref, body, ""))
         self.box.set_reference(ref, reference_spans(b, ch, v1, v2),
@@ -1607,8 +1615,47 @@ class Main(QtWidgets.QWidget):
         if dlg.exec_() == QtWidgets.QDialog.Accepted and dlg.imported_code:
             self.refresh_translations(dlg.imported_code)
 
+    def delete_bible_chooser(self):
+        """Pick an imported Bible to delete. Bundled Bibles never appear here.
+
+        Nothing changes until the operator picks one and confirms. The actual
+        deletion (including the bundled-pack guard) lives in
+        delete_imported_bible, so the confirmation happens exactly once.
+        """
+        imported = [t for t in self.bible.translations() if self.bible.is_user_imported(t)]
+        if not imported:
+            self.say("No imported Bibles to delete. Bundled Bibles cannot be deleted.")
+            QtWidgets.QMessageBox.information(
+                self, "Delete Bible",
+                "No imported Bibles to delete.\n\nBundled Bibles cannot be deleted.")
+            return
+        items = []
+        for code in imported:
+            name = self.bible.full_name(code)
+            items.append("%s (%s)" % (name, code) if name and name != code else code)
+        pick, ok = QtWidgets.QInputDialog.getItem(
+            self, "Delete imported Bible",
+            "Choose the imported Bible to delete. This cannot be undone. Bundled Bibles are not listed.",
+            items, 0, False)
+        if not ok:
+            return
+        code = imported[items.index(pick)] if pick in items else pick
+        if self.delete_imported_bible(code):
+            pass
+        else:
+            # Bundled or missing or cancelled: say so, keep the list unchanged.
+            if self.bible.is_user_imported(code):
+                return
+            self.say("%s is a bundled Bible and cannot be deleted." % code if code in self.bible.translations() else "%s could not be deleted." % code)
+
     def refresh_translations(self, select=None):
-        """Re-read the pack folders. Does not change what the preview shows."""
+        """Re-read the pack folders. Does not change what the preview shows.
+
+        Falls back cleanly when the selected translation is gone (deleted):
+        the combo lands on an existing translation and that becomes the saved
+        setting, so the saved choice never points at a missing pack.
+        Also updates the Delete imported... button enabled state.
+        """
         self.trans.blockSignals(True)
         self.trans.clear()
         for t in self.bible.translations():
@@ -1616,9 +1663,91 @@ class Main(QtWidgets.QWidget):
         want = select or self.st["translation"]
         if want in self.bible.translations():
             self.trans.setCurrentText(want)
+            self.st["translation"] = want
+        elif self.trans.count() > 0:
+            # Previously saved (or just deleted) selection is gone: pick the
+            # first available translation instead of leaving a stale choice.
+            self.trans.setCurrentIndex(0)
+            self.st["translation"] = self.trans.currentText() or self.st["translation"]
         self.trans.blockSignals(False)
         self.refresh_books()
+        if hasattr(self, "delete_bible_b"):
+            self.delete_bible_b.setEnabled(any(self.bible.is_user_imported(t) for t in self.bible.translations()))
+        self.save_settings()
         self.say("Added %s. Choose it from the list at the top to use it." % select if select else "Bible list updated.")
+
+    def delete_imported_bible(self, code, confirm_parent=None):
+        """Delete one user-imported Bible pack, with a confirmation, and reject
+        bundled ones.
+
+        Returns True when the pack was deleted. Returns False and changes
+        nothing when the pack is missing, is bundled, is not marked
+        user-imported, cannot be removed, or the operator answers No.
+
+        Deletion removes only <user_directory>/<code>.sqlite. It never touches a
+        bundled pack in the bundled directory, even when the names clash. If the
+        deleted translation was the current choice, or the live verse came from
+        it, the settings fall back to an available translation and the preview
+        is refreshed to that state.
+        """
+        code = (code or "").strip()
+        if not code:
+            return False
+        if not self.bible.is_user_imported(code):
+            # Bundled (or unknown / not user-imported): never delete.
+            return False
+        parent = confirm_parent if confirm_parent is not None else self
+        ans = QtWidgets.QMessageBox.question(
+            parent, "Delete Bible",
+            "Delete the imported Bible \"%s\"? This cannot be undone."
+            % (self.bible.full_name(code) if code in self.bible.translations() else code),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+        if ans != QtWidgets.QMessageBox.Yes:
+            return False
+        # Close any open connection first so a Windows PC can remove the file
+        # (an open read-only handle can block deletion there).
+        was_selected = (self.tr_name() == code or self.st.get("translation") == code)
+        was_live_verse = bool(self.cur) and self.cur[4] == code
+        live_ref = None
+        if was_live_verse:
+            b, ch, v1, v2, _t = self.cur
+            live_ref = format_reference(b, ch, v1, v2)
+        self.bible.close()
+        result = self.bible.delete_user_imported(code)
+        if not result.get("deleted"):
+            self.bible.close()
+            self.say(result.get("message") or ("Could not delete %s." % code))
+            return False
+        self.bible.close()
+        # Drop service-list rows that point at the deleted translation, so a
+        # later pick never looks the reference up in a missing pack.
+        kept = [it for it in self.services.items if it.get("translation") != code]
+        if len(kept) != len(self.services.items):
+            self.services.items = kept
+            self.persist_list()
+        self.refresh_service_list()
+        # refresh_translations applies the fallback: select=None keeps the
+        # saved translation when it still exists (the settings-only case
+        # where the combo is not yet on the deleted code), otherwise the
+        # combo lands on an available translation and saves that choice.
+        self.refresh_translations()
+        self.say("Deleted %s%s." % (code, ". Now showing %s." % self.tr_name() if was_selected and self.tr_name() != code else ""))
+        if was_live_verse and live_ref:
+            if self.tr_name():
+                self.lookup(live_ref, quiet=True)
+            else:
+                self._set_slide(None)
+                self.ref_lbl.setText("")
+        elif was_selected and self.cur is None and self.tr_name():
+            # Selected-only change: keep whatever the operator had in the box
+            # and show it in the fallback translation, so the state is
+            # consistent and persisted.
+            frame = self.box.text().strip()
+            if frame:
+                self.lookup(frame, quiet=True)
+        self.save_settings()
+        return True
 
     # ---------------- projection ----------------
     # Safety rule: Enter, Left/Right/Up/Down, Next/Previous, translation and look changes only

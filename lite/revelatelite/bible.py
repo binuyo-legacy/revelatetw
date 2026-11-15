@@ -261,6 +261,32 @@ class BibleStore:
             return False
         return self.meta(translation, "user_imported") == "1"
 
+    def delete_user_imported(self, translation):
+        """Delete one user-imported pack file. Returns a small status dict.
+
+        {"deleted": True} on success; {"deleted": False, "message": ...} when
+        the pack is missing, is bundled, is not marked user-imported, or
+        cannot be removed. On failure nothing is changed. Callers close the
+        store first on Windows so an open handle cannot block removal.
+        """
+        code = (translation or "").strip()
+        if not code:
+            return {"deleted": False, "message": "Choose a Bible to delete."}
+        bundled = os.path.join(self.directory, code + ".sqlite")
+        user = os.path.join(self.user_directory, code + ".sqlite")
+        if os.path.isfile(bundled):
+            return {"deleted": False, "message": "%s is a bundled Bible and cannot be deleted." % code}
+        if not os.path.isfile(user):
+            return {"deleted": False, "message": "%s is not an imported Bible." % code}
+        if not self.is_user_imported(code):
+            return {"deleted": False, "message": "%s is not an imported Bible." % code}
+        self.close()
+        try:
+            os.remove(user)
+        except OSError as ex:
+            return {"deleted": False, "message": "Could not delete %s: %s" % (code, ex)}
+        return {"deleted": True, "code": code}
+
     def _db(self, translation):
         if self._open != translation:
             self.close()
