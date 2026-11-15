@@ -74,9 +74,9 @@ class TabAnimation(unittest.TestCase):
         self.wait()
         self.assertEqual(w.tabs.currentIndex(), 1)
         self.assertFalse(w.tabs.tabBar().sliding())
-        for i in range(4):
+        for i in range(5):
             self.assertIsNone(w.tabs.widget(i).graphicsEffect())
-        self.assertEqual([w.tabs.tabText(i) for i in range(4)], ["Service list", "Search words", "Songs", "Settings"])
+        self.assertEqual([w.tabs.tabText(i) for i in range(5)], ["Service list", "Search words", "Songs", "Timer", "Settings"])
         w.close()
 
     def test_resize_mid_animation(self):
@@ -155,11 +155,11 @@ class TabAnimation(unittest.TestCase):
         w = self.make()
         self.assertEqual((w.width(), w.height()), (1000, 640))
         base = {}
-        for i in (0, 1, 2, 3):                      # settled layout per tab, animations finished
+        for i in (0, 1, 2, 3, 4):                      # settled layout per tab, animations finished
             w.tabs.setCurrentIndex(i)
             self.wait(260)
             base[i] = self.geom(w)
-        for i in (2, 1, 0, 3, 0):
+        for i in (2, 1, 0, 4, 3, 0):
             w.tabs.setCurrentIndex(i)
             self.qa.processEvents()
             self.assertEqual(self.geom(w), base[i])  # mid-animation: tabs, quick bar, tab widget, preview identical
@@ -172,7 +172,7 @@ class TabAnimation(unittest.TestCase):
         self.wait()
         host = w.quick_host
         self.assertTrue(host.isVisible())
-        self.assertGreaterEqual(host.x(), tb.x() + tb.tabRect(3).right())
+        self.assertGreaterEqual(host.x(), tb.x() + tb.tabRect(4).right())
         pane_top = w.tabs.currentWidget().mapTo(w.tabs, QtCore.QPoint(0, 0)).y()
         self.assertLessEqual(host.y() + host.height(), pane_top)
         self.assertEqual(len(w.quick_controls[2]), 3)

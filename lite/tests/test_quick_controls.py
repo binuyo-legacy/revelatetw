@@ -47,7 +47,7 @@ class QuickControls(unittest.TestCase):
     def test_tab_order_and_default_size_untouched(self):
         w = self.make()
         names = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-        self.assertEqual(names, ["Service list", "Search words", "Songs", "Settings"])
+        self.assertEqual(names, ["Service list", "Search words", "Songs", "Timer", "Settings"])
         self.assertEqual((w.width(), w.height()), (1000, 640))     # no forced maximize / resize
 
     def test_toolbar_is_in_tab_row_right_of_tabs(self):

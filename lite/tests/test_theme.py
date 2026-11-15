@@ -34,7 +34,7 @@ class ThemeLook(unittest.TestCase):
         w = self.make()
         tabs = w.findChild(QtWidgets.QTabWidget)
         self.assertEqual([tabs.tabText(i) for i in range(tabs.count())],
-                         ["Service list", "Search words", "Songs", "Settings"])
+                         ["Service list", "Search words", "Songs", "Timer", "Settings"])
 
     def test_stylesheet_builds_and_covers_controls(self):
         q = theme.build_qss()

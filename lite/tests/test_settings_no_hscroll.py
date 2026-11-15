@@ -29,7 +29,7 @@ class SettingsNoHScroll(unittest.TestCase):
         w = lite_app.Main()
         w.resize(width, height)
         w.show()
-        w.tabs.setCurrentIndex(3)
+        w.tabs.setCurrentIndex(4)
         self.qa.processEvents()
         return w
 
@@ -91,7 +91,7 @@ class SettingsNoHScroll(unittest.TestCase):
         before = (w.tv_frame.width(), w.tv_frame.height())
         w.tabs.setCurrentIndex(0)
         self.qa.processEvents()
-        w.tabs.setCurrentIndex(3)
+        w.tabs.setCurrentIndex(4)
         self.qa.processEvents()
         self.assertEqual(before, (w.tv_frame.width(), w.tv_frame.height()))
         w.close()

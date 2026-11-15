@@ -84,7 +84,7 @@ class ProgramsMirror(unittest.TestCase):
     def test_tab_row_and_order_untouched(self):
         w = self.make()
         self.assertEqual([w.tabs.tabText(i) for i in range(w.tabs.count())],
-                         ["Service list", "Search words", "Songs", "Settings"])
+                         ["Service list", "Search words", "Songs", "Timer", "Settings"])
         self.assertEqual((w.width(), w.height()), (1000, 640))
         self.assertFalse(w.isMaximized())
         self.assertTrue(w.quick_host.isVisible())
@@ -563,6 +563,7 @@ class ProgramsContinuousNext(ProgramsTransitionNoFlash):
         pw, ph = w.proj.width(), w.proj.height()
         w.next_b.click()
         w.project()
+        w.proj._anim.stop()  # isolate: freeze the shared transition state so the resize pump below cannot advance p between the two frames
         w.proj._tx["p"] = 0.5
         a = img_of(lambda p, r: w.proj.render_frame(p, r), pw, ph)
         w.programs.resize(500, 220)

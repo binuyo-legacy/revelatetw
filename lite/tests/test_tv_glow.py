@@ -94,6 +94,17 @@ class TvGlow(unittest.TestCase):
         f.deleteLater()
         self.wait(50)
 
+    def test_hide_before_init_complete_is_safe(self):
+        # hideEvent can fire while Qt tears a widget down, before __init__ finished
+        # assigning _anim. _stop_glow must not raise AttributeError (regression: "TvFrame object has no attribute '_anim'").
+        f = theme.TvFrame.__new__(theme.TvFrame)
+        f._stop_glow()  # no _anim in __dict__ yet; must be a no-op, not a crash
+        f._glow = 0.0
+        f.on_air = False
+        f.update = lambda *a, **k: None   # hideEvent calls _set_glow -> update(); skip the C++ call on an unbuilt widget
+        # exercise hide-path guards without the C++ super call on an un-built widget
+        f._stop_glow(); f._set_glow(0.0)
+
     def test_no_animation_env(self):
         os.environ["REVELATELITE_NO_GLOW_ANIMATION"] = "1"
         try:

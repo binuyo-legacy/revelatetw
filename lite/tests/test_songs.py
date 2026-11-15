@@ -86,7 +86,7 @@ class Shared(unittest.TestCase):
         w = self.make()
         tabs = w.findChild(QtWidgets.QTabWidget)
         names = [tabs.tabText(i) for i in range(tabs.count())]
-        self.assertEqual(names, ["Service list", "Search words", "Songs", "Settings"])
+        self.assertEqual(names, ["Service list", "Search words", "Songs", "Timer", "Settings"])
         # each tab still holds its own widget
         self.assertIsNotNone(w.service_list)
         self.assertIsNotNone(w.search_box)

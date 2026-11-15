@@ -64,7 +64,7 @@ QCheckBox::indicator:disabled {{ background:{alt}; border-color:{border}; }}
 
 QTabWidget::pane {{ border:1px solid {bcard}; border-radius:{rad}px; background:{bg}; top:-1px; }}
 QTabBar {{ background:transparent; }}
-QTabBar::tab {{ background:{raised}; color:{muted}; padding:8px 12px; border:1px solid {bc}; border-bottom:none;
+QTabBar::tab {{ background:{raised}; color:{muted}; padding:8px 9px; border:1px solid {bc}; border-bottom:none;
     border-top-left-radius:{rc}px; border-top-right-radius:{rc}px; margin-right:2px; }}
 QTabBar::scroller {{ width:0; }}
 QTabBar::tab:hover {{ color:{text}; border-color:{bh}; }}
@@ -169,12 +169,16 @@ class TvFrame(QtWidgets.QWidget):
     GLOW_IN_MS = 450    # light switching on: quick warm rise
     GLOW_OUT_MS = 750   # light switching off: slower fade, like a cooling bulb
 
+    def get_glow(self):
+        return self.__dict__.get("_glow", 0.0)
+
     def _get_glow(self):
-        return self._glow
+        return self.__dict__.get("_glow", 0.0)
 
     def _set_glow(self, v):
         v = max(0.0, min(1.0, float(v)))
-        if abs(v - self._glow) > 0.001 or v in (0.0, 1.0):
+        glow = self.__dict__.get("_glow", 0.0)
+        if abs(v - glow) > 0.001 or v in (0.0, 1.0):
             self._glow = v
             self.update()
 
@@ -201,12 +205,13 @@ class TvFrame(QtWidgets.QWidget):
         self._anim.start()
 
     def _stop_glow(self):
-        if self._anim is not None:
-            self._anim.stop()
+        anim = self.__dict__.get("_anim")   # __init__ may not have run yet when hideEvent fires during teardown
+        if anim is not None:
+            anim.stop()
 
     def hideEvent(self, e):
         self._stop_glow()
-        self._set_glow(1.0 if self.on_air else 0.0)   # never leave a half-lit frame while hidden
+        self._set_glow(1.0 if self.__dict__.get("on_air", False) else 0.0)   # never leave a half-lit frame while hidden
         super().hideEvent(e)
 
     def closeEvent(self, e):
@@ -214,6 +219,8 @@ class TvFrame(QtWidgets.QWidget):
         super().closeEvent(e)
 
     def paintEvent(self, e):
+        if "_glow" not in self.__dict__ or "glow_hex" not in self.__dict__:
+            return  # destroyed mid-construction during tests; don't paint a half-built frame
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         r = QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1)

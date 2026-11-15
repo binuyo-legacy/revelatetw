@@ -3,7 +3,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C
 
-from . import background, layout, settings, songthemes, transitions, versethemes
+from . import background, layout, settings, songthemes, timer as timermod, transitions, versethemes
 
 
 def _wrapped_lines(font, text, width):
@@ -176,12 +176,22 @@ class SlideView(QtWidgets.QWidget):
         self.song_custom = {}                    # per-template overrides (songs only)
         self.song_theme = songthemes.STANDARD   # used only when the slide is a song slide (meta is not None)
         self.verse_theme = versethemes.DEFAULT   # used only for verse slides (meta is None); 'default' = the old look
+        self.timer_snap = None                    # timer.py snapshot dict, or None (verses/songs unchanged)
         self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
 
     # ---- content ----
     def set_content(self, ref, body, credit="", meta=None):
         self.ref, self.body, self.credit, self.meta = ref, body, credit, meta
+        if meta is not None or body:
+            self.timer_snap = None   # timer state never rides along with a verse/song slide
+        self.live = True
+        self.update()
+
+    def set_timer(self, snap):
+        """Timer tab slide. snap is timer.py's snapshot dict (text/marker/label/state...)."""
+        self.timer_snap = snap
+        self.meta = None
         self.live = True
         self.update()
 
@@ -228,6 +238,10 @@ class SlideView(QtWidgets.QWidget):
         p.drawText(rect, flags, text)
 
     def _draw(self, p, rect):
+        if self.live and self.timer_snap is not None:
+            p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            return self._draw_timer(p, rect)
         if self.live and self.body and self.meta is not None and self.song_theme in songthemes.TEMPLATES:
             p.setRenderHint(QtGui.QPainter.TextAntialiasing)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -303,6 +317,112 @@ class SlideView(QtWidgets.QWidget):
             # both used to default to this same bottom band, so they overprinted
             # each other on every licensed translation.
             pass
+
+    def _draw_timer(self, p, rect):
+        snap = self.timer_snap or {}
+        t = timermod.resolve(snap.get("template", timermod.DEFAULT),
+                             snap.get("text_color", ""), snap.get("bg_color", ""))
+        w, h = rect.width(), rect.height()
+        kind, c1, c2 = t["bg"]
+        if kind == "solid":
+            p.fillRect(rect, QtGui.QColor(c1))
+        else:
+            g = QtGui.QLinearGradient(0, 0, w * 0.4, h)
+            g.setColorAt(0, QtGui.QColor(c1))
+            g.setColorAt(1, QtGui.QColor(c2))
+            p.fillRect(rect, QtGui.QBrush(g))
+        txt, acc, dim = (QtGui.QColor(t[k]) for k in ("text", "accent", "dim"))
+        if t["frame"] == "card":
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 60), max(1, h * 0.002)))
+            p.setBrush(QtGui.QColor(255, 255, 255, 28))
+            p.drawRoundedRect(QtCore.QRectF(w * 0.08, h * 0.22, w * 0.84, h * 0.56), h * 0.04, h * 0.04)
+            p.setBrush(QtCore.Qt.NoBrush)
+        text = str(snap.get("text", "00:00"))
+        marker = str(snap.get("marker", ""))
+        label_txt = str(snap.get("label", ""))
+        state = str(snap.get("state", ""))
+        style = snap.get("style", "digital")
+        dial = snap.get("dial") or {}
+        if style == "analog" and dial:
+            import math
+            cx, cy = w / 2.0, h * 0.50
+            r = min(w, h) * 0.34
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setPen(QtGui.QPen(acc, max(2, int(r * 0.02))))
+            p.setBrush(QtGui.QColor(255, 255, 255, 20))
+            p.drawEllipse(QtCore.QRectF(cx - r, cy - r, r * 2, r * 2))
+            p.setBrush(QtCore.Qt.NoBrush)
+            tf = QtGui.QFont("Segoe UI")
+            tf.setPixelSize(max(8, int(r * 0.14)))
+            p.setFont(tf)
+            p.setPen(dim)
+            for hr in range(1, 13):
+                a = math.radians(hr * 30)
+                x = cx + math.sin(a) * r * 0.82
+                y = cy - math.cos(a) * r * 0.82
+                p.drawText(QtCore.QRectF(x - r * 0.12, y - r * 0.08, r * 0.24, r * 0.16),
+                           QtCore.Qt.AlignCenter, str(hr))
+            def hand(value, total, length, width, colour):
+                ang = (value / float(total)) * 360.0 if total else 0.0
+                rad = math.radians(ang)
+                p.setPen(QtGui.QPen(colour, max(2, int(r * width))))
+                p.drawLine(int(cx), int(cy), int(cx + math.sin(rad) * length), int(cy - math.cos(rad) * length))
+            hand(dial.get("hour", 0), 12, r * 0.48, 0.035, txt)
+            hand(dial.get("minute", 0), 60, r * 0.72, 0.025, txt)
+            if snap.get("seconds") or snap.get("mode") == "countdown":
+                hand(dial.get("second", 0), 60, r * 0.80, 0.012, acc)
+            p.setPen(acc)
+            p.drawEllipse(QtCore.QRectF(cx - r * 0.04, cy - r * 0.04, r * 0.08, r * 0.08))
+            sub = label_txt + (("  -  " + state) if state else "")
+            if sub:
+                sf = QtGui.QFont("Segoe UI")
+                sf.setPixelSize(max(10, int(h * 0.045)))
+                p.setFont(sf)
+                p.setPen(dim)
+                p.drawText(QtCore.QRect(int(w * 0.04), int(h * 0.90), int(w * 0.92), int(h * 0.06)),
+                           QtCore.Qt.AlignCenter, sub)
+            return
+        # digital: bold Segoe UI readout with a subtle dark glass plate behind it
+        # (original RevelateTW look; not copied from any reference app)
+        plate = QtCore.QRectF(w * 0.06, h * 0.24, w * 0.88, h * 0.52)
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), max(1, int(h * 0.003))))
+        p.setBrush(QtGui.QColor(0, 0, 0, 90))
+        p.drawRoundedRect(plate, h * 0.05, h * 0.05)
+        p.setBrush(QtCore.Qt.NoBrush)
+        # fit the time into the width (binary search, like the verse autosize)
+        frac = 0.30
+        while frac > 0.05:
+            f = QtGui.QFont("Segoe UI")
+            f.setBold(True)
+            f.setPixelSize(max(10, int(h * frac)))
+            if QtGui.QFontMetrics(f).horizontalAdvance(text) <= w * 0.92:
+                break
+            frac -= 0.02
+        p.setFont(f)
+        p.setPen(txt)
+        time_rect = QtCore.QRect(int(w * 0.04), int(h * 0.30), int(w * 0.92), int(h * 0.42))
+        p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
+        if marker:
+            mf = QtGui.QFont("Segoe UI")
+            mf.setBold(True)
+            mf.setPixelSize(max(10, int(h * 0.07)))
+            p.setFont(mf)
+            p.setPen(acc)
+            tw = QtGui.QFontMetrics(f).horizontalAdvance(text)
+            p.drawText(QtCore.QRect(int(w / 2.0 + tw / 2.0 + h * 0.02), int(h * 0.30), int(w * 0.12), int(h * 0.42)),
+                       QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, marker)
+        # label and state under the time
+        sub = label_txt + (("  -  " + state) if state else "")
+        if sub:
+            sf = QtGui.QFont("Segoe UI")
+            sf.setPixelSize(max(10, int(h * 0.045)))
+            p.setFont(sf)
+            p.setPen(dim)
+            p.drawText(QtCore.QRect(int(w * 0.04), int(h * 0.74), int(w * 0.92), int(h * 0.07)),
+                       QtCore.Qt.AlignCenter, sub)
+        if t["frame"] == "line":
+            p.setPen(QtGui.QPen(acc, max(2, int(h * 0.008))))
+            p.drawLine(int(w * 0.30), int(h * 0.82), int(w * 0.70), int(h * 0.82))
 
     # ---- song templates (songs only; verses never come here) ----
     def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):
@@ -610,8 +730,13 @@ class PreviewView(SlideView):
 
     def show_slide(self, ref, body, credit="", meta=None):
         self.ref, self.body, self.credit, self.meta = ref, body, credit, meta
-        self.live = bool(body)
+        if meta is not None or body:
+            self.timer_snap = None
+        self.live = bool(body) or self.timer_snap is not None
         self.update()
+
+    def show_timer(self, snap):
+        self.set_timer(snap)
 
     def paintEvent(self, e):
         super().paintEvent(e)

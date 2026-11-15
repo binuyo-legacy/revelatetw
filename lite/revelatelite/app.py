@@ -6,7 +6,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as C, TYPE as T, SPACE as S
 
-from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, transitions as trn, versethemes
+from . import __version__, background as bgm, paths, settings as cfg, songthemes, tabanimate, theme, timer as timermod, transitions as trn, versethemes
 from .bible import BibleStore, format_reference, parse_reference, book_name, find_book, SEGMENTS, suggest, reference_spans, adjust_reference, check_reference, partial_problem, _is_bare_ordinal, _has_chapter_number
 from .booklist import BookBrowser
 from .hintfade import HintFade
@@ -37,6 +37,13 @@ class Main(QtWidgets.QWidget):
         self.slide_meta = None    # song slide details (None for verses)
         self.slide = None         # (heading, body, credit): THE one slide the preview shows (verse or song slide). The credit slot is
                                   # kept for song slides only; verses pass "" so no translation/licence text reaches the projector.
+        self.timer = timermod.TimerEngine(mode=self.st["timer_mode"], fmt=self.st["timer_format"],
+                                         show_ampm=self.st["timer_ampm"], duration=self.st["timer_duration"],
+                                         template=self.st["timer_template"], text_color=self.st["timer_text_color"],
+                                         bg_color=self.st["timer_bg_color"], style=self.st["timer_style"],
+                                         show_seconds=self.st["timer_show_seconds"])
+        self.timer_snap = None    # the timer snapshot currently in the preview (None = verse/song is showing)
+        self._timer_showing = False  # True once the Timer tab has been opened and its slide put in the preview
         self.proj = ProjectionWindow()
         self.preview = PreviewView()
         self.cur = None   # (book, chapter, v1, v2, translation)
@@ -190,6 +197,71 @@ class Main(QtWidgets.QWidget):
         self.song_exp_b.setEnabled(False)
         self.song_expall_b.setEnabled(bool(self.song_all))
         tabs.addTab(sgw, "Songs")
+
+        # ---- Timer tab: live clock or countdown, same shared projection as verses/songs ----
+        tw = QtWidgets.QWidget()
+        tg = QtWidgets.QFormLayout(tw)
+        self.timer_mode_cb = QtWidgets.QComboBox()
+        for k, label in (("clock", "Clock (current time)"), ("countdown", "Countdown")):
+            self.timer_mode_cb.addItem(label, k)
+        self.timer_mode_cb.setCurrentIndex(max(self.timer_mode_cb.findData(self.st["timer_mode"]), 0))
+        self.timer_style_cb = QtWidgets.QComboBox()
+        for k, label in (("digital", "Digital"), ("analog", "Analog")):
+            self.timer_style_cb.addItem(label, k)
+        self.timer_style_cb.setCurrentIndex(max(self.timer_style_cb.findData(self.st["timer_style"]), 0))
+        self.timer_format_cb = QtWidgets.QComboBox()
+        self.timer_format_cb.addItem("24-hour", "24")
+        self.timer_format_cb.addItem("12-hour", "12")
+        self.timer_format_cb.setCurrentIndex(max(self.timer_format_cb.findData(self.st["timer_format"]), 0))
+        self.timer_ampm_cb = QtWidgets.QCheckBox("Show AM/PM (12-hour only)")
+        self.timer_ampm_cb.setChecked(bool(self.st["timer_ampm"]))
+        self.timer_seconds_cb = QtWidgets.QCheckBox("Show seconds")
+        self.timer_seconds_cb.setChecked(bool(self.st["timer_show_seconds"]))
+        self.timer_template_cb = QtWidgets.QComboBox()
+        for k in timermod.KEYS:
+            self.timer_template_cb.addItem(timermod.label(k), k)
+        self.timer_template_cb.setCurrentIndex(max(self.timer_template_cb.findData(self.st["timer_template"]), 0))
+        self.timer_template_lbl = QtWidgets.QLabel(timermod.blurb(self.st["timer_template"]))
+        self.timer_template_lbl.setObjectName("hint")
+        self.timer_template_lbl.setWordWrap(True)
+        # duration controls: minutes + seconds spinboxes (countdown only uses them, but kept visible for simplicity)
+        self.timer_min_sp = QtWidgets.QSpinBox()
+        self.timer_min_sp.setRange(0, 720)
+        self.timer_sec_sp = QtWidgets.QSpinBox()
+        self.timer_sec_sp.setRange(0, 59)
+        dur = int(self.st["timer_duration"])
+        self.timer_min_sp.setValue(max(0, dur // 60))
+        self.timer_sec_sp.setValue(max(0, dur % 60))
+        dur_row = QtWidgets.QHBoxLayout()
+        dur_row.addWidget(QtWidgets.QLabel("Minutes"))
+        dur_row.addWidget(self.timer_min_sp)
+        dur_row.addWidget(QtWidgets.QLabel("Seconds"))
+        dur_row.addWidget(self.timer_sec_sp)
+        btn_row = QtWidgets.QHBoxLayout()
+        self.timer_start_b = QtWidgets.QPushButton("Start")
+        self.timer_pause_b = QtWidgets.QPushButton("Pause")
+        self.timer_reset_b = QtWidgets.QPushButton("Reset")
+        for b in (self.timer_start_b, self.timer_pause_b, self.timer_reset_b):
+            btn_row.addWidget(b)
+        self.timer_start_b.setEnabled(False)
+        self.timer_pause_b.setEnabled(False)
+        self.timer_state_lbl = QtWidgets.QLabel("")
+        self.timer_state_lbl.setObjectName("hint")
+        # live tick: 1s cadence, updates preview and projected output through the shared slide
+        self._timer_tick = QtCore.QTimer(self)
+        self._timer_tick.setInterval(1000)
+        self._timer_tick.timeout.connect(self._on_timer_tick)
+        tg.addRow("Timer type", self.timer_mode_cb)
+        tg.addRow("Display style", self.timer_style_cb)
+        tg.addRow("Time format", self.timer_format_cb)
+        tg.addRow("", self.timer_ampm_cb)
+        tg.addRow("", self.timer_seconds_cb)
+        tg.addRow("Template", self.timer_template_cb)
+        tg.addRow("", self.timer_template_lbl)
+        tg.addRow("Countdown length", dur_row)
+        tg.addRow("", btn_row)
+        tg.addRow("Status", self.timer_state_lbl)
+        tabs.addTab(tw, "Timer")
 
         ow = QtWidgets.QWidget()
         og = QtWidgets.QFormLayout(ow)
@@ -361,6 +433,7 @@ class Main(QtWidgets.QWidget):
         tabs.addTab(sc, "Settings")
         self.tabs = tabs
         self._build_quick(tabs)
+        tabs.currentChanged.connect(self._timer_tab_changed)
         leftc.addWidget(tabs, 1)
 
 
@@ -448,6 +521,17 @@ class Main(QtWidgets.QWidget):
         self.song_expall_b.clicked.connect(self.export_all_songs)
         self.project_b.clicked.connect(self.project)
         self.blank_b.clicked.connect(self.project_off)
+        self.timer_mode_cb.currentIndexChanged.connect(self._timer_settings_changed)
+        self.timer_style_cb.currentIndexChanged.connect(self._timer_settings_changed)
+        self.timer_format_cb.currentIndexChanged.connect(self._timer_settings_changed)
+        self.timer_ampm_cb.stateChanged.connect(self._timer_settings_changed)
+        self.timer_seconds_cb.stateChanged.connect(self._timer_settings_changed)
+        self.timer_template_cb.currentIndexChanged.connect(self._timer_settings_changed)
+        self.timer_min_sp.valueChanged.connect(self._timer_duration_changed)
+        self.timer_sec_sp.valueChanged.connect(self._timer_duration_changed)
+        self.timer_start_b.clicked.connect(self._timer_start)
+        self.timer_pause_b.clicked.connect(self._timer_pause)
+        self.timer_reset_b.clicked.connect(self._timer_reset)
         self.proj.offRequested.connect(self.project_off)
         self.proj.projectRequested.connect(self.project)
         self.proj.closedByUser.connect(self._projector_closed)
@@ -500,7 +584,7 @@ class Main(QtWidgets.QWidget):
                         "light": "Ivory", "royal": "Royal"}
     QUICK_SPEEDS = (0, 200, 400, 800, 1500)
     QUICK_SIZES = (60, 80, 100, 120, 140)
-    QUICK_W = {"effect": 66, "screen": 54, "speed": 54, "style": 62, "size": 58}
+    QUICK_W = {"effect": 60, "screen": 48, "speed": 48, "style": 56, "size": 52}
 
     def _quick_combo(self, key, tip):
         cb = QtWidgets.QComboBox()
@@ -910,6 +994,91 @@ class Main(QtWidgets.QWidget):
         self.verse_theme_lw.setCurrentRow(max(versethemes.KEYS.index(self.st["verse_theme"]), 0))
         self.verse_theme_lw.blockSignals(False)
 
+    def _timer_tab_changed(self, index):
+        idx = self.tabs.indexOf(self.tabs.widget(index)) if False else index
+        # find the Timer tab by its title
+        is_timer = self.tabs.tabText(index) == "Timer"
+        if is_timer:
+            self._timer_showing = True
+            self._show_timer_slide()
+            self._timer_tick.start()
+        else:
+            if self._timer_showing and self.timer_snap is not None:
+                # leaving to verses/songs clears timer from preview, live projection keeps last sent until next Project
+                self._timer_tick.stop()
+                self.timer_snap = None
+                self.preview.show_slide("", "") if not self.slide else self.preview.show_slide(*self.slide, meta=self.slide_meta)
+                self.project_b.setEnabled(bool(self.slide))
+                self._timer_showing = False
+
+    def _show_timer_slide(self):
+        snap = self.timer.snapshot()
+        self.timer_snap = snap
+        self.preview.show_timer(snap)
+        self.project_b.setEnabled(True)
+        self._sync_timer_buttons()
+
+    def _sync_timer_buttons(self):
+        cd = self.timer.mode == "countdown"
+        self.timer_start_b.setEnabled(cd and not self.timer.running)
+        self.timer_pause_b.setEnabled(cd and self.timer.running)
+        self.timer_reset_b.setEnabled(cd)
+        if self.timer_snap:
+            state = str(self.timer_snap.get("state", ""))
+            label = str(self.timer_snap.get("label", ""))
+            self.timer_state_lbl.setText(label + ((" - " + state) if state else ""))
+        else:
+            self.timer_state_lbl.setText("")
+
+    def _timer_settings_changed(self, *_):
+        self.st["timer_mode"] = self.timer_mode_cb.itemData(self.timer_mode_cb.currentIndex())
+        self.st["timer_style"] = self.timer_style_cb.itemData(self.timer_style_cb.currentIndex())
+        self.st["timer_format"] = self.timer_format_cb.itemData(self.timer_format_cb.currentIndex())
+        self.st["timer_ampm"] = bool(self.timer_ampm_cb.isChecked())
+        self.st["timer_show_seconds"] = bool(self.timer_seconds_cb.isChecked())
+        self.st["timer_template"] = self.timer_template_cb.itemData(self.timer_template_cb.currentIndex())
+        self.timer_template_lbl.setText(timermod.blurb(self.st["timer_template"]))
+        self.timer.configure(mode=self.st["timer_mode"], fmt=self.st["timer_format"], show_ampm=self.st["timer_ampm"],
+                             template=self.st["timer_template"], style=self.st["timer_style"], show_seconds=self.st["timer_show_seconds"],
+                             duration=self.st["timer_duration"])
+        self.save_settings()
+        if self._timer_showing:
+            self._show_timer_slide()
+
+    def _timer_duration_changed(self, *_):
+        total = int(self.timer_min_sp.value()) * 60 + int(self.timer_sec_sp.value())
+        total = timermod.clamp_duration(total)
+        self.st["timer_duration"] = total
+        self.timer.configure(duration=total)
+        self.save_settings()
+        if self._timer_showing:
+            self._show_timer_slide()
+
+    def _timer_start(self):
+        if self.timer.mode != "countdown":
+            return
+        self.timer.start()
+        self._show_timer_slide()
+
+    def _timer_pause(self):
+        self.timer.pause()
+        self._show_timer_slide()
+
+    def _timer_reset(self):
+        self.timer.reset()
+        self._show_timer_slide()
+
+    def _on_timer_tick(self):
+        if not self._timer_showing:
+            return
+        snap = self.timer.tick()
+        self.timer_snap = snap
+        self.preview.show_timer(snap)
+        # push live to the shared projector if it is already live (no new Project needed for ticking)
+        if self.proj.live and self.proj.isVisible() and self.proj.timer_snap is not None:
+            self.proj.set_timer(snap)
+        self._sync_timer_buttons()
+
     def _verse_theme_changed(self, row):
         """Only stores the choice and redraws the preview. The screen changes after Project."""
         if not (0 <= row < len(versethemes.KEYS)):
@@ -1276,7 +1445,7 @@ class Main(QtWidgets.QWidget):
             self.preview.show_slide(*slide, meta=self.slide_meta)
         else:
             self.preview.show_slide("", "")
-        self.project_b.setEnabled(bool(slide))
+        self.project_b.setEnabled(bool(slide) or self.timer_snap is not None)
 
     def edit_segment(self, segment, delta):
         """Up/Down on the highlighted book/chapter/verse: keeps the highlight, updates the preview,
@@ -1753,6 +1922,9 @@ class Main(QtWidgets.QWidget):
     # Safety rule: Enter, Left/Right/Up/Down, Next/Previous, translation and look changes only
     # change the in-app preview. The full-screen display changes ONLY in project() and project_off().
     def _preview_pair(self):
+        # Timer tab wins while it is showing; otherwise verse/song slide
+        if self.timer_snap is not None:
+            return (self.timer_snap.get("label", "Timer"), self.timer_snap.get("text", ""), "")
         return self.slide
 
     def _refresh_live_state(self):
@@ -1782,6 +1954,21 @@ class Main(QtWidgets.QWidget):
     def project(self):
         """Send exactly what the preview shows (text and look) to the full-screen display.
         The screen effect (if any) plays on the full-screen display only."""
+        if self.timer_snap is not None:
+            was_live = bool(self.proj.live and self.proj.isVisible())
+            plan = trn.plan(trn.SWITCH if was_live else trn.ON, self.st, self._step_hint, same_picture=False)
+            snap = dict(self.timer_snap)
+
+            def change():
+                self.proj.set_timer(snap)
+                if not self.proj.isVisible():
+                    self.proj.open_on(self.st["display"], self)
+
+            self.proj.transition(plan, change)
+            self._step_hint = 0
+            self._refresh_live_state()
+            self.say("On screen: " + str(snap.get("label", "Timer")))
+            return
         pair = self._preview_pair()
         if not pair:
             self.say("Look up a verse first, then press Project.")

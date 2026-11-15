@@ -15,8 +15,12 @@ from revelatelite.projection import ProjectionWindow, SlideView
 NEW = ["checkerboard", "diagonal", "iris", "zoom", "mosaic", "clock"]
 
 
+_QA = []
+
+
 def qapp():
     qa = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    _QA[:] = [qa]       # keep a reference so Qt is not torn down between tests
     qa.setStyleSheet(lite_app.QSS)
     return qa
 

@@ -19,6 +19,15 @@ DEFAULTS = {
     "song_theme": "standard",  # song slide template (songthemes.py); Bible verses never use it
     "song_custom": {},       # per-template song look overrides {template: {field: value}} (songthemes.py)
     "verse_theme": "default",  # Bible verse slide template (versethemes.py); songs never use it
+    "timer_template": "revelate",  # Timer tab look (timer.py); verses/songs never use it
+    "timer_text_color": "",   # "" = template text colour, else "#rrggbb"
+    "timer_bg_color": "",     # "" = template background, else "#rrggbb"
+    "timer_mode": "clock",    # clock | countdown (timer.py)
+    "timer_format": "24",     # 24 | 12
+    "timer_ampm": False,      # show AM/PM marker (12h only)
+    "timer_duration": 300,    # countdown length in seconds
+    "timer_style": "digital", # digital | analog
+    "timer_show_seconds": False,  # clock seconds in digital readout
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -147,10 +156,20 @@ def load(path):
     data["outline_px"] = max(OUTLINE_MIN, min(OUTLINE_MAX, data["outline_px"]))
     if data["theme"] not in THEMES:
         data["theme"] = "navy"
-    from . import background, songthemes, transitions, versethemes
+    from . import background, songthemes, timer as timermod, transitions, versethemes
     data["song_theme"] = songthemes.clean(data["song_theme"])
     data["song_custom"] = songthemes.clean_custom(data["song_custom"])
     data["verse_theme"] = versethemes.clean(data["verse_theme"])
+    data["timer_template"] = timermod.clean(data["timer_template"])
+    data["timer_mode"] = timermod.clean_mode(data["timer_mode"])
+    data["timer_format"] = timermod.clean_format(data["timer_format"])
+    data["timer_style"] = timermod.clean_style(data["timer_style"])
+    for k in ("timer_text_color", "timer_bg_color"):
+        if data[k] and not valid_color(data[k]):
+            data[k] = ""
+    if not isinstance(data["timer_ampm"], bool):
+        data["timer_ampm"] = bool(data["timer_ampm"])
+    data["timer_duration"] = timermod.clamp_duration(data["timer_duration"])
     data.update(background.clean(data))
     data.update(transitions.clean(data))
     return data

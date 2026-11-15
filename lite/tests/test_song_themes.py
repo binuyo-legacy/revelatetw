@@ -14,8 +14,12 @@ from revelatelite.projection import SlideView
 from revelatelite.songs import Song
 
 
+_QA = []
+
+
 def qapp():
     qa = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    _QA[:] = [qa]       # keep a reference so Qt is not torn down between tests
     qa.setStyleSheet(lite_app.QSS)
     return qa
 
