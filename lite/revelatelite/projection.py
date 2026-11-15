@@ -6,6 +6,78 @@ from revelatetw.ui_tokens import COLORS as C
 from . import background, layout, settings, songthemes, transitions, versethemes
 
 
+def _wrapped_lines(font, text, width):
+    """(longest line width, total height) for text word-wrapped into width."""
+    if width <= 0:
+        return 0.0, 0
+    lay = QtGui.QTextLayout(text, font)
+    lay.beginLayout()
+    longest, total = 0.0, 0.0
+    while True:
+        line = lay.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(width)
+        line.setPosition(QtCore.QPointF(0, total))
+        longest = max(longest, line.naturalTextWidth())
+        total += line.height()
+        if total > 100000:      # plain-text sanity stop; never hit on a slide
+            break
+    lay.endLayout()
+    return longest, int(total)
+
+
+def _autosize_default_verse(body_font, text, max_w, max_h, current, scale):
+    """Grow a short default verse until its longest wrapped line nearly fills max_w.
+
+    Only ever returns a size in [14, current] that still fits max_h tall, or current
+    when the text is already wide enough. Width fill is not monotonic in the size
+    (rewrapping changes the lines), so candidates above current are sampled and the
+    fullest one that fits vertically wins; ties go to the larger size.
+    """
+    if max_w <= 0 or max_h <= 0 or not text:
+        return current
+    def measures(size):
+        longest, height = _wrapped_lines(body_font(size), text, max_w)
+        return longest, height
+
+    longest, height = measures(current)
+    if current <= 14 or longest >= max_w * 0.95:
+        return current
+    # Vertical ceiling: the largest size that still fits, so nothing ever clips.
+    if height > max_h:
+        return current
+    lo, hi, ceiling = current, max(current, int(max_h)), current
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if measures(mid)[1] <= max_h:
+            ceiling = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if ceiling <= current:
+        return current
+    # Search a little past the old cap (25% of the old cap's headroom is plenty for
+    # a short verse); a step of 2 then a 1px settle keeps repaints cheap.
+    top = min(ceiling, max(current + 2, int(current * 1.25)))
+    best, best_fill = current, longest / max_w
+    size = current + 2
+    while size <= top:
+        longest, height = measures(size)
+        if height <= max_h:
+            fill = longest / max_w
+            if fill >= best_fill - 0.02:      # near tie: take the bigger size
+                best, best_fill = size, max(best_fill, fill)
+                if fill >= 0.96:
+                    return size
+        size += 2
+    if best > current and best < top:
+        longest, height = measures(best + 1)
+        if height <= max_h and longest / max_w >= best_fill - 0.02:
+            best += 1
+    return best
+
+
 class SlideView(QtWidgets.QWidget):
     """Draws one slide. Used by BOTH the projector window and the small in-app preview,
     so the preview is exactly what the audience sees (everything scales with the height)."""
@@ -123,6 +195,14 @@ class SlideView(QtWidgets.QWidget):
 
         top = int(h * 0.12 * self.scale / 100)
         size = layout.fit_font_size(fits, 14, max(16, top))
+        # Default verse look only (custom verse templates and song slides never reach
+        # here): grow past the old 12%-of-height cap when a short verse fits
+        # vertically anyway, so its longest wrapped line nearly fills the width.
+        # The hard limit stays the vertical fit; a size that would clip vertically
+        # is never picked. Songs keep the exact old sizing.
+        if self.meta is None and self.verse_theme == versethemes.DEFAULT:
+            size = _autosize_default_verse(self._body_font, self.body, text_area.width(),
+                                           text_area.height(), size, self.scale)
         p.setFont(self._body_font(size))
         p.setPen(QtGui.QColor(fg))
         self._text(p, text_area, flags, self.body, fg, h)
