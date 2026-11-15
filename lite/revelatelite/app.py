@@ -132,7 +132,7 @@ class Main(QtWidgets.QWidget):
         self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
         self.blank_b.setEnabled(False)
         self.project_b = QtWidgets.QPushButton("Project (F5)")
-        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this.")
+        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this. Project: F5 or Ctrl+Enter. Project Off: Esc.")
         self.project_b.setObjectName("primary")
         self.project_b.setEnabled(False)
         for b in (self.project_b, self.blank_b, self.up_b, self.down_b, self.rm_b):
@@ -477,6 +477,11 @@ class Main(QtWidgets.QWidget):
         self._sync_outline()
         for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
+        # Alternate Project shortcut: laptops whose function row sends media keys
+        # (volume/speaker) for bare F5 never deliver F5 to the app, so Ctrl+Enter
+        # (main keyboard, no Fn layer) projects instead. Plain Enter stays lookup.
+        for seq in ("Ctrl+Return", "Ctrl+Enter"):
+            QtWidgets.QShortcut(QtGui.QKeySequence(seq), self, activated=self.project)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageUp), self, activated=lambda: self.step(-1))
         self.resize(1000, 640)

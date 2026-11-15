@@ -900,9 +900,14 @@ class ProjectionWindow(SlideView):
 
     # ---- keys: the full-screen window takes the keyboard, so Esc/F5 must work here too ----
     def keyPressEvent(self, e):
+        mods = e.modifiers() & ~QtCore.Qt.KeypadModifier
         if e.key() == QtCore.Qt.Key_Escape:
             self.offRequested.emit()
         elif e.key() == QtCore.Qt.Key_F5:
+            self.projectRequested.emit()
+        elif mods & QtCore.Qt.ControlModifier and e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            # Alternate Project shortcut for laptops whose bare F5 is a media key
+            # (volume/speaker) intercepted before the app ever sees it.
             self.projectRequested.emit()
         else:
             super().keyPressEvent(e)
