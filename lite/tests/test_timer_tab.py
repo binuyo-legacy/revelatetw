@@ -29,10 +29,11 @@ class TimerLogic(unittest.TestCase):
         assert tm.format_countdown(-5) == "00:00"
         e = tm.TimerEngine(mode="countdown", duration=120)
         assert e.snapshot()["text"] == "02:00"
-        e.start()
-        assert e.tick()["remaining"] == 119
-        e.pause()
-        assert e.tick()["state"] == ""
+        e.start(now=100.0)
+        assert e.tick(now=101.0)["remaining"] == 119
+        e.pause(now=102.0)
+        assert e.tick(now=500.0)["remaining"] == 118
+        assert e.tick(now=500.0)["state"] == ""
         e.reset()
         assert e.snapshot()["remaining"] == 120
         assert tm.clean_style("weird") == "digital"
@@ -179,7 +180,9 @@ class TimerTabSwitchKeepsTicking(unittest.TestCase):
         return w
 
     def test_projected_countdown_keeps_ticking_off_timer_tab(self):
+        fake = [8000.0]
         w = self.make()
+        w.timer._clock = lambda: fake[0]
         w.show()
         labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
         w.tabs.setCurrentIndex(labels.index("Timer"))
@@ -199,8 +202,12 @@ class TimerTabSwitchKeepsTicking(unittest.TestCase):
         self.qa.processEvents()
         assert not w._timer_showing
         assert w._timer_tick.isActive(), "tick stopped when leaving the Timer tab"
-        # two off-tab ticks must advance the live projection, not the preview
+        # the engine runs on its deadline, not on tick count: a tick with no
+        # elapsed time must not move the value, and time passing while a
+        # verse/song is on air must be counted in full
         w._on_timer_tick()
+        assert w.proj.timer_snap["remaining"] == before, w.proj.timer_snap
+        fake[0] += 2.0
         w._on_timer_tick()
         after = w.proj.timer_snap["remaining"]
         assert after == before - 2, (before, after)
@@ -239,9 +246,9 @@ class TimerTabSwitchKeepsTicking(unittest.TestCase):
                w.timer.snapshot()["dial"]["second"] is not None
         w.close()
 
-    def test_unprojected_timer_still_stops_off_tab(self):
-        # without a live projection there is nothing to keep ticking: the
-        # tick stops as before, so no hidden timer runs in the background
+    def test_unprojected_idle_timer_still_stops_off_tab(self):
+        # an idle (not running, not projected) timer has nothing to keep
+        # ticking off-tab, so the beat stops as before
         w = self.make()
         w.show()
         labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
@@ -253,6 +260,27 @@ class TimerTabSwitchKeepsTicking(unittest.TestCase):
         self.qa.processEvents()
         assert not w._timer_tick.isActive()
         assert not w._timer_live
+        w.close()
+
+    def test_unprojected_running_countdown_keeps_ticking_off_tab(self):
+        # a running countdown is a live engine even with nothing projected:
+        # it must keep its deadline (and the refresh beat) off the Timer tab
+        w = self.make()
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        w.timer.start()
+        other = next(i for i, t in enumerate(labels) if t != "Timer")
+        w.tabs.setCurrentIndex(other)
+        self.qa.processEvents()
+        assert w.timer.running
+        assert w._timer_tick.isActive(), "running countdown stopped ticking off-tab"
+        w.timer.pause()
+        w._timer_tick_sync()
+        assert not w._timer_tick.isActive()
         w.close()
 
 
@@ -313,9 +341,9 @@ class TimerReportedFixes(unittest.TestCase):
     def test_analog_countdown_moves_clockwise_and_shows_remaining(self):
         e = tm.TimerEngine(mode="countdown", style="analog", duration=600)
         s0 = e.snapshot()
-        e.start()
-        e.tick()  # 1s elapsed
-        s1 = e.snapshot()
+        e.start(now=100.0)
+        e.tick(now=101.0)  # 1s elapsed
+        s1 = e.tick(now=101.0)
         d0, d1 = s0["dial"], s1["dial"]
         # elapsed grows, so hands advance clockwise (larger values), never back
         assert d1["elapsed"] > d0["elapsed"]
@@ -461,8 +489,8 @@ class TimerReportedFixes(unittest.TestCase):
         s0 = e.snapshot()
         pv.show_timer(s0)
         assert pv.timer_snap is not None
-        e.start()
-        s1 = e.tick()  # 01:00 -> 00:59, digits change
+        e.start(now=100.0)
+        s1 = e.tick(now=101.0)  # 01:00 -> 00:59, digits change
         pv.show_timer(s1)
         # a fall was begun (frames present or timer running)
         assert pv._fall_timer.isActive() or pv._fall_frames is not None
@@ -650,3 +678,164 @@ def test_falling_bottom_extent_is_slot_for_new_glyph():
             assert slot_top + (1.0 + old_off) * digit_h <= slot_bottom + FALL_NEW_MIN * -1 * digit_h + 1e-9
 
 
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class TimerContinuesUnderOtherProjection(unittest.TestCase):
+    """Regression: projecting Bible verses or songs while a countdown ran
+    used to freeze it. The engine now has a monotonic deadline independent
+    of tab selection and of the shared projector's current content, so all
+    elapsed time counts and the value on return is correct. A fake clock
+    makes every step deterministic."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qa = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def make(self, fake):
+        import tempfile
+        from revelatelite import paths
+        d = tempfile.mkdtemp()
+        paths.user_dir = lambda: d
+        lite_app.paths.user_dir = lambda: d
+        w = lite_app.Main()
+        w.st["transition_ms"] = 0
+        w.timer._clock = lambda: fake[0]
+        return w
+
+    def _goto(self, w, labels, name):
+        w.tabs.setCurrentIndex(labels.index(name))
+        self.qa.processEvents()
+
+    def test_engine_counts_all_time_with_no_ticks_at_all(self):
+        fake = [1000.0]
+        e = tm.TimerEngine(mode="countdown", duration=300, clock=lambda: fake[0])
+        e.start()
+        # no tick() calls at all for a long stretch: time must still elapse
+        fake[0] += 90.0
+        snap = e.snapshot()
+        assert snap["remaining"] == 210, snap
+        assert e.elapsed() == 90.0
+        assert snap["text"] == "03:30"
+        # ...and past the end it finishes instead of going negative
+        fake[0] += 400.0
+        snap = e.snapshot()
+        assert snap["remaining"] == 0 and snap["text"] == "00:00"
+        assert e.finished and not e.running
+
+    def test_engine_pause_freezes_deadline_across_long_gap(self):
+        fake = [0.0]
+        e = tm.TimerEngine(mode="countdown", duration=120, clock=lambda: fake[0])
+        e.start()
+        fake[0] = 30.0
+        e.pause()
+        assert e.remaining == 90.0
+        fake[0] = 9999.0
+        assert e.snapshot()["remaining"] == 90
+        e.start()
+        fake[0] = 10000.0
+        assert e.tick()["remaining"] == 89
+
+    def test_live_clock_snapshot_is_current_after_time_away(self):
+        import datetime as _dt
+        e = tm.TimerEngine(mode="time", source="live")
+        # live time is read at snapshot time, not cached at start
+        assert e.snapshot(_dt.datetime(2026, 11, 15, 10, 15, 0))["text"] == "10:15"
+        assert e.snapshot(_dt.datetime(2026, 11, 15, 12, 45, 0))["text"] == "12:45"
+        m = tm.TimerEngine(mode="time", source="manual", manual_hour=9, manual_minute=30)
+        assert m.snapshot(_dt.datetime(2026, 11, 15, 23, 59, 0))["text"] == "09:30"
+
+    def test_countdown_survives_projecting_a_verse_then_returns(self):
+        fake = [5000.0]
+        w = self.make(fake)
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        self._goto(w, labels, "Timer")
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        w.timer.configure(duration=300)
+        w._timer_start()
+        fake[0] += 5.0
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is not None and w._timer_live
+        assert w.proj.timer_snap["remaining"] == 295
+
+        # go to the Service list and project a verse instead
+        self._goto(w, labels, "Service list")
+        w.slide = ("John 3:16", "For God so loved the world", "")
+        w.slide_meta = None
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is None, "verse should replace the timer on air"
+        assert not w._timer_live
+        assert w.timer.running, "countdown must keep running under the verse"
+
+        # 120s pass with no return to the Timer tab and no tick at all
+        fake[0] += 120.0
+        assert w.timer.snapshot()["remaining"] == 175, w.timer.snapshot()
+        assert w.timer.elapsed() == 125.0
+
+        # back on Timer the preview already shows the true remaining time
+        self._goto(w, labels, "Timer")
+        assert w.preview.timer_snap is not None
+        assert w.preview.timer_snap["remaining"] == 175
+        assert w.preview.timer_snap["text"] == "02:55"
+
+        # re-projecting the timer sends the current value, not the stale one
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is not None and w._timer_live
+        assert w.proj.timer_snap["remaining"] == 175
+        # and it keeps counting from there
+        fake[0] += 10.0
+        w._on_timer_tick()
+        assert w.proj.timer_snap["remaining"] == 165
+        w.close()
+
+    def test_countdown_survives_projecting_a_song(self):
+        fake = [7000.0]
+        w = self.make(fake)
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        self._goto(w, labels, "Timer")
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        w.timer.configure(duration=200)
+        w._timer_start()
+        fake[0] += 20.0
+        # Songs tab: select a song slide and project that instead
+        self._goto(w, labels, "Songs")
+        w.slide = ("Amazing Grace", "Amazing grace how sweet the sound", "")
+        w.slide_meta = {"song": True}
+        w.project()
+        self.qa.processEvents()
+        assert w.proj.timer_snap is None
+        fake[0] += 60.0
+        self._goto(w, labels, "Timer")
+        assert w.preview.timer_snap["remaining"] == 120, w.preview.timer_snap
+        w.close()
+
+    def test_live_clock_refreshes_after_other_projection(self):
+        fake = [9000.0]
+        w = self.make(fake)
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        self._goto(w, labels, "Timer")
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("time"))
+        w.timer_source_cb.setCurrentIndex(w.timer_source_cb.findData("live"))
+        self.qa.processEvents()
+        w._show_timer_slide()
+        first = w.preview.timer_snap["text"]
+        self._goto(w, labels, "Service list")
+        # off-tab while the clock is not projected: no idle tick, and no
+        # stale value is held anywhere (the engine reads the clock live)
+        assert not w._timer_tick.isActive()
+        w.slide = ("Romans 8:28", "All things work together for good", "")
+        w.slide_meta = None
+        w.project()
+        self.qa.processEvents()
+        self._goto(w, labels, "Timer")
+        second = w.preview.timer_snap["text"]
+        import datetime as _dt
+        now_text, _ = tm.format_clock(_dt.datetime.now(), "24", True)
+        assert second == now_text, (second, now_text, first)
+        w.close()

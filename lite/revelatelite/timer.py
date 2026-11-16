@@ -6,6 +6,7 @@ The projection code (projection.SlideView) paints the snapshot this module
 produces, so preview, projector and the Programs mirror all match.
 """
 import datetime
+import time
 
 
 def _valid_color(c):
@@ -289,12 +290,20 @@ def digit_changed(old_text, new_text):
 
 
 class TimerEngine:
-    """Operator-controlled clock/countdown state. One tick per second from Qt."""
+    """Operator-controlled clock/countdown state.
+
+    The countdown timebase is a monotonic deadline set at start() and
+    reconciled whenever a value is read. It does not depend on how often
+    tick() is called, which tab is selected, or what the shared projector
+    currently shows, so time keeps elapsing while Bible or Songs content is
+    projected. tick(now) is kept for the one-second UI beat and pushes a
+    fresh snapshot; callers may pass an explicit monotonic "now" in tests.
+    """
 
     def __init__(self, mode="time", fmt="24", show_ampm=True, duration=300, template=DEFAULT,
                  text_color="", bg_color="", style="digital", show_seconds=False,
                  message="", source="live", manual_hour=9, manual_minute=0, manual_second=0,
-                 font_family="Segoe UI"):
+                 font_family="Segoe UI", clock=None):
         self.mode = clean_mode(mode)
         self.fmt = clean_format(fmt)
         self.show_ampm = bool(show_ampm)
@@ -311,6 +320,8 @@ class TimerEngine:
         self.source = clean_source(source)
         self.manual_hour, self.manual_minute, self.manual_second = clamp_time(manual_hour, manual_minute, manual_second)
         self.font_family = clean_font(font_family)
+        self._clock = clock or time.monotonic
+        self._deadline = None
 
     def configure(self, mode=None, fmt=None, show_ampm=None, duration=None,
                   template=None, text_color=None, bg_color=None, style=None, show_seconds=None,
@@ -323,8 +334,16 @@ class TimerEngine:
         if show_ampm is not None:
             self.show_ampm = bool(show_ampm)
         if duration is not None:
+            old_duration = self.duration
             self.duration = clamp_duration(duration)
-            if not self.running:
+            if self.running and self._deadline is not None:
+                self._deadline += float(self.duration - old_duration)
+                if self._deadline <= self._clock():
+                    self._deadline = self._clock()
+                    self.running = False
+                    self.finished = True
+                    self.remaining = 0.0
+            elif not self.running:
                 self.remaining = float(self.duration)
                 self.finished = False
         if template is not None:
@@ -352,31 +371,67 @@ class TimerEngine:
     def manual_dt(self):
         return manual_datetime(self.manual_hour, self.manual_minute, self.manual_second)
 
-    def start(self):
+    def _sync(self, now=None):
+        """Reconcile remaining from the monotonic deadline. Safe to call any time."""
+        if self.mode == "countdown" and self.running and self._deadline is not None:
+            now_t = self._clock() if now is None else now
+            self.remaining = max(0.0, float(self._deadline) - float(now_t))
+            if self.remaining <= 0:
+                self.running = False
+                self.finished = True
+                self._deadline = None
+        return self.remaining
+
+    def elapsed(self, now=None):
+        """Seconds consumed by the current countdown, derived from the deadline."""
+        self._sync(now)
+        return max(0.0, float(self.duration) - float(self.remaining))
+
+    def start(self, now=None):
         if self.mode == "countdown":
+            self._sync(now)
             if self.finished or self.remaining <= 0:
                 self.remaining = float(self.duration)
                 self.finished = False
-            self.running = True
+            if not self.running:
+                now_t = self._clock() if now is None else now
+                self._deadline = float(now_t) + float(self.remaining)
+                self.running = True
 
-    def pause(self):
+    def pause(self, now=None):
+        if self.running:
+            self._sync(now)
         self.running = False
+        self._deadline = None
 
     def reset(self):
         self.running = False
         self.finished = False
+        self._deadline = None
         self.remaining = float(self.duration)
 
     def tick(self, now=None):
-        """Advance one beat. Returns the display snapshot dict."""
-        if self.mode == "countdown" and self.running:
-            self.remaining = max(0.0, self.remaining - 1.0)
-            if self.remaining <= 0:
-                self.running = False
-                self.finished = True
-        return self.snapshot(now)
+        """Advance one beat. Reconciles from the deadline; returns a snapshot.
 
-    def snapshot(self, now=None):
+        "now" here is the monotonic instant (seconds), not a datetime. It is
+        only used for the countdown; time mode reads live/manual time itself.
+        Elapsed time is never inferred from the number of ticks, so a beat
+        that arrives late (or while another tab is projected) still counts
+        every second that passed.
+        """
+        self._sync(now)
+        return self.snapshot(monotonic_now=now)
+
+    def snapshot(self, now=None, monotonic_now=None):
+        # "now" is a datetime for the live clock. monotonic_now is the
+        # monotonic instant used to reconcile the countdown; when omitted,
+        # the engine clock is read, so a snapshot taken after time away from
+        # the Timer tab is already correct with no tick at all.
+        if self.mode == "countdown":
+            if monotonic_now is not None:
+                self._sync(monotonic_now)
+            else:
+                self._sync()
         # No generic CLOCK / COUNTDOWN caption and no RUNNING/PAUSED/FINISHED state
         # is projected: people already know what it is, and those words used to
         # overflow the custom template shapes. The only words on screen are the
