@@ -34,6 +34,8 @@ DEFAULTS = {
     "timer_duration": 300,    # countdown length in seconds
     "timer_style": "digital", # digital | analog
     "timer_show_seconds": False,  # clock seconds in digital readout
+    "timer_show_shape": True,  # inner curved plate on digital templates
+    "timer_text_scale": 100,   # digital display text size, 50..300 (% of autosize)
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -180,6 +182,9 @@ def load(path):
             data[k] = ""
     if not isinstance(data["timer_ampm"], bool):
         data["timer_ampm"] = bool(data["timer_ampm"])
+    if not isinstance(data["timer_show_shape"], bool):
+        data["timer_show_shape"] = bool(data["timer_show_shape"])
+    data["timer_text_scale"] = timermod.clean_text_scale(data["timer_text_scale"])
     data["timer_duration"] = timermod.clamp_duration(data["timer_duration"])
     data.update(background.clean(data))
     data.update(transitions.clean(data))

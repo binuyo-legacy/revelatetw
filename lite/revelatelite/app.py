@@ -45,7 +45,9 @@ class Main(QtWidgets.QWidget):
                                          message=self.st["timer_message"], source=self.st["timer_source"],
                                          manual_hour=self.st["timer_manual_hour"], manual_minute=self.st["timer_manual_minute"],
                                          manual_second=self.st["timer_manual_second"],
-                                         font_family=self.st["timer_font_family"])
+                                         font_family=self.st["timer_font_family"],
+                                         show_shape=self.st["timer_show_shape"],
+                                         text_scale=self.st["timer_text_scale"])
         self.timer_snap = None    # the timer snapshot currently in the preview (None = verse/song is showing)
         self._timer_showing = False  # True while the Timer tab is selected (its slide is in the preview)
         self._timer_live = False     # True while a timer slide is on the live projector. The
@@ -224,6 +226,15 @@ class Main(QtWidgets.QWidget):
         self.timer_ampm_cb.setChecked(bool(self.st["timer_ampm"]))
         self.timer_seconds_cb = QtWidgets.QCheckBox("Show seconds")
         self.timer_seconds_cb.setChecked(bool(self.st["timer_show_seconds"]))
+        self.timer_shape_cb = QtWidgets.QCheckBox("Inner curved shape")
+        self.timer_shape_cb.setChecked(bool(self.st.get("timer_show_shape", True)))
+        self.timer_textscale_sp = QtWidgets.QSpinBox()
+        self.timer_textscale_sp.setRange(50, 300)
+        self.timer_textscale_sp.setSingleStep(10)
+        self.timer_textscale_sp.setSuffix(" %")
+        self.timer_textscale_sp.setValue(timermod.clean_text_scale(self.st.get("timer_text_scale", 100)))
+        self.timer_textscale_lbl = QtWidgets.QLabel("Display text size (100 = auto, higher = fuller width)")
+        self.timer_textscale_lbl.setObjectName("hint")
         self.timer_template_cb = QtWidgets.QComboBox()
         for k in timermod.KEYS:
             self.timer_template_cb.addItem(timermod.label(k), k)
@@ -304,6 +315,9 @@ class Main(QtWidgets.QWidget):
         tg.addRow("Time format", self.timer_format_cb)
         tg.addRow("", self.timer_ampm_cb)
         tg.addRow("", self.timer_seconds_cb)
+        tg.addRow("", self.timer_shape_cb)
+        tg.addRow("Display text size", self.timer_textscale_sp)
+        tg.addRow("", self.timer_textscale_lbl)
         tg.addRow("Message on screen", self.timer_message_le)
         tg.addRow("Font", self.timer_font_cb)
         tg.addRow("Text colour", self.timer_text_b)
@@ -588,6 +602,8 @@ class Main(QtWidgets.QWidget):
         self.timer_format_cb.currentIndexChanged.connect(self._timer_settings_changed)
         self.timer_ampm_cb.stateChanged.connect(self._timer_settings_changed)
         self.timer_seconds_cb.stateChanged.connect(self._timer_settings_changed)
+        self.timer_shape_cb.stateChanged.connect(self._timer_settings_changed)
+        self.timer_textscale_sp.valueChanged.connect(self._timer_settings_changed)
         self.timer_template_cb.currentIndexChanged.connect(self._timer_settings_changed)
         self.timer_min_sp.valueChanged.connect(self._timer_duration_changed)
         self.timer_sec_sp.valueChanged.connect(self._timer_duration_changed)
@@ -1189,6 +1205,8 @@ class Main(QtWidgets.QWidget):
         self.st["timer_format"] = self.timer_format_cb.itemData(self.timer_format_cb.currentIndex())
         self.st["timer_ampm"] = bool(self.timer_ampm_cb.isChecked())
         self.st["timer_show_seconds"] = bool(self.timer_seconds_cb.isChecked())
+        self.st["timer_show_shape"] = bool(self.timer_shape_cb.isChecked())
+        self.st["timer_text_scale"] = timermod.clean_text_scale(self.timer_textscale_sp.value())
         self.st["timer_template"] = self.timer_template_cb.itemData(self.timer_template_cb.currentIndex())
         self.st["timer_source"] = self.timer_source_cb.itemData(self.timer_source_cb.currentIndex())
         self.st["timer_font_family"] = timermod.clean_font(self.timer_font_cb.currentText())
@@ -1198,7 +1216,8 @@ class Main(QtWidgets.QWidget):
                              template=self.st["timer_template"], style=self.st["timer_style"], show_seconds=self.st["timer_show_seconds"],
                              duration=self.st["timer_duration"], text_color=self.st["timer_text_color"],
                              bg_color=self.st["timer_bg_color"], source=self.st["timer_source"],
-                             message=self.st["timer_message"], font_family=self.st["timer_font_family"])
+                             message=self.st["timer_message"], font_family=self.st["timer_font_family"],
+                             show_shape=self.st["timer_show_shape"], text_scale=self.st["timer_text_scale"])
         self._sync_timer_mode_controls()
         self.save_settings()
         if self._timer_showing:

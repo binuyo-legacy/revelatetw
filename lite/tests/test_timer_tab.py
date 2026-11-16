@@ -46,8 +46,9 @@ class TimerLogic(unittest.TestCase):
     def test_settings_defaults(self):
         d = cfg.DEFAULTS
         for k in ("timer_template", "timer_mode", "timer_format", "timer_ampm", "timer_duration", "timer_style", "timer_show_seconds",
-                  "timer_source", "timer_message", "timer_font_family", "timer_text_color", "timer_bg_color",
-                  "timer_manual_hour", "timer_manual_minute", "timer_manual_second"):
+                    "timer_source", "timer_message", "timer_font_family", "timer_text_color", "timer_bg_color",
+                  "timer_manual_hour", "timer_manual_minute", "timer_manual_second",
+                  "timer_show_shape", "timer_text_scale"):
             assert k in d
         loaded = cfg.load("/nonexistent/settings.json")
         assert loaded["timer_style"] == "digital"
@@ -157,6 +158,142 @@ class TimerRefinements(unittest.TestCase):
                       label="COUNTDOWN", state="RUNNING")
         pv.show_timer(legacy)
         assert pv.timer_snap is not None and pv.live
+
+
+class DigitalLayout(unittest.TestCase):
+    """Regression for the digital template layout: the message used to sit at
+    74%..84% of the height, so it straddled the plate's bottom edge and the
+    gold rule cut through it; the AM/PM marker was placed from the centre
+    plus the full text width with no clip, so it could cross the inner curve
+    while the falling digits animated."""
+
+    def _inside(self, rect, outer):
+        return (rect[0] >= outer[0] - 1e-9 and rect[1] >= outer[1] - 1e-9
+                and rect[0] + rect[2] <= outer[0] + outer[2] + 1e-9
+                and rect[1] + rect[3] <= outer[1] + outer[3] + 1e-9)
+
+    def test_message_inside_shape_below_digits_clear_of_rule(self):
+        for w, h in ((1280, 720), (640, 360), (1920, 1080), (800, 600)):
+            for marker in ("", "AM", "PM"):
+                lay = tm.digital_layout(w, h, marker=marker, show_shape=True)
+                assert self._inside(lay["message_rect"], lay["plate"]), (w, h, marker, lay)
+                # below the digit band, with a gap, and above the rule
+                tr = lay["time_rect"]
+                mr = lay["message_rect"]
+                assert mr[1] >= tr[1] + tr[3] - 1e-9, (w, h, marker, lay)
+                assert mr[1] + mr[3] <= lay["rule_y"] - 1e-9, (w, h, marker, lay)
+                # moved down from the old straddling band (74%..84%)
+                assert mr[1] / h >= 0.60 and mr[1] + mr[3] <= h * 0.78, (w, h, lay)
+
+    def test_marker_reserved_inside_plate(self):
+        for w, h in ((1280, 720), (1920, 1080)):
+            lay = tm.digital_layout(w, h, marker="PM", show_shape=True)
+            assert lay["marker_rect"][2] > 0
+            assert self._inside(lay["marker_rect"], lay["plate"]), lay
+            # no horizontal overlap between the digit band and the marker column
+            assert not tm.rects_overlap(lay["time_rect"], lay["marker_rect"]), lay
+            # no marker -> empty column, digits keep the full inner width
+            lay2 = tm.digital_layout(w, h, marker="", show_shape=True)
+            assert lay2["marker_rect"] == (0.0, 0.0, 0.0, 0.0)
+            assert lay2["time_rect"][2] > lay["time_rect"][2]
+
+    def test_shape_off_gives_full_width_keeps_message(self):
+        w, h = 1280, 720
+        lay = tm.digital_layout(w, h, marker="PM", show_shape=False)
+        assert lay["show_shape"] is False
+        # message may use (almost) the full screen width but stays below digits
+        mr, tr = lay["message_rect"], lay["time_rect"]
+        assert mr[2] >= w * 0.85, lay
+        assert mr[1] >= tr[1] + tr[3] - 1e-9
+        assert mr[1] + mr[3] <= h * 0.98
+
+    def test_text_scale_clamped(self):
+        assert tm.clean_text_scale(100) == 100
+        assert tm.clean_text_scale(0) == tm.TEXT_SCALE_MIN
+        assert tm.clean_text_scale(9999) == tm.TEXT_SCALE_MAX
+        assert tm.clean_text_scale("150") == 150
+        assert tm.clean_text_scale("junk") == tm.TEXT_SCALE_DEFAULT
+        e = tm.TimerEngine(text_scale=9999)
+        assert e.snapshot()["text_scale"] == tm.TEXT_SCALE_MAX
+        e.configure(text_scale=50)
+        assert e.snapshot()["text_scale"] == 50
+
+    def test_shape_and_scale_flow_through_engine_and_settings(self):
+        e = tm.TimerEngine(show_shape=False, text_scale=180)
+        s = e.snapshot()
+        assert s["show_shape"] is False and s["text_scale"] == 180
+        e.configure(show_shape=True, text_scale=100)
+        s = e.snapshot()
+        assert s["show_shape"] is True and s["text_scale"] == 100
+        loaded = cfg.load("/nonexistent/settings.json")
+        assert loaded["timer_show_shape"] is True and loaded["timer_text_scale"] == 100
+        # a saved file with the new keys round-trips
+        import json
+        import tempfile
+        p = os.path.join(tempfile.mkdtemp(), "s.json")
+        raw = dict(cfg.DEFAULTS, timer_show_shape=False, timer_text_scale=220)
+        with open(p, "w") as fh:
+            json.dump(raw, fh)
+        again = cfg.load(p)
+        assert again["timer_show_shape"] is False and again["timer_text_scale"] == 220
+
+    def test_inner_rect_matches_message_band(self):
+        for w, h in ((1280, 720), (640, 360)):
+            lay = tm.digital_layout(w, h, show_shape=True)
+            assert tm.inner_rect(w, h) == lay["message_rect"]
+
+
+@unittest.skipIf(QtWidgets is None, "PyQt5 not installed")
+class DigitalLayoutQt(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qa = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def make(self):
+        import tempfile
+        from revelatelite import paths
+        d = tempfile.mkdtemp()
+        paths.user_dir = lambda: d
+        lite_app.paths.user_dir = lambda: d
+        w = lite_app.Main()
+        w.st["transition_ms"] = 0
+        return w
+
+    def test_controls_exist_and_wire_to_snapshot(self):
+        w = self.make()
+        w.show()
+        for name in ("timer_shape_cb", "timer_textscale_sp"):
+            assert hasattr(w, name), name
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        w.tabs.setCurrentIndex(labels.index("Timer"))
+        self.qa.processEvents()
+        w.timer_shape_cb.setChecked(False)
+        self.qa.processEvents()
+        assert w.st["timer_show_shape"] is False
+        assert w.timer.snapshot()["show_shape"] is False
+        w.timer_textscale_sp.setValue(200)
+        self.qa.processEvents()
+        assert w.st["timer_text_scale"] == 200
+        assert w.timer.snapshot()["text_scale"] == 200
+        w.close()
+
+    def test_projection_paints_with_shape_off_and_marker(self):
+        from revelatelite.projection import PreviewView
+        import datetime as _dt
+        pv = PreviewView()
+        pv.resize(640, 360)
+        snap = tm.TimerEngine(mode="time", fmt="12", show_ampm=True,
+                              message="Pastor leading prayer", show_shape=False,
+                              text_scale=180).snapshot(_dt.datetime(2026, 1, 1, 10, 5, 0))
+        pv.show_timer(snap)
+        assert pv.timer_snap is not None and pv.live
+        # a falling-digit animation frame must not raise either
+        pv._fall_frames = tm.falling_centers("10:05", "10:06", 120)
+        pv.repaint()
+        self.qa.processEvents()
+        pv._fall_frames = None
+        pv.show_slide("John 3:16", "For God so loved", "")
+        assert pv.timer_snap is None
 
 
 @unittest.skipIf(QtWidgets is None, "PyQt5 not installed")

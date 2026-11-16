@@ -55,7 +55,41 @@ FONT_FAMILIES = (
     "Palatino Linotype", "Segoe Script", "Tahoma", "Times New Roman", "Verdana",
 )
 MAX_MESSAGE = 120
-MESSAGE_RECT_FRAC = (0.10, 0.74, 0.80, 0.10)
+
+# ---- digital timer shape geometry (fractions of w, h, headless + tested) ----
+# The "inner curve shape" the operator sees is the dark glass plate the
+# projection draws around the digits. It is a rounded rect spanning
+# 6%..94% of the width and 24%..76% of the height; the "card" templates
+# also draw a lighter rounded rect (8%..92% x 22%..78%) behind it. Every
+# projected string (digits, AM/PM marker, message) must stay inside that
+# shape. The older MESSAGE_RECT_FRAC sat at 74%..84% of the height, so the
+# message straddled the plate's bottom edge and crossed the gold rule at
+# 82%: on the "card" templates the message looked like it was below the
+# frame entirely, and on the "line" templates the rule cut through it.
+# Shifting it down a little is not enough on its own; it has to land inside
+# the plate, below the digits and clear of the rule.
+#
+# digital_layout() below is the single source of truth for both the
+# renderer and the bounds tests.
+DIGITAL_PLATE_FRAC = (0.06, 0.24, 0.88, 0.52)     # x, y, width, height
+DIGITAL_TIME_FRAC = (0.04, 0.30, 0.92, 0.38)      # inside plate (digits)
+DIGITAL_MESSAGE_FRAC = (0.08, 0.685, 0.84, 0.07)  # inside plate, below digits
+DIGITAL_RULE_Y_FRAC = 0.775                        # gold rule, under message
+DIGITAL_MARKER_W_FRAC = 0.14                       # AM/PM column width
+# Operator display text size: 100 = autosize to fit the plate (current
+# behaviour); >100 pushes toward a full-width look (the fit caps it so the
+# message still fits); <100 shrinks. 50..300 in 5% steps.
+TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_DEFAULT = 50, 300, 100
+
+
+def clean_text_scale(v):
+    try:
+        return max(TEXT_SCALE_MIN, min(TEXT_SCALE_MAX, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return TEXT_SCALE_DEFAULT
+
+
+MESSAGE_RECT_FRAC = DIGITAL_MESSAGE_FRAC
 
 
 def analog_layout(w, h, has_subtext=True):
@@ -98,10 +132,67 @@ def rects_overlap(a, b):
 
 def inner_rect(w, h):
     """Inner shape every projected timer string must stay inside.
+
     Returns (x, y, width, height) as floats. Kept in one place so the
-    renderer and the bounds tests agree exactly."""
-    x, y, rw, rh = MESSAGE_RECT_FRAC
+    renderer and the bounds tests agree exactly. This is the message
+    band inside the glass plate, so the message sits inside the shape and
+    below the digits; see digital_layout() for the full geometry."""
+    x, y, rw, rh = DIGITAL_MESSAGE_FRAC
     return (w * x, h * y, w * rw, h * rh)
+
+
+def digital_layout(w, h, marker="", show_shape=True, text_scale=TEXT_SCALE_DEFAULT):
+    """Shared, tested geometry for the digital timer render.
+
+    Returns a dict of (x, y, width, height) float rects plus rule_y:
+      plate         the curved inner shape (only drawn when show_shape)
+      plate_inner   plate shrunk by the plate margin; when a marker is
+                    present the right-hand marker column is reserved, so
+                    the AM/PM marker can never cross the inner curve
+      time_rect     digit band, inside plate_inner, clear of the message
+      marker_rect   right-hand column inside the plate, same vertical band
+                    as the digits; empty when there is no marker
+      message_rect  message band, inside the plate, below the digits and
+                    above the decorative rule (rule_y)
+      rule_y        vertical position of the gold rule (message-free band)
+    When show_shape is False the plate/card/line are not drawn and the
+    text may use the full width, but the message, marker and digit bands
+    keep the same relative positions so the message stays fitted and the
+    marker stays next to the digits.
+    """
+    pw = w * DIGITAL_PLATE_FRAC[2]
+    ph = h * DIGITAL_PLATE_FRAC[3]
+    plate = (w * DIGITAL_PLATE_FRAC[0], h * DIGITAL_PLATE_FRAC[1], pw, ph)
+    scale = clean_text_scale(text_scale)
+    if show_shape:
+        inner_x = plate[0] + pw * 0.04
+        inner_w = pw * 0.92
+        time_y = h * 0.30
+    else:
+        # full-width ("non-template") look: use the screen itself
+        inner_x = w * 0.03
+        inner_w = w * 0.94
+        time_y = h * 0.30
+    marker_w = w * DIGITAL_MARKER_W_FRAC if marker else 0.0
+    text_w = max(inner_w - marker_w - w * 0.02, inner_w * 0.40)
+    time_rect = (inner_x, time_y, text_w, h * 0.38)
+    marker_rect = ((inner_x + text_w + w * 0.01, time_y, marker_w, h * 0.38)
+                   if marker else (0.0, 0.0, 0.0, 0.0))
+    mx, my, mrw, mrh = DIGITAL_MESSAGE_FRAC
+    # with the shape off the message may run the full inner width
+    # (3% margin each side), keeping its fitted font size
+    if show_shape:
+        message_rect = (w * mx, h * my, w * mrw, h * mrh)
+    else:
+        message_rect = (w * 0.03, h * my, w * 0.94, h * mrh)
+    return dict(plate=plate, plate_inner=(inner_x, time_y, inner_w, h * 0.45),
+                time_rect=time_rect, marker_rect=marker_rect,
+                message_rect=message_rect, rule_y=h * DIGITAL_RULE_Y_FRAC,
+                show_shape=bool(show_shape), text_scale=scale)
+
+
+def digit_rects_overlap(a, b):
+    return rects_overlap(a, b)
 
 
 def clean_message(m):
@@ -303,7 +394,8 @@ class TimerEngine:
     def __init__(self, mode="time", fmt="24", show_ampm=True, duration=300, template=DEFAULT,
                  text_color="", bg_color="", style="digital", show_seconds=False,
                  message="", source="live", manual_hour=9, manual_minute=0, manual_second=0,
-                 font_family="Segoe UI", clock=None):
+                 font_family="Segoe UI", clock=None, show_shape=True,
+                 text_scale=TEXT_SCALE_DEFAULT):
         self.mode = clean_mode(mode)
         self.fmt = clean_format(fmt)
         self.show_ampm = bool(show_ampm)
@@ -320,13 +412,15 @@ class TimerEngine:
         self.source = clean_source(source)
         self.manual_hour, self.manual_minute, self.manual_second = clamp_time(manual_hour, manual_minute, manual_second)
         self.font_family = clean_font(font_family)
+        self.show_shape = bool(show_shape)
+        self.text_scale = clean_text_scale(text_scale)
         self._clock = clock or time.monotonic
         self._deadline = None
 
     def configure(self, mode=None, fmt=None, show_ampm=None, duration=None,
                   template=None, text_color=None, bg_color=None, style=None, show_seconds=None,
                   message=None, source=None, manual_hour=None, manual_minute=None, manual_second=None,
-                  font_family=None):
+                  font_family=None, show_shape=None, text_scale=None):
         if mode is not None:
             self.mode = clean_mode(mode)
         if fmt is not None:
@@ -367,6 +461,10 @@ class TimerEngine:
                 self.manual_second if manual_second is None else manual_second)
         if font_family is not None:
             self.font_family = clean_font(font_family)
+        if show_shape is not None:
+            self.show_shape = bool(show_shape)
+        if text_scale is not None:
+            self.text_scale = clean_text_scale(text_scale)
 
     def manual_dt(self):
         return manual_datetime(self.manual_hour, self.manual_minute, self.manual_second)
@@ -476,6 +574,7 @@ class TimerEngine:
         return dict(text=text, marker=marker, label="", state="",
                     message=self.message,
                     mode=self.mode, style=self.style, dial=dial, seconds=self.show_seconds,
+                    show_shape=self.show_shape, text_scale=self.text_scale,
                     template=self.template, font_family=self.font_family,
                     text_color=self.text_color, bg_color=self.bg_color,
                     remaining=int(round(self.remaining)) if self.mode == "countdown" else None)

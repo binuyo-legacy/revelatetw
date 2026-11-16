@@ -381,7 +381,11 @@ class SlideView(QtWidgets.QWidget):
             g.setColorAt(1, QtGui.QColor(c2))
             p.fillRect(rect, QtGui.QBrush(g))
         txt, acc, dim = (QtGui.QColor(t[k]) for k in ("text", "accent", "dim"))
-        if t["frame"] == "card":
+        show_shape = snap.get("show_shape", True)
+        if show_shape is None:
+            show_shape = True
+        show_shape = bool(show_shape)
+        if show_shape and t["frame"] == "card":
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 60), max(1, h * 0.002)))
             p.setBrush(QtGui.QColor(255, 255, 255, 28))
             p.drawRoundedRect(QtCore.QRectF(w * 0.08, h * 0.22, w * 0.84, h * 0.56), h * 0.04, h * 0.04)
@@ -393,7 +397,9 @@ class SlideView(QtWidgets.QWidget):
         # operator's own core message joins the time/countdown on screen.
         message = str(timermod.clean_message(snap.get("message", "")))
         family = timermod.clean_font(snap.get("font_family", ""))
-        mx, my, mwid, mhei = timermod.inner_rect(w, h)
+        dl = timermod.digital_layout(w, h, marker=marker,
+                                     show_shape=show_shape,
+                                     text_scale=snap.get("text_scale", 100))
         style = snap.get("style", "digital")
         dial = snap.get("dial") or {}
         if style == "analog" and dial:
@@ -511,25 +517,50 @@ class SlideView(QtWidgets.QWidget):
             return
         # digital: bold Segoe UI readout with a subtle dark glass plate behind it
         # (original RevelateTW look; not copied from any reference app)
-        plate = QtCore.QRectF(w * 0.06, h * 0.24, w * 0.88, h * 0.52)
-        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), max(1, int(h * 0.003))))
-        p.setBrush(QtGui.QColor(0, 0, 0, 90))
-        p.drawRoundedRect(plate, h * 0.05, h * 0.05)
-        p.setBrush(QtCore.Qt.NoBrush)
-        # fit the time into the plate width (binary search, like the verse autosize)
-        plate_inner_w = plate.width() * 0.92
-        frac = 0.30
+        plate = QtCore.QRectF(*dl["plate"])
+        if show_shape:
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 40), max(1, int(h * 0.003))))
+            p.setBrush(QtGui.QColor(0, 0, 0, 90))
+            p.drawRoundedRect(plate, h * 0.05, h * 0.05)
+            p.setBrush(QtCore.Qt.NoBrush)
+        # fit the time into the plate width (binary search, like the verse autosize);
+        # the marker column is reserved inside plate_inner so the digits and
+        # AM/PM share the plate and the marker cannot cross the curve.
+        tr = dl["time_rect"]
+        plate_inner_w = tr[2]
+        scale = dl["text_scale"] / 100.0
+        # autosize target: the digit height may use the time band fully
+        auto_max = tr[3]
+        frac = min(0.30, auto_max / float(h)) * (1.0 if scale >= 1.0 else max(scale, 0.2))
+        # above 100 the operator grows the readout toward full width; the
+        # fit loop below caps it so the digits still fit the band.
+        start_frac = frac
+        target_frac = frac * scale if scale > 1.0 else frac
+        f = QtGui.QFont(family)
+        f.setBold(True)
+        # first find the autosize height for this text in the band
+        frac = start_frac
         while frac > 0.05:
-            f = QtGui.QFont(family)
-            f.setBold(True)
             f.setPixelSize(max(10, int(h * frac)))
             if QtGui.QFontMetrics(f).horizontalAdvance(text) <= plate_inner_w:
                 break
             frac -= 0.02
+        if scale > 1.0 and text:
+            # grow toward the operator's scale (full-width vibe) while the
+            # measured digits still fit the band horizontally
+            grown = frac
+            while grown < target_frac:
+                nxt = min(grown + 0.02, target_frac)
+                f.setPixelSize(max(10, int(h * nxt)))
+                if QtGui.QFontMetrics(f).horizontalAdvance(text) <= plate_inner_w:
+                    grown = nxt
+                else:
+                    break
+            f.setPixelSize(max(10, int(h * grown)))
+            frac = grown
         p.setFont(f)
         p.setPen(txt)
-        time_rect = QtCore.QRect(int(plate.left() + plate.width() * 0.04),
-                                 int(h * 0.30), int(plate.width() * 0.92), int(h * 0.38))
+        time_rect = QtCore.QRect(int(tr[0]), int(tr[1]), int(tr[2]), int(tr[3]))
         # Falling digit animation: when new digits land, the changed columns
         # fall into place (old digit dropping out below). The view tracks the
         # previous snapshot text and a small work timer repaints at ~60fps
@@ -547,8 +578,8 @@ class SlideView(QtWidgets.QWidget):
                     except AttributeError:
                         advances.append(fm.width(ch))
                 total_w = sum(advances) or plate_inner_w
-                cx0 = w / 2.0 - total_w / 2.0
-                y_mid = h * 0.30 + h * 0.19
+                cx0 = tr[0] + max(0.0, (tr[2] - total_w) / 2.0)
+                y_mid = tr[1] + tr[3] / 2.0
                 slot_top = y_mid - digit_h / 2.0
                 slot_bottom = y_mid + digit_h / 2.0
                 x = cx0
@@ -592,25 +623,32 @@ class SlideView(QtWidgets.QWidget):
             mf.setPixelSize(max(10, int(h * 0.07)))
             p.setFont(mf)
             p.setPen(acc)
-            tw = QtGui.QFontMetrics(f).horizontalAdvance(text)
-            p.drawText(QtCore.QRect(int(w / 2.0 + tw / 2.0 + h * 0.02), int(h * 0.30), int(w * 0.12), int(h * 0.38)),
+            # marker column is reserved inside the plate (marker_rect), so
+            # AM/PM stays inside the inner line during digit animation
+            mk = dl["marker_rect"]
+            p.save()
+            p.setClipRect(QtCore.QRectF(*mk))
+            p.drawText(QtCore.QRectF(*mk),
                        QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, marker)
-        # the operator's own message, inside the same plate (never a generic label)
+            p.restore()
+        # the operator's own message, inside the plate, below the digits and
+        # above the rule (never a generic label)
         if message:
+            mm = dl["message_rect"]
             sf = QtGui.QFont(family)
             sfrac = 0.055
             while sfrac > 0.02:
                 sf.setPixelSize(max(10, int(h * sfrac)))
-                if QtGui.QFontMetrics(sf).horizontalAdvance(message) <= mwid:
+                if QtGui.QFontMetrics(sf).horizontalAdvance(message) <= mm[2]:
                     break
                 sfrac -= 0.005
             p.setFont(sf)
             p.setPen(txt)
-            p.drawText(QtCore.QRect(int(mx), int(my), int(mwid), int(mhei)),
+            p.drawText(QtCore.QRect(int(mm[0]), int(mm[1]), int(mm[2]), int(mm[3])),
                        QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap, message)
-        if t["frame"] == "line":
+        if show_shape and t["frame"] == "line":
             p.setPen(QtGui.QPen(acc, max(2, int(h * 0.008))))
-            p.drawLine(int(w * 0.30), int(h * 0.82), int(w * 0.70), int(h * 0.82))
+            p.drawLine(int(w * 0.30), int(dl["rule_y"]), int(w * 0.70), int(dl["rule_y"]))
 
     # ---- song templates (songs only; verses never come here) ----
     def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):
