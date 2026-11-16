@@ -679,6 +679,10 @@ class SlideView(QtWidgets.QWidget):
         nfam = timermod.clean_font(snap.get("speaker_name_font", ""))
         lcol = snap.get("speaker_label_color") or t.get("speaker_label_color") or t.get("accent", "")
         ncol = snap.get("speaker_name_color") or t.get("speaker_name_color") or t.get("text", "")
+        if not timermod._valid_color(lcol):
+            lcol = "#ffffff"
+        if not timermod._valid_color(ncol):
+            ncol = "#ffffff"
 
         def fit(family, txt, rect):
             frac = 0.045
@@ -687,7 +691,7 @@ class SlideView(QtWidgets.QWidget):
             while frac > 0.012:
                 f.setPixelSize(max(8, int(h * frac)))
                 fm = QtGui.QFontMetrics(f)
-                if fm.horizontalAdvance(txt) <= rect[2] and fm.height() <= rect[3]:
+                if fm.horizontalAdvance(txt) <= rect.width() and fm.height() <= rect.height():
                     return f
                 frac -= 0.0025
             f.setPixelSize(max(8, int(h * 0.012)))

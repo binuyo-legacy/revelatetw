@@ -773,6 +773,52 @@ class AnalogLayoutSafety(unittest.TestCase):
         v.set_timer(snap)
         self.assertFalse(v.snapshot(QtCore.QSize(1280, 720)).isNull())
 
+    def test_speaker_tag_paints_offscreen_all_styles(self):
+        # Regression: Windows native crash on toggling "Show speaker tag".
+        # PyQt5 QRectF is not subscriptable; fit() must use width()/height().
+        # These paint offscreen with show_speaker ON, covering digital +
+        # analog, time + countdown, empty + long names, and empty +
+        # custom fonts/colors, including invalid/None colors and None fonts.
+        from PyQt5 import QtCore
+        from revelatelite.projection import SlideView
+        from revelatelite import timer as tm2
+        for w, h in ((1280, 720), (960, 540), (640, 360)):
+            for mode in ("time", "countdown"):
+                for style in ("digital", "analog"):
+                    for name in ("Ada Lovelace", "A very very long speaker name that will not fit", ""):
+                        for fonts, colors in (
+                            (None, None),
+                            (None, ("", "")),
+                            (None, (None, None)),
+                            (None, ("not-a-color", "#123")),
+                            ("Segoe UI", "#ff0000"),
+                            ("", ""),
+                        ):
+                            v = SlideView()
+                            v.resize(w, h)
+                            e = tm2.TimerEngine(mode=mode, style=style, duration=300,
+                                                speaker=name, show_speaker=True,
+                                                speaker_label_font=fonts,
+                                                speaker_name_font=fonts,
+                                                speaker_label_color=colors[0] if isinstance(colors, tuple) and len(colors) > 0 else "",
+                                                speaker_name_color=colors[1] if isinstance(colors, tuple) and len(colors) > 1 else "")
+                            snap = e.snapshot()
+                            # corrupt post-hoc snapshot values like a bad settings load
+                            if fonts is None and colors is None:
+                                snap["speaker_label_font"] = None
+                                snap["speaker_name_font"] = None
+                                snap["speaker_label_color"] = "not-a-color"
+                                snap["speaker_name_color"] = None
+                            v.set_timer(snap)
+                            ppm = v.snapshot(QtCore.QSize(w, h))
+                            self.assertFalse(ppm.isNull(), (w, h, mode, style, name, fonts, colors))
+                        # toggle OFF must never enter the tag path
+                        v2 = SlideView()
+                        v2.resize(w, h)
+                        v2.set_timer(tm2.TimerEngine(mode=mode, style=style, duration=300,
+                                                     speaker=name, show_speaker=False).snapshot())
+                        self.assertFalse(v2.snapshot(QtCore.QSize(w, h)).isNull(), (w, h, mode, style))
+
 
 # ---- falling-digit geometry regression (clipping fix) ----
 def test_falling_new_glyph_never_below_slot():
