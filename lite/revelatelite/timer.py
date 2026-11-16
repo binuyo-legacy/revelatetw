@@ -421,6 +421,12 @@ class TimerEngine:
                   template=None, text_color=None, bg_color=None, style=None, show_seconds=None,
                   message=None, source=None, manual_hour=None, manual_minute=None, manual_second=None,
                   font_family=None, show_shape=None, text_scale=None):
+        # Reconcile the running countdown deadline before touching anything
+        # else, so a Timer Type switch (countdown -> time -> countdown), a
+        # style/format change, or a duration edit never works from a stale
+        # remaining value. The deadline is mode-independent: the display
+        # mode only picks what is drawn, never whether time has passed.
+        self._sync()
         if mode is not None:
             self.mode = clean_mode(mode)
         if fmt is not None:
@@ -470,8 +476,13 @@ class TimerEngine:
         return manual_datetime(self.manual_hour, self.manual_minute, self.manual_second)
 
     def _sync(self, now=None):
-        """Reconcile remaining from the monotonic deadline. Safe to call any time."""
-        if self.mode == "countdown" and self.running and self._deadline is not None:
+        """Reconcile remaining from the monotonic deadline. Safe to call any time.
+
+        Deliberately independent of the display mode: a running countdown
+        keeps time while the Timer Type selector shows Clock, so the next
+        read after any mode switch is already correct and nothing is lost.
+        """
+        if self.running and self._deadline is not None:
             now_t = self._clock() if now is None else now
             self.remaining = max(0.0, float(self._deadline) - float(now_t))
             if self.remaining <= 0:
@@ -525,11 +536,12 @@ class TimerEngine:
         # monotonic instant used to reconcile the countdown; when omitted,
         # the engine clock is read, so a snapshot taken after time away from
         # the Timer tab is already correct with no tick at all.
-        if self.mode == "countdown":
-            if monotonic_now is not None:
-                self._sync(monotonic_now)
-            else:
-                self._sync()
+        # Reconcile even while the Timer Type selector shows Clock: the
+        # deadline belongs to the running countdown, not to the display mode.
+        if monotonic_now is not None:
+            self._sync(monotonic_now)
+        else:
+            self._sync()
         # No generic CLOCK / COUNTDOWN caption and no RUNNING/PAUSED/FINISHED state
         # is projected: people already know what it is, and those words used to
         # overflow the custom template shapes. The only words on screen are the

@@ -1101,7 +1101,7 @@ class Main(QtWidgets.QWidget):
         """
         if self._timer_showing:
             return True
-        if self.timer.mode == "countdown" and self.timer.running:
+        if self.timer.running:
             return True
         return bool(self._timer_live and self.proj.live
                     and self.proj.isVisible() and self.proj.timer_snap is not None)
@@ -1257,7 +1257,7 @@ class Main(QtWidgets.QWidget):
         # when neither is showing (Bible/Songs projected); nothing here
         # pauses it.
         if not self._timer_showing and not (self._timer_live and live) \
-                and not (self.timer.mode == "countdown" and self.timer.running):
+                and not self.timer.running:
             self._timer_tick_sync()
             return
         snap = self.timer.tick()

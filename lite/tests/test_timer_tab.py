@@ -842,6 +842,104 @@ class TimerContinuesUnderOtherProjection(unittest.TestCase):
         w.tabs.setCurrentIndex(labels.index(name))
         self.qa.processEvents()
 
+    def test_timer_type_switch_does_not_pause_running_countdown(self):
+        """Directly exercises the Timer Type selector, switch
+        Countdown -> Clock -> Countdown, while a countdown is running."""
+        fake = [6000.0]
+        w = self.make(fake)
+        w.show()
+        labels = [w.tabs.tabText(i) for i in range(w.tabs.count())]
+        self._goto(w, labels, "Timer")
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        w.timer.configure(duration=300)
+        w._timer_start()
+        self.assertTrue(w.timer.running)
+        assert w.preview.timer_snap["remaining"] == 300
+        fake[0] += 10.0
+
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("time"))
+        self.qa.processEvents()
+        assert w.timer.mode == "time"
+        assert w.timer.running
+        assert w.timer.elapsed() == 10.0, w.timer.remaining
+        fake[0] += 60.0
+        assert w.timer.elapsed() == 70.0
+        assert w.preview.timer_snap["mode"] == "time"
+        assert w.preview.timer_snap["remaining"] is None
+        assert w._timer_tick.isActive()
+
+        w.timer_mode_cb.setCurrentIndex(w.timer_mode_cb.findData("countdown"))
+        self.qa.processEvents()
+        assert w.timer.mode == "countdown"
+        assert w.timer.running
+        assert w.preview.timer_snap["mode"] == "countdown"
+        assert w.preview.timer_snap["remaining"] == 230
+        assert w.preview.timer_snap["text"] == "03:50"
+        assert w.timer.elapsed() == 70.0
+        fake[0] += 10.0
+        w._on_timer_tick()
+        assert w.preview.timer_snap["remaining"] == 220
+        assert w.timer.elapsed() == 80.0
+        w.close()
+
+    def test_timer_type_switches_at_engine_level_do_not_pause(self):
+        """A running countdown's deadline is independent of display mode:
+        no tick calls are needed for elapsed wall time to accumulate."""
+        fake = [200.0]
+        e = tm.TimerEngine(mode="countdown", duration=90, clock=lambda: fake[0])
+        e.start()
+        assert e.remaining == 90.0
+        fake[0] += 20.0
+        e.configure(mode="time")
+        assert e.running
+        assert e.remaining == 70.0
+        fake[0] += 25.0
+        assert e.elapsed() == 45.0
+        assert e.snapshot()["mode"] == "time"
+        e.configure(mode="countdown")
+        assert e.running
+        assert e.snapshot()["remaining"] == 45
+        fake[0] += 10.0
+        assert e.tick()["remaining"] == 35
+        assert e.elapsed() == 55.0
+
+    def test_timer_type_time_snapshot_and_finish_while_on_clock(self):
+        """While the selector shows Clock, the clock snapshot is normal and a
+        countdown that reaches zero finishes rather than reviving."""
+        fake = [300.0]
+        e = tm.TimerEngine(mode="countdown", duration=30, clock=lambda: fake[0])
+        e.start()
+        fake[0] += 10.0
+        e.configure(mode="time", source="manual", manual_hour=9, manual_minute=10, manual_second=11)
+        snap = e.snapshot()
+        assert snap["mode"] == "time"
+        assert snap["text"] == "09:10"
+        assert snap["remaining"] is None
+        fake[0] += 25.0
+        e.snapshot()  # any engine read reconciles the deadline
+        assert e.finished and not e.running
+        e.configure(mode="countdown")
+        finished = e.snapshot()
+        assert finished["remaining"] == 0
+        assert finished["text"] == "00:00"
+
+    def test_timer_type_switch_preserves_paused_countdown(self):
+        """A genuinely paused countdown must stay paused and retain its
+        remaining value across Timer Type switches."""
+        fake = [50.0]
+        e = tm.TimerEngine(mode="countdown", duration=120, clock=lambda: fake[0])
+        e.start()
+        fake[0] += 30.0
+        e.pause()
+        assert e.remaining == 90.0
+        e.configure(mode="time")
+        fake[0] += 9999.0
+        e.configure(mode="countdown")
+        assert not e.running
+        assert not e.finished
+        assert e.remaining == 90.0
+
     def test_engine_counts_all_time_with_no_ticks_at_all(self):
         fake = [1000.0]
         e = tm.TimerEngine(mode="countdown", duration=300, clock=lambda: fake[0])
