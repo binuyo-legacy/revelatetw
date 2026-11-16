@@ -683,6 +683,7 @@ class SlideView(QtWidgets.QWidget):
             lcol = "#ffffff"
         if not timermod._valid_color(ncol):
             ncol = "#ffffff"
+        ncol_q = QtGui.QColor(ncol)
 
         def fit(family, txt, rect):
             frac = 0.045
@@ -697,11 +698,48 @@ class SlideView(QtWidgets.QWidget):
             f.setPixelSize(max(8, int(h * 0.012)))
             return f
 
-        p.setFont(fit(lfam, label, label_rect))
+        # Auto-adapting glass pill for the name: light text gets a dark glass
+        # fill, dark text gets a light glass fill, so contrast never flips.
+        # Fill alpha stays translucent (glassmorphism); border is the name
+        # colour itself at a soft alpha so it can never clash with the text.
+        lum = (ncol_q.red() * 299 + ncol_q.green() * 587 + ncol_q.blue() * 114) / 1000.0
+        text_is_light = lum >= 140
+        fill_color = QtGui.QColor(8, 12, 24, 64) if text_is_light else QtGui.QColor(255, 255, 255, 58)
+        border_color = QtGui.QColor(ncol_q)
+        border_color.setAlpha(99)
+        highlight = QtGui.QColor(255, 255, 255, 38) if text_is_light else QtGui.QColor(0, 0, 0, 22)
+
+        name_font = fit(nfam, name, name_rect)
+        label_font = fit(lfam, label, label_rect)
+        label_w = QtGui.QFontMetrics(label_font).horizontalAdvance(label)
+        gap = h * timermod.SPEAKER_GAP_FRAC
+        name_x = x + label_w + gap
+        name_rect = QtCore.QRectF(name_x, y, x + bw - name_x, bh)
+        # Pill follows the name text box; the name re-fit now targets it.
+        name_font = fit(nfam, name, name_rect)
+
+        padx = h * timermod.SPEAKER_PILL_PADX_FRAC
+        pady = h * timermod.SPEAKER_PILL_PADY_FRAC
+        inner = QtCore.QRectF(name_rect.x() + padx, name_rect.y() + pady,
+                              name_rect.width() - padx * 2, name_rect.height() - pady * 2)
+        radius = max(4.0, bh * 0.28)
+        p.setPen(QtGui.QPen(border_color, max(1.0, h * 0.0025)))
+        p.setBrush(QtGui.QBrush(fill_color))
+        p.drawRoundedRect(inner, radius, radius)
+        p.setBrush(QtCore.Qt.NoBrush)
+        hl_h = max(2.0, inner.height() * 0.38)
+        hl = QtCore.QRectF(inner.x() + radius * 0.35, inner.y() + radius * 0.18,
+                           max(1.0, inner.width() - radius * 0.7), hl_h)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QBrush(highlight))
+        p.drawRoundedRect(hl, hl_h * 0.5, hl_h * 0.5)
+        p.setBrush(QtCore.Qt.NoBrush)
+
+        p.setFont(label_font)
         p.setPen(QtGui.QColor(lcol))
         p.drawText(label_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, label)
-        p.setFont(fit(nfam, name, name_rect))
-        p.setPen(QtGui.QColor(ncol))
+        p.setFont(name_font)
+        p.setPen(ncol_q)
         p.drawText(name_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
 
     # ---- song templates (songs only; verses never come here) ----
