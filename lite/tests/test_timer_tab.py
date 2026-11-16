@@ -344,20 +344,114 @@ class TimerReportedFixes(unittest.TestCase):
     def test_falling_animation_frames(self):
         # settled: no offsets
         frames = tm.falling_centers("11:08", "11:09", tm.FALL_DURATION_MS)
-        assert all(off == 0.0 for _n, _o, off in frames), frames
-        assert [n for n, _o, _off in frames] == list("11:09")
+        assert all(off == 0.0 and ooff == 0.0 for _n, _o, off, ooff in frames), frames
+        assert [n for n, _o, _off, _ooff in frames] == list("11:09")
         # mid-fall: changed column is above its slot (negative), unchanged stay 0
         frames = tm.falling_centers("11:08", "11:09", 50)
         assert frames[-1][2] < 0 and frames[-1][0] == "9" and frames[-1][1] == "8", frames
         assert frames[0][2] == 0.0 and frames[2][2] == 0.0, frames
         # still moving at 300ms, settled by 350ms
-        assert any(off != 0.0 for _n, _o, off in tm.falling_centers("11:08", "11:09", 300))
+        assert any(off != 0.0 for _n, _o, off, _ooff in tm.falling_centers("11:08", "11:09", 300))
         # deterministic
         assert tm.falling_centers("11:08", "11:09", 100) == tm.falling_centers("11:08", "11:09", 100)
         # digit-change detection: only real digits count
         assert tm.digit_changed("11:08", "11:09")
         assert not tm.digit_changed("11:08", "11:08")
         assert tm.digit_changed("59", "60")
+
+    _SAMPLES = (0, 1, 50, 100, 175, 250, 300, 330, 349, 350)
+    # video-reported clipping: second / minute / hour digit rolls, plus
+    # multi-position changes (minute+second on a minute roll, hour change)
+    _TRANSITIONS = (
+        ("43:36", "43:35"),      # seconds, last digit (video case)
+        ("43:30", "43:29"),      # seconds roll, two positions
+        ("01:00", "00:59"),      # minute + second roll
+        ("10:00", "09:59"),
+        ("1:00:00", "0:59:59"),  # hour + minute + second roll
+        ("11:08", "11:09"),
+        ("09:59", "10:00"),
+        ("2:59:59", "3:00:00"),
+    )
+
+    def test_falling_new_glyph_never_goes_below_slot(self):
+        # the reported bug: the drawn (new) glyph was carried past its slot
+        # to nearly +1.1 digit heights, clipping its lower leg under the row
+        for old, new in self._TRANSITIONS:
+            for ms in self._SAMPLES:
+                frames = tm.falling_centers(old, new, ms)
+                assert len(frames) == len(new), (old, new, ms, frames)
+                for nw, o, off, ooff in frames:
+                    assert off <= 1e-9, (old, new, ms, frames)
+                    assert off >= tm.FALL_NEW_MIN - 1e-9, (old, new, ms, frames)
+                    assert ooff >= -1e-9, (old, new, ms, frames)
+                    assert ooff <= tm.FALL_OLD_MAX + 1e-9, (old, new, ms, frames)
+                    if old and o == nw:
+                        assert off == 0.0 and ooff == 0.0, (old, new, ms, frames)
+
+    def test_falling_bottom_extent_is_bounded(self):
+        # at every sample, every glyph's bottom edge (centre + half height +
+        # offset) stays within [slot_top - travel, slot_bottom + travel]
+        for old, new in self._TRANSITIONS:
+            for ms in self._SAMPLES:
+                for _nw, _o, off, ooff in tm.falling_centers(old, new, ms):
+                    for o in (off, ooff):
+                        assert -0.5 - tm.FALL_TRAVEL_FRAC - 1e-9 <= o <= 0.5 + tm.FALL_TRAVEL_FRAC + 1e-9, (old, new, ms, o)
+
+    def test_falling_start_mid_end(self):
+        old, new = "43:36", "43:35"
+        start = tm.falling_centers(old, new, 0)
+        assert start[-1][2] == tm.FALL_NEW_MIN and start[-1][3] == 0.0, start
+        mid = tm.falling_centers(old, new, 175)
+        assert tm.FALL_NEW_MIN < mid[-1][2] < 0.0, mid
+        assert 0.0 < mid[-1][3] < tm.FALL_OLD_MAX, mid
+        near = tm.falling_centers(old, new, 349)
+        assert -0.01 < near[-1][2] <= 0.0, near
+        end = tm.falling_centers(old, new, tm.FALL_DURATION_MS)
+        assert all(off == 0.0 and ooff == 0.0 for _n, _o, off, ooff in end), end
+        assert [n for n, _o, _off, _ooff in end] == list(new)
+
+    def test_falling_monotonic_no_snap(self):
+        for old, new in self._TRANSITIONS:
+            prev = None
+            for ms in range(0, tm.FALL_DURATION_MS, 10):
+                f = tm.falling_centers(old, new, ms)
+                if prev is not None:
+                    for (nw, o, off, ooff), (pn, po, poff, pooff) in zip(f, prev):
+                        assert off >= poff - 1e-9, (old, new, ms, f)
+                        assert ooff >= pooff - 1e-9, (old, new, ms, f)
+                prev = f
+            end = tm.falling_centers(old, new, tm.FALL_DURATION_MS)
+            assert all(off == 0.0 and ooff == 0.0 for _n, _o, off, ooff in end)
+
+    def test_falling_non_digits_and_unchanged_stay_put(self):
+        for ms in self._SAMPLES:
+            f = tm.falling_centers("11:08", "11:09", ms)
+            assert f[2][2] == 0.0 and f[2][3] == 0.0, (ms, f)
+            assert all(fr[2] == 0.0 and fr[3] == 0.0 for fr in f[:4]), (ms, f)
+
+    def test_falling_render_bottom_extent(self):
+        # offscreen render: at start/mid/near-end the new glyph never paints
+        # below the digit slot bottom; the old glyph is clipped at it
+        from revelatelite.projection import PreviewView
+        import PyQt5.QtGui as QtGui
+        pv = PreviewView()
+        pv.resize(640, 360)
+        e = tm.TimerEngine(mode="countdown", duration=60)
+        pv.show_timer(e.snapshot())
+        pv._fall_frames = tm.falling_centers("00:59", "00:58", 300)
+        pv._fall_prev_text = "00:58"
+        pv.update()
+        self.qa.processEvents() if hasattr(self, "qa") else None
+        # model-level: new glyph bottom edge <= slot bottom at all samples
+        for ms in self._SAMPLES:
+            for _nw, _o, off, _ooff in tm.falling_centers("00:59", "00:58", ms):
+                assert off <= 0.0, ms
+        # render must not raise and must produce a frame
+        img = QtGui.QImage(640, 360, QtGui.QImage.Format.Format_RGB32)
+        pv.render(QtGui.QPainter(img))
+        assert not img.isNull()
+        pv._fall_frames = None
+        pv.close()
 
     def test_projection_falling_integration(self):
         from revelatelite.projection import PreviewView

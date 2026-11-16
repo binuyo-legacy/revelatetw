@@ -1071,30 +1071,57 @@ class Main(QtWidgets.QWidget):
         self.verse_theme_lw.setCurrentRow(max(versethemes.KEYS.index(self.st["verse_theme"]), 0))
         self.verse_theme_lw.blockSignals(False)
 
+    def _timer_tick_needed(self):
+        """True when a tick must run even though the Timer tab is not shown.
+
+        The engine has its own monotonic deadline, so it never actually needs
+        a tick to keep time: remaining is reconciled on every read. The
+        one-second tick only refreshes what is on screen. It must therefore
+        keep running while a countdown is running (so it finishes on time
+        and the buttons update even when Bible/Songs content is projected)
+        and while a time-mode clock is on the live projector. Tab selection
+        and the shared projector's current content are not part of the
+        decision.
+        """
+        if self._timer_showing:
+            return True
+        if self.timer.mode == "countdown" and self.timer.running:
+            return True
+        return bool(self._timer_live and self.proj.live
+                    and self.proj.isVisible() and self.proj.timer_snap is not None)
+
+    def _timer_tick_sync(self):
+        if self._timer_tick_needed():
+            if not self._timer_tick.isActive():
+                self._timer_tick.start()
+        else:
+            self._timer_tick.stop()
+
     def _timer_tab_changed(self, index):
         idx = self.tabs.indexOf(self.tabs.widget(index)) if False else index
         # find the Timer tab by its title
         is_timer = self.tabs.tabText(index) == "Timer"
         if is_timer:
             self._timer_showing = True
+            # snapshot() reconciles from the engine deadline, so returning
+            # here shows the true remaining time even if the whole time away
+            # was spent projecting Bible verses or songs.
             self._show_timer_slide()
             self._timer_tick.start()
         else:
             # Off the Timer tab: the preview goes back to the verse/song
-            # slide, but a timer live on the projector must keep ticking
-            # there. Stopping the tick here froze the audience's clock at
-            # the tab switch and only resumed on return. So only leave the
-            # timer running when it is not live; when it is live, keep the
-            # tick alive and let _on_timer_tick push to the projector alone.
+            # slide. The tick keeps running while the engine needs it (a
+            # running countdown, or a time display on the projector) and
+            # _on_timer_tick then pushes to the projector alone. Stopping
+            # the tick here used to freeze the timer until the operator
+            # returned; the engine deadline means it cannot freeze now, but
+            # the live display still needs the refresh beats.
             if self._timer_showing and self.timer_snap is not None:
-                timer_live = bool(self._timer_live and self.proj.live
-                                  and self.proj.isVisible() and self.proj.timer_snap is not None)
                 self.timer_snap = None
                 self.preview.show_slide("", "") if not self.slide else self.preview.show_slide(*self.slide, meta=self.slide_meta)
                 self.project_b.setEnabled(bool(self.slide))
                 self._timer_showing = False
-                if not timer_live:
-                    self._timer_tick.stop()
+                self._timer_tick_sync()
 
     def _show_timer_slide(self):
         snap = self.timer.snapshot()
@@ -1191,23 +1218,30 @@ class Main(QtWidgets.QWidget):
             return
         self.timer.start()
         self._show_timer_slide()
+        self._timer_tick.start()
 
     def _timer_pause(self):
         self.timer.pause()
         self._show_timer_slide()
+        self._timer_tick_sync()
 
     def _timer_reset(self):
         self.timer.reset()
         self._show_timer_slide()
+        self._timer_tick_sync()
 
     def _on_timer_tick(self):
         live = bool(self.proj.live and self.proj.isVisible() and self.proj.timer_snap is not None)
-        if not self._timer_showing and not (self._timer_live and live):
+        # Refresh only what is on screen: the preview on the Timer tab, and
+        # the live projector when the timer is on it. The engine value itself
+        # is reconciled from its deadline in tick(), so it is correct even
+        # when neither is showing (Bible/Songs projected); nothing here
+        # pauses it.
+        if not self._timer_showing and not (self._timer_live and live) \
+                and not (self.timer.mode == "countdown" and self.timer.running):
+            self._timer_tick_sync()
             return
         snap = self.timer.tick()
-        # Off the Timer tab there is no hidden preview work: only the live
-        # projector gets the tick, so the audience's clock never freezes on
-        # a tab switch.
         if self._timer_showing:
             self.timer_snap = snap
             self.preview.show_timer(snap)
@@ -1217,6 +1251,8 @@ class Main(QtWidgets.QWidget):
             self._timer_live = True
         if self._timer_showing:
             self._sync_timer_buttons()
+        # a finished countdown (or anything else) stops the idle tick
+        self._timer_tick_sync()
 
     def _verse_theme_changed(self, row):
         """Only stores the choice and redraws the preview. The screen changes after Project."""
@@ -2097,7 +2133,10 @@ class Main(QtWidgets.QWidget):
         if self.timer_snap is not None:
             was_live = bool(self.proj.live and self.proj.isVisible())
             plan = trn.plan(trn.SWITCH if was_live else trn.ON, self.st, self._step_hint, same_picture=False)
-            snap = dict(self.timer_snap)
+            # fresh snapshot: the preview copy may be seconds stale because
+            # the engine keeps running on its deadline between ticks
+            snap = dict(self.timer.snapshot())
+            self.timer_snap = snap
 
             def change():
                 self.proj.set_timer(snap)
@@ -2140,6 +2179,11 @@ class Main(QtWidgets.QWidget):
 
         self.proj.transition(plan, change)
         self._step_hint = 0
+        # projecting a verse/song replaces any timer on the shared projector;
+        # the engine keeps its own deadline and keeps running underneath, it
+        # just is no longer the picture on air.
+        self._timer_live = False
+        self._timer_tick_sync()
         self._refresh_live_state()
         if windowed and windowed[0]:
             self.say("Only one screen found, so the projection is a window. Plug in the projector and choose it under Screen.")
@@ -2150,7 +2194,7 @@ class Main(QtWidgets.QWidget):
         """Close the full-screen display. Preview, selection, service list and settings stay as they are."""
         self._timer_live = False
         if not self._timer_showing:
-            self._timer_tick.stop()
+            self._timer_tick_sync()
         was_live = bool(self.proj.live and self.proj.isVisible())
         plan = trn.plan(trn.OFF, self.st, 0, same_picture=not was_live)
 
@@ -2174,7 +2218,7 @@ class Main(QtWidgets.QWidget):
         self._sent_style = None
         self._timer_live = False
         if not self._timer_showing:
-            self._timer_tick.stop()
+            self._timer_tick_sync()
         self._refresh_live_state()
         self.say("Projection window closed. Your preview is unchanged.")
 

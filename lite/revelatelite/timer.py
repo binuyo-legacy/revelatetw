@@ -228,32 +228,49 @@ def clamp_duration(seconds):
 # projection renderer draws the per-change offsets it returns.
 FALL_DURATION_MS = 350
 FALL_TRAVEL_FRAC = 1.1  # new digit starts this many digit heights above its slot
+# Geometry bounds, in digit-height fractions of the slot centre. The new glyph
+# must land on 0 and never pass it: a separate gravity term used to carry the
+# *drawn* glyph past 0 to nearly +1.1 heights, so its lower leg sat a full
+# digit height under the row (over the message/line) and snapped back at
+# settle. The exiting glyph is the only one allowed to travel below the slot,
+# and only down to this floor, where the renderer clips it away.
+FALL_NEW_MIN = -FALL_TRAVEL_FRAC
+FALL_OLD_MAX = +FALL_TRAVEL_FRAC
 
 
 def falling_centers(old_text, new_text, t_ms):
-    """Frames to draw at t_ms into a digit change, one entry per column.
+    """Frames to draw at t_ms into a digit change, one 4-tuple per column.
 
-    Each entry is (new_char, old_char, y_offset_frac): y_offset is in digit
-    heights, negative = above the slot (falling in), positive = below it
-    (the old digit exiting). At t >= FALL_DURATION_MS all offsets are 0 and
-    the caller draws the plain text. Deterministic: same inputs, same frames.
+    Each entry is (new_char, old_char, new_off_frac, old_off_frac):
+    offsets are in digit heights relative to the slot centre, negative =
+    above, positive = below. The *new* glyph falls monotonically from
+    FALL_NEW_MIN to 0 and never goes below its slot (new_off_frac <= 0 for
+    every t), so its bottom leg can never dip under the row. The *old* glyph
+    drops monotonically from 0 to FALL_OLD_MAX as it exits. At
+    t >= FALL_DURATION_MS all offsets are 0 and the caller draws the plain
+    text. Deterministic: same inputs, same frames. Unchanged columns and
+    non-digit columns (colons) stay at 0. The 4-tuple keeps the historic
+    (new, old, offset) shape as a prefix: entry[2] is the new glyph's
+    offset, i.e. what the old code drew (wrongly, with the drop term added).
     """
     n = max(len(str(old_text)), len(str(new_text)))
     old_s = str(old_text).rjust(n)
     new_s = str(new_text).rjust(n)
     if t_ms is None or t_ms >= FALL_DURATION_MS:
-        return [(nw, o, 0.0) for nw, o in zip(new_s, old_s)]
+        return [(nw, o, 0.0, 0.0) for nw, o in zip(new_s, old_s)]
     frac = max(0.0, min(1.0, float(t_ms) / float(FALL_DURATION_MS)))
-    # new digit eases in from above (ease-out), old digit drops out below
-    # with an accelerating (gravity) ease.
+    # new glyph: ease-out landing onto the slot, clamped to never overshoot
+    # below it; old glyph: accelerating gravity drop out of the slot.
     land = 1.0 - (1.0 - frac) ** 3
     drop = frac * frac
+    new_off = FALL_NEW_MIN * (1.0 - land)
+    old_off = FALL_OLD_MAX * drop
     out = []
     for o, nw in zip(old_s, new_s):
-        if o == nw:
-            out.append((nw, o, 0.0))
+        if o == nw or not (o.isalnum() or nw.isalnum()):
+            out.append((nw, o, 0.0, 0.0))
         else:
-            out.append((nw, o, -FALL_TRAVEL_FRAC * (1.0 - land) + FALL_TRAVEL_FRAC * drop))
+            out.append((nw, o, new_off, old_off))
     return out
 
 
