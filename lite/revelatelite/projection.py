@@ -702,45 +702,57 @@ class SlideView(QtWidgets.QWidget):
         # fill, dark text gets a light glass fill, so contrast never flips.
         # Fill alpha stays translucent (glassmorphism); border is the name
         # colour itself at a soft alpha so it can never clash with the text.
+        # The pill hugs the measured name text plus symmetric padding, so
+        # the name text sits fully inside the pill with left/right breathing
+        # room. The sheen is a subtle low-alpha vertical gradient painted as
+        # the pill FILL itself, behind the letters: light at the top fading
+        # to transparent at the bottom. It is never a solid bar above the
+        # text, so it can never overlap or obscure the name.
         lum = (ncol_q.red() * 299 + ncol_q.green() * 587 + ncol_q.blue() * 114) / 1000.0
         text_is_light = lum >= 140
-        fill_color = QtGui.QColor(8, 12, 24, 64) if text_is_light else QtGui.QColor(255, 255, 255, 58)
+        base_fill = QtGui.QColor(8, 12, 24, 62) if text_is_light else QtGui.QColor(255, 255, 255, 56)
+        sheen_top = QtGui.QColor(255, 255, 255, 30) if text_is_light else QtGui.QColor(0, 0, 0, 16)
         border_color = QtGui.QColor(ncol_q)
         border_color.setAlpha(99)
-        highlight = QtGui.QColor(255, 255, 255, 38) if text_is_light else QtGui.QColor(0, 0, 0, 22)
 
-        name_font = fit(nfam, name, name_rect)
         label_font = fit(lfam, label, label_rect)
         label_w = QtGui.QFontMetrics(label_font).horizontalAdvance(label)
         gap = h * timermod.SPEAKER_GAP_FRAC
-        name_x = x + label_w + gap
-        name_rect = QtCore.QRectF(name_x, y, x + bw - name_x, bh)
-        # Pill follows the name text box; the name re-fit now targets it.
-        name_font = fit(nfam, name, name_rect)
-
         padx = h * timermod.SPEAKER_PILL_PADX_FRAC
         pady = h * timermod.SPEAKER_PILL_PADY_FRAC
-        inner = QtCore.QRectF(name_rect.x() + padx, name_rect.y() + pady,
-                              name_rect.width() - padx * 2, name_rect.height() - pady * 2)
-        radius = max(4.0, bh * 0.28)
-        p.setPen(QtGui.QPen(border_color, max(1.0, h * 0.0025)))
-        p.setBrush(QtGui.QBrush(fill_color))
-        p.drawRoundedRect(inner, radius, radius)
-        p.setBrush(QtCore.Qt.NoBrush)
-        hl_h = max(2.0, inner.height() * 0.38)
-        hl = QtCore.QRectF(inner.x() + radius * 0.35, inner.y() + radius * 0.18,
-                           max(1.0, inner.width() - radius * 0.7), hl_h)
+        # The pill starts after the measured label plus the gap, and its
+        # width is the measured name text plus padding on both sides, so it
+        # never extends past the name into empty space. Fit the name to the
+        # band that remains after the label, minus the pill padding, so a
+        # long name shrinks to fit inside its own pill instead of overhanging.
+        name_x = x + label_w + gap
+        max_name_text_w = max(1.0, (x + bw - name_x) - padx * 2)
+        name_font = fit(nfam, name, QtCore.QRectF(0.0, 0.0, max_name_text_w, bh))
+        text_w = QtGui.QFontMetrics(name_font).horizontalAdvance(name)
+        pill_rect = QtCore.QRectF(name_x, y + pady, text_w + padx * 2, bh - pady * 2)
+        text_rect = QtCore.QRectF(name_x + padx, y + pady, text_w, bh - pady * 2)
+        radius = max(4.0, pill_rect.height() * 0.5)
+        # Glass fill: solid translucent base + subtle top-to-bottom sheen
+        # gradient in the same rounded shape, behind the text.
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QBrush(highlight))
-        p.drawRoundedRect(hl, hl_h * 0.5, hl_h * 0.5)
+        p.setBrush(QtGui.QBrush(base_fill))
+        p.drawRoundedRect(pill_rect, radius, radius)
+        sheen = QtGui.QLinearGradient(pill_rect.topLeft(), pill_rect.bottomLeft())
+        sheen.setColorAt(0.0, sheen_top)
+        sheen.setColorAt(1.0, QtGui.QColor(sheen_top.red(), sheen_top.green(), sheen_top.blue(), 0))
+        p.setBrush(QtGui.QBrush(sheen))
+        p.drawRoundedRect(pill_rect, radius, radius)
         p.setBrush(QtCore.Qt.NoBrush)
+        p.setPen(QtGui.QPen(border_color, max(1.0, h * 0.0025)))
+        p.drawRoundedRect(pill_rect, radius, radius)
+        p.setPen(QtCore.Qt.NoPen)
 
         p.setFont(label_font)
         p.setPen(QtGui.QColor(lcol))
-        p.drawText(label_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, label)
+        p.drawText(QtCore.QRectF(x, y, label_w, bh), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, label)
         p.setFont(name_font)
         p.setPen(ncol_q)
-        p.drawText(name_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
+        p.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
 
     # ---- song templates (songs only; verses never come here) ----
     def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):

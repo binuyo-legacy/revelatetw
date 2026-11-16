@@ -70,7 +70,7 @@ MAX_SPEAKER = 80
 SPEAKER_FRAC = (0.02, 0.895, 0.42, 0.06)  # x, y, width, height (fracs of w, h)
 SPEAKER_LABEL_FRAC = 0.44  # legacy share; painter now measures the label text
 SPEAKER_GAP_FRAC = 0.012  # gap between measured label text and name pill (frac of h)
-SPEAKER_PILL_PADX_FRAC = 0.018  # pill horizontal padding inside the name (frac of h)
+SPEAKER_PILL_PADX_FRAC = 0.03  # pill horizontal padding inside the name (frac of h)
 SPEAKER_PILL_PADY_FRAC = 0.008  # pill vertical padding inside the band (frac of h)
 
 

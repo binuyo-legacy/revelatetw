@@ -642,6 +642,11 @@ class AnalogLayoutSafety(unittest.TestCase):
     """Regression for the photo: remaining digits and message must not
     collide with the dial numerals/hands/ring (feedback after 25f495a)."""
 
+    @classmethod
+    def setUpClass(cls):
+        from PyQt5 import QtWidgets as _W
+        cls.qa = _W.QApplication.instance() or _W.QApplication([])
+
     SIZES = ((1280, 720), (1920, 1080), (640, 360), (320, 180), (800, 600), (1024, 768), (384, 216), (1366, 768))
     MESSAGES = ("", "Prayer Time Limit", "A" * 120, "Prayer and intercession for the nations of the world today")
 
@@ -818,6 +823,81 @@ class AnalogLayoutSafety(unittest.TestCase):
                         v2.set_timer(tm2.TimerEngine(mode=mode, style=style, duration=300,
                                                      speaker=name, show_speaker=False).snapshot())
                         self.assertFalse(v2.snapshot(QtCore.QSize(w, h)).isNull(), (w, h, mode, style))
+
+    def test_speaker_pill_hugs_text_with_padding_no_sheen(self):
+        # Glass pill regression (user screenshot of commit 764df96): the
+        # pill was as wide as the whole remaining band (far past the name),
+        # the name text touched/overhung the pill's left edge, and the
+        # frosted highlight rendered as a thick bar covering the text.
+        # Geometry rule now: pill width follows the measured name text plus
+        # symmetric padding, text is drawn inside the pill with padding on
+        # both sides, and no highlight sheen is painted at all.
+        import re as _re
+        from PyQt5 import QtCore
+        from revelatelite import projection as proj
+        from revelatelite import timer as tm2
+        from revelatelite.projection import SlideView
+        src = open(proj.__file__, encoding="utf-8").read()
+        start = src.index("def _draw_speaker_tag")
+        body = src[start:src.index("def _sfont", start)]
+        assert "QLinearGradient" in body, "sheen must be a gradient, not a solid bar"
+        assert "drawRoundedRect(hl" not in body, "old highlight bar must be gone"
+        assert "highlight" not in body.lower().replace("frosted highlight", ""), body
+
+        for w, h in ((1280, 720), (960, 540)):
+            for name in ("Pastor Adeeko", "A", "A very very long speaker name"):
+                snap = tm2.TimerEngine(mode="countdown", style="digital", duration=300,
+                                       speaker=name, show_speaker=True).snapshot()
+                # Fake painter records geometry without touching Qt's
+                # QPainter class (patching sip classes can abort Qt).
+                class FakePainter:
+                    def __init__(self):
+                        self.rects = []
+                        self.texts = []
+                    def setPen(self, *a): pass
+                    def setBrush(self, *a): pass
+                    def setFont(self, *a): pass
+                    def drawRoundedRect(self, rect, *a):
+                        self.rects.append((float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())))
+                    def drawText(self, rect, *a):
+                        txt = a[-1] if a else ""
+                        self.texts.append((rect, txt))
+                fake = FakePainter()
+                # Unbound call: the painter does not need a SlideView instance.
+                SlideView._draw_speaker_tag(object(), fake, snap, tm2.resolve(snap["template"], "", ""), w, h)
+                rects = fake.rects
+                texts = fake.texts
+                assert rects, (w, h, name, rects, texts)
+                # Exactly one pill fill rect (painted once as translucent
+                # base, once as the sheen gradient in the SAME rounded
+                # shape): no separate highlight bar rect above the pill.
+                assert len(rects) == 3, (w, h, name, rects)
+                px, py, pw, ph = rects[0]
+                name_texts = [t for t in texts if t[-1] == name]
+                assert name_texts, (w, h, name, texts)
+                # Text must start strictly inside the pill (left padding) and
+                # end inside it (right padding): the hallmark of hugging.
+                # FakePainter stores (rect, txt) so c[0] is the rect.
+                name_rect = None
+                for c in texts:
+                    if c[-1] == name and c[0] is not None:
+                        name_rect = c[0]
+                        break
+                assert name_rect is not None, (w, h, name, texts)
+                assert name_rect.x() >= px + w * 0.0, (name_rect, rects)
+                assert name_rect.x() > px, (name_rect, rects)
+                assert name_rect.x() + name_rect.width() <= px + pw, (name_rect, rects)
+                # Pill must hug the text: trailing empty space is at most
+                # the padding (3% of height on each side) plus rounding.
+                pad = h * tm2.SPEAKER_PILL_PADX_FRAC
+                trailing = (px + pw) - (name_rect.x() + name_rect.width())
+                leading = name_rect.x() - px
+                assert abs(leading - pad) <= 2.0, (leading, pad)
+                assert abs(trailing - pad) <= 2.0, (trailing, pad)
+                # Pill stays inside the bottom-left band.
+                bx, by, bw, bh = tm2.speaker_layout(w, h)
+                assert px >= bx - 1 and px + pw <= bx + bw + 1, (rects, (bx, by, bw, bh))
+                assert py >= by - 1 and py + ph <= by + bh + 1, (rects, (bx, by, bw, bh))
 
 
 # ---- falling-digit geometry regression (clipping fix) ----
