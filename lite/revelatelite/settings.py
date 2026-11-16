@@ -36,6 +36,12 @@ DEFAULTS = {
     "timer_show_seconds": False,  # clock seconds in digital readout
     "timer_show_shape": True,  # inner curved plate on digital templates
     "timer_text_scale": 100,   # digital display text size, 50..300 (% of autosize)
+    "timer_speaker": "",       # speaker name shown in the bottom-left tag (Timer projection only)
+    "timer_show_speaker": False,  # ON/OFF hide toggle: False hides the tag entirely
+    "timer_speaker_label_font": "",  # "" = core timer font, else a FONT_FAMILIES face
+    "timer_speaker_name_font": "",   # independent of the label + core font
+    "timer_speaker_label_color": "", # "" = template accent, else "#rrggbb"
+    "timer_speaker_name_color": "",  # "" = template text colour, else "#rrggbb"
     "bg_kind": "color",      # color | gradient | image (see background.py)
     "grad_color1": "#1e3a8a",
     "grad_color2": "#0b0f19",
@@ -186,6 +192,16 @@ def load(path):
         data["timer_show_shape"] = bool(data["timer_show_shape"])
     data["timer_text_scale"] = timermod.clean_text_scale(data["timer_text_scale"])
     data["timer_duration"] = timermod.clamp_duration(data["timer_duration"])
+    data["timer_speaker"] = timermod.clean_speaker(data["timer_speaker"])
+    if not isinstance(data["timer_show_speaker"], bool):
+        data["timer_show_speaker"] = bool(data["timer_show_speaker"])
+    data["timer_speaker_label_font"] = (
+        timermod.clean_font(data["timer_speaker_label_font"]) if data["timer_speaker_label_font"] else "")
+    data["timer_speaker_name_font"] = (
+        timermod.clean_font(data["timer_speaker_name_font"]) if data["timer_speaker_name_font"] else "")
+    for k in ("timer_speaker_label_color", "timer_speaker_name_color"):
+        if data[k] and not valid_color(data[k]):
+            data[k] = ""
     data.update(background.clean(data))
     data.update(transitions.clean(data))
     return data

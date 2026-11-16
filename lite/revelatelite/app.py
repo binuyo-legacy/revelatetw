@@ -47,7 +47,13 @@ class Main(QtWidgets.QWidget):
                                          manual_second=self.st["timer_manual_second"],
                                          font_family=self.st["timer_font_family"],
                                          show_shape=self.st["timer_show_shape"],
-                                         text_scale=self.st["timer_text_scale"])
+                                         text_scale=self.st["timer_text_scale"],
+                                         speaker=self.st.get("timer_speaker", ""),
+                                         show_speaker=self.st.get("timer_show_speaker", False),
+                                         speaker_label_font=self.st.get("timer_speaker_label_font", ""),
+                                         speaker_name_font=self.st.get("timer_speaker_name_font", ""),
+                                         speaker_label_color=self.st.get("timer_speaker_label_color", ""),
+                                         speaker_name_color=self.st.get("timer_speaker_name_color", ""))
         self.timer_snap = None    # the timer snapshot currently in the preview (None = verse/song is showing)
         self._timer_showing = False  # True while the Timer tab is selected (its slide is in the preview)
         self._timer_live = False     # True while a timer slide is on the live projector. The
@@ -279,6 +285,29 @@ class Main(QtWidgets.QWidget):
         self.timer_bg_b = QtWidgets.QPushButton("Background colour")
         self.timer_reset_colors_b = QtWidgets.QPushButton("Reset colours")
         self.timer_reset_colors_b.setEnabled(bool(self.st["timer_text_color"] or self.st["timer_bg_color"]))
+        # speaker tag: bottom-left block on the projection; ON/OFF hides it entirely
+        self.timer_speaker_le = QtWidgets.QLineEdit()
+        self.timer_speaker_le.setPlaceholderText("e.g. Pastor John Adeyemi")
+        self.timer_speaker_le.setText(self.st.get("timer_speaker", ""))
+        self.timer_speaker_le.setMaxLength(timermod.MAX_SPEAKER)
+        self.timer_show_speaker_cb = QtWidgets.QCheckBox("Show speaker tag (SPEAKER:)")
+        self.timer_show_speaker_cb.setChecked(bool(self.st.get("timer_show_speaker", False)))
+        # speaker label/name each carry their own font + colour, separate
+        # from the core timer font/colour above ("" = template/core default)
+        self.timer_speaker_label_font_cb = QtWidgets.QComboBox()
+        self.timer_speaker_label_font_cb.setEditable(True)
+        self.timer_speaker_label_font_cb.addItem("Template default", "")
+        for n in timermod.FONT_FAMILIES:
+            self.timer_speaker_label_font_cb.addItem(n)
+        self.timer_speaker_label_font_cb.setCurrentText(self.st.get("timer_speaker_label_font") or "Template default")
+        self.timer_speaker_name_font_cb = QtWidgets.QComboBox()
+        self.timer_speaker_name_font_cb.setEditable(True)
+        self.timer_speaker_name_font_cb.addItem("Template default", "")
+        for n in timermod.FONT_FAMILIES:
+            self.timer_speaker_name_font_cb.addItem(n)
+        self.timer_speaker_name_font_cb.setCurrentText(self.st.get("timer_speaker_name_font") or "Template default")
+        self.timer_speaker_label_color_b = QtWidgets.QPushButton("Label colour")
+        self.timer_speaker_name_color_b = QtWidgets.QPushButton("Name colour")
         # duration controls: minutes + seconds spinboxes (countdown only uses them, but kept visible for simplicity)
         self.timer_min_sp = QtWidgets.QSpinBox()
         self.timer_min_sp.setRange(0, 720)
@@ -325,6 +354,12 @@ class Main(QtWidgets.QWidget):
         tg.addRow("", self.timer_reset_colors_b)
         tg.addRow("Template", self.timer_template_cb)
         tg.addRow("", self.timer_template_lbl)
+        tg.addRow("Speaker", self.timer_speaker_le)
+        tg.addRow("", self.timer_show_speaker_cb)
+        tg.addRow("Speaker label font", self.timer_speaker_label_font_cb)
+        tg.addRow("Speaker name font", self.timer_speaker_name_font_cb)
+        tg.addRow("Speaker label colour", self.timer_speaker_label_color_b)
+        tg.addRow("Speaker name colour", self.timer_speaker_name_color_b)
         self._timer_dur_row_index = tg.rowCount()
         tg.addRow(self.timer_countdown_lbl, dur_row)
         tg.addRow("", btn_row)
@@ -613,6 +648,12 @@ class Main(QtWidgets.QWidget):
         self.timer_msec_sp.valueChanged.connect(self._timer_manual_changed)
         self.timer_message_le.textChanged.connect(self._timer_message_changed)
         self.timer_font_cb.currentTextChanged.connect(self._timer_settings_changed)
+        self.timer_speaker_le.textChanged.connect(self._timer_speaker_changed)
+        self.timer_show_speaker_cb.stateChanged.connect(self._timer_settings_changed)
+        self.timer_speaker_label_font_cb.currentTextChanged.connect(self._timer_settings_changed)
+        self.timer_speaker_name_font_cb.currentTextChanged.connect(self._timer_settings_changed)
+        self.timer_speaker_label_color_b.clicked.connect(lambda: self._timer_speaker_pick_color("label"))
+        self.timer_speaker_name_color_b.clicked.connect(lambda: self._timer_speaker_pick_color("name"))
         self.timer_text_b.clicked.connect(lambda: self._timer_pick_color("timer_text_color"))
         self.timer_bg_b.clicked.connect(lambda: self._timer_pick_color("timer_bg_color"))
         self.timer_reset_colors_b.clicked.connect(self._timer_reset_colors)
@@ -1170,12 +1211,27 @@ class Main(QtWidgets.QWidget):
             w_.setHidden(is_time)
 
     def _timer_pick_color(self, key):
-        resolved = timermod.resolve(self.st["timer_template"], self.st["timer_text_color"], self.st["timer_bg_color"])
+        resolved = timermod.resolve(
+            self.st["timer_template"], self.st["timer_text_color"], self.st["timer_bg_color"],
+            speaker_label_color=self.st.get("timer_speaker_label_color", ""),
+            speaker_name_color=self.st.get("timer_speaker_name_color", ""))
         start = QtGui.QColor(resolved["text"] if key == "timer_text_color" else resolved["bg1"])
         c = QtWidgets.QColorDialog.getColor(start, self, "Choose a colour")
         if c.isValid():
             self.st[key] = c.name()
             self.timer_reset_colors_b.setEnabled(True)
+            self._timer_settings_changed()
+
+    def _timer_speaker_pick_color(self, which):
+        key = "timer_speaker_label_color" if which == "label" else "timer_speaker_name_color"
+        t = timermod.resolve(
+            self.st["timer_template"], self.st["timer_text_color"], self.st["timer_bg_color"],
+            speaker_label_color=self.st.get("timer_speaker_label_color", ""),
+            speaker_name_color=self.st.get("timer_speaker_name_color", ""))
+        start = QtGui.QColor(t.get("speaker_label_color" if which == "label" else "speaker_name_color", "#ffffff"))
+        c = QtWidgets.QColorDialog.getColor(start, self, "Choose a colour")
+        if c.isValid():
+            self.st[key] = c.name()
             self._timer_settings_changed()
 
     def _timer_reset_colors(self):
@@ -1199,6 +1255,17 @@ class Main(QtWidgets.QWidget):
         if self._timer_showing:
             self._show_timer_slide()
 
+    def _timer_speaker_changed(self, *_):
+        self.st["timer_speaker"] = timermod.clean_speaker(self.timer_speaker_le.text())
+        self.timer.configure(speaker=self.st["timer_speaker"])
+        self.save_settings()
+        if self._timer_showing:
+            self._show_timer_slide()
+
+    def _speaker_font_value(self, cb):
+        v = cb.currentText().strip()
+        return "" if v in ("", "Template default") else timermod.clean_font(v)
+
     def _timer_settings_changed(self, *_):
         self.st["timer_mode"] = self.timer_mode_cb.itemData(self.timer_mode_cb.currentIndex())
         self.st["timer_style"] = self.timer_style_cb.itemData(self.timer_style_cb.currentIndex())
@@ -1211,13 +1278,22 @@ class Main(QtWidgets.QWidget):
         self.st["timer_source"] = self.timer_source_cb.itemData(self.timer_source_cb.currentIndex())
         self.st["timer_font_family"] = timermod.clean_font(self.timer_font_cb.currentText())
         self.st["timer_message"] = timermod.clean_message(self.timer_message_le.text())
+        self.st["timer_speaker"] = timermod.clean_speaker(self.timer_speaker_le.text())
+        self.st["timer_show_speaker"] = bool(self.timer_show_speaker_cb.isChecked())
+        self.st["timer_speaker_label_font"] = self._speaker_font_value(self.timer_speaker_label_font_cb)
+        self.st["timer_speaker_name_font"] = self._speaker_font_value(self.timer_speaker_name_font_cb)
         self.timer_template_lbl.setText(timermod.blurb(self.st["timer_template"]))
         self.timer.configure(mode=self.st["timer_mode"], fmt=self.st["timer_format"], show_ampm=self.st["timer_ampm"],
                              template=self.st["timer_template"], style=self.st["timer_style"], show_seconds=self.st["timer_show_seconds"],
                              duration=self.st["timer_duration"], text_color=self.st["timer_text_color"],
                              bg_color=self.st["timer_bg_color"], source=self.st["timer_source"],
                              message=self.st["timer_message"], font_family=self.st["timer_font_family"],
-                             show_shape=self.st["timer_show_shape"], text_scale=self.st["timer_text_scale"])
+                             show_shape=self.st["timer_show_shape"], text_scale=self.st["timer_text_scale"],
+                             speaker=self.st["timer_speaker"], show_speaker=self.st["timer_show_speaker"],
+                             speaker_label_font=self.st["timer_speaker_label_font"],
+                             speaker_name_font=self.st["timer_speaker_name_font"],
+                             speaker_label_color=self.st.get("timer_speaker_label_color", ""),
+                             speaker_name_color=self.st.get("timer_speaker_name_color", ""))
         self._sync_timer_mode_controls()
         self.save_settings()
         if self._timer_showing:

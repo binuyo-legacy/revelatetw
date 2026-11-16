@@ -370,7 +370,9 @@ class SlideView(QtWidgets.QWidget):
     def _draw_timer(self, p, rect):
         snap = self.timer_snap or {}
         t = timermod.resolve(snap.get("template", timermod.DEFAULT),
-                             snap.get("text_color", ""), snap.get("bg_color", ""))
+                             snap.get("text_color", ""), snap.get("bg_color", ""),
+                             speaker_label_color=snap.get("speaker_label_color", ""),
+                             speaker_name_color=snap.get("speaker_name_color", ""))
         w, h = rect.width(), rect.height()
         kind, c1, c2 = t["bg"]
         if kind == "solid":
@@ -514,6 +516,7 @@ class SlideView(QtWidgets.QWidget):
                                         int(message_rect[2]), int(message_rect[3])),
                            QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter | QtCore.Qt.TextWordWrap,
                            message)
+            self._draw_speaker_tag(p, snap, t, w, h)
             return
         # digital: bold Segoe UI readout with a subtle dark glass plate behind it
         # (original RevelateTW look; not copied from any reference app)
@@ -649,6 +652,53 @@ class SlideView(QtWidgets.QWidget):
         if show_shape and t["frame"] == "line":
             p.setPen(QtGui.QPen(acc, max(2, int(h * 0.008))))
             p.drawLine(int(w * 0.30), int(dl["rule_y"]), int(w * 0.70), int(dl["rule_y"]))
+        self._draw_speaker_tag(p, snap, t, w, h)
+
+    def _draw_speaker_tag(self, p, snap, t, w, h):
+        """Bottom-left SPEAKER tag, drawn only when the toggle is ON and a
+        name is set. Both parts share one bottom-left band; each gets its own
+        font and colour (label accent-coloured by default, name template
+        text by default), separate from the core-message settings. Nothing
+        is drawn for a legacy/unknown snapshot: a missing name or OFF toggle
+        keeps the band empty, never a bare "SPEAKER:"."""
+        if not snap.get("show_speaker", False):
+            return
+        name = timermod.clean_speaker(snap.get("speaker", ""))
+        if not name:
+            return
+        label = timermod.SPEAKER_LABEL
+        x, y, bw, bh = timermod.speaker_layout(w, h)
+        if bw <= 0 or bh <= 0:
+            return
+        label_w = bw * timermod.SPEAKER_LABEL_FRAC
+        name_x = x + label_w
+        label_rect = QtCore.QRectF(x, y, label_w, bh)
+        name_rect = QtCore.QRectF(name_x, y, bw - label_w, bh)
+        # Fit each part independently to its own column, like the digits.
+        lfam = timermod.clean_font(snap.get("speaker_label_font", ""))
+        nfam = timermod.clean_font(snap.get("speaker_name_font", ""))
+        lcol = snap.get("speaker_label_color") or t.get("speaker_label_color") or t.get("accent", "")
+        ncol = snap.get("speaker_name_color") or t.get("speaker_name_color") or t.get("text", "")
+
+        def fit(family, txt, rect):
+            frac = 0.045
+            f = QtGui.QFont(family)
+            f.setBold(True)
+            while frac > 0.012:
+                f.setPixelSize(max(8, int(h * frac)))
+                fm = QtGui.QFontMetrics(f)
+                if fm.horizontalAdvance(txt) <= rect[2] and fm.height() <= rect[3]:
+                    return f
+                frac -= 0.0025
+            f.setPixelSize(max(8, int(h * 0.012)))
+            return f
+
+        p.setFont(fit(lfam, label, label_rect))
+        p.setPen(QtGui.QColor(lcol))
+        p.drawText(label_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, label)
+        p.setFont(fit(nfam, name, name_rect))
+        p.setPen(QtGui.QColor(ncol))
+        p.drawText(name_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
 
     # ---- song templates (songs only; verses never come here) ----
     def _sfont(self, h, frac, bold=False, spacing=0.0, family="Segoe UI"):

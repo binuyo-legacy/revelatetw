@@ -56,6 +56,39 @@ FONT_FAMILIES = (
 )
 MAX_MESSAGE = 120
 
+# ---- speaker tag (bottom-left, Timer projection only) ----
+# A small tag block pinned to the bottom-left edge of the Timer/Countdown
+# projection, independent of the core message. The static "SPEAKER:" label
+# sits next to the operator's speaker name. Visibility is one ON/OFF toggle:
+# the default is OFF (an empty name must never paint a bare "SPEAKER:").
+# Geometry lives in speaker_layout() so the renderer and the bounds tests
+# agree. The band is BELOW the digital plate / BELOW the analog digits and
+# message (never under the dial), so it cannot collide with the time readout,
+# the core message, or the bottom-centre reference area.
+SPEAKER_LABEL = "SPEAKER:"
+MAX_SPEAKER = 80
+SPEAKER_FRAC = (0.02, 0.895, 0.42, 0.06)  # x, y, width, height (fracs of w, h)
+SPEAKER_LABEL_FRAC = 0.44  # share of the band width given to "SPEAKER:"
+
+
+def clean_speaker(s):
+    return " ".join(str(s or "").split())[:80]
+
+
+def speaker_layout(w, h):
+    """(x, y, width, height) floats for the speaker tag band.
+
+    Bottom-left band at y 89.5%..95.5% of the height, x 2%..44% of the
+    width. Digit/message bands all end by ~85% of the height (digital plate
+    24%..76%, analog message ends ~85%), so the band overlaps none of them:
+    digital time_rect, message_rect, analog digits_rect, message_rect, the
+    dial, and the gold rule all stay clear, for both modes and both styles.
+    """
+    if w <= 0 or h <= 0:
+        return (0.0, 0.0, 0.0, 0.0)
+    x, y, rw, rh = SPEAKER_FRAC
+    return (w * x, h * y, w * rw, h * rh)
+
 # ---- digital timer shape geometry (fractions of w, h, headless + tested) ----
 # The "inner curve shape" the operator sees is the dark glass plate the
 # projection draws around the digits. It is a rounded rect spanning
@@ -258,7 +291,13 @@ def blurb(key):
     return TEMPLATES[clean(key)]["blurb"]
 
 
-def resolve(key, text_color="", bg_color=""):
+def resolve(key, text_color="", bg_color="", **kwargs):
+    """Template dict with text/bg colours overridden ('' = template default).
+
+    `kwargs` stays generic so the engine can pass the operator's speaker tag
+    colours straight through (see resolve() usage): speaker_label_color and
+    speaker_name_color.
+    """
     t = dict(TEMPLATES[clean(key)])
     t["bg_kind"], t["bg1"], t["bg2"] = t["bg"]
     if _valid_color(text_color):
@@ -271,6 +310,16 @@ def resolve(key, text_color="", bg_color=""):
         # background picked in the Timer tab never painted. Keep all four in sync.
         t["bg_kind"], t["bg1"], t["bg2"] = "solid", bg, bg
         t["bg"] = ("solid", bg, bg)
+    # Speaker tag colours. They are independent of the core message: each of
+    # the "SPEAKER:" label and the name takes its own override when the
+    # operator set one (kwargs speaker_label_color / speaker_name_color, kept
+    # as strict extras so callers passing text_color/bg_color positionally can
+    # never leak into them), else it inherits the template accent/text colour
+    # (so the tag still pops on its own without adding a new palette rule).
+    label_c = kwargs.get("speaker_label_color", "")
+    name_c = kwargs.get("speaker_name_color", "")
+    t["speaker_label_color"] = label_c.lower() if _valid_color(label_c) else t.get("accent", "")
+    t["speaker_name_color"] = name_c.lower() if _valid_color(name_c) else t.get("text", "")
     return t
 
 
@@ -395,7 +444,9 @@ class TimerEngine:
                  text_color="", bg_color="", style="digital", show_seconds=False,
                  message="", source="live", manual_hour=9, manual_minute=0, manual_second=0,
                  font_family="Segoe UI", clock=None, show_shape=True,
-                 text_scale=TEXT_SCALE_DEFAULT):
+                 text_scale=TEXT_SCALE_DEFAULT, speaker="", show_speaker=False,
+                 speaker_label_font=None, speaker_name_font=None,
+                 speaker_label_color="", speaker_name_color=""):
         self.mode = clean_mode(mode)
         self.fmt = clean_format(fmt)
         self.show_ampm = bool(show_ampm)
@@ -414,13 +465,21 @@ class TimerEngine:
         self.font_family = clean_font(font_family)
         self.show_shape = bool(show_shape)
         self.text_scale = clean_text_scale(text_scale)
+        self.speaker = clean_speaker(speaker)
+        self.show_speaker = bool(show_speaker)
+        self.speaker_label_font = clean_font(speaker_label_font) if speaker_label_font else ""
+        self.speaker_name_font = clean_font(speaker_name_font) if speaker_name_font else ""
+        self.speaker_label_color = speaker_label_color.lower() if _valid_color(speaker_label_color) else ""
+        self.speaker_name_color = speaker_name_color.lower() if _valid_color(speaker_name_color) else ""
         self._clock = clock or time.monotonic
         self._deadline = None
 
     def configure(self, mode=None, fmt=None, show_ampm=None, duration=None,
                   template=None, text_color=None, bg_color=None, style=None, show_seconds=None,
                   message=None, source=None, manual_hour=None, manual_minute=None, manual_second=None,
-                  font_family=None, show_shape=None, text_scale=None):
+                  font_family=None, show_shape=None, text_scale=None, speaker=None,
+                  show_speaker=None, speaker_label_font=None, speaker_name_font=None,
+                  speaker_label_color=None, speaker_name_color=None):
         # Reconcile the running countdown deadline before touching anything
         # else, so a Timer Type switch (countdown -> time -> countdown), a
         # style/format change, or a duration edit never works from a stale
@@ -471,6 +530,18 @@ class TimerEngine:
             self.show_shape = bool(show_shape)
         if text_scale is not None:
             self.text_scale = clean_text_scale(text_scale)
+        if speaker is not None:
+            self.speaker = clean_speaker(speaker)
+        if show_speaker is not None:
+            self.show_speaker = bool(show_speaker)
+        if speaker_label_font is not None:
+            self.speaker_label_font = clean_font(speaker_label_font) if speaker_label_font else ""
+        if speaker_name_font is not None:
+            self.speaker_name_font = clean_font(speaker_name_font) if speaker_name_font else ""
+        if speaker_label_color is not None:
+            self.speaker_label_color = speaker_label_color.lower() if _valid_color(speaker_label_color) else ""
+        if speaker_name_color is not None:
+            self.speaker_name_color = speaker_name_color.lower() if _valid_color(speaker_name_color) else ""
 
     def manual_dt(self):
         return manual_datetime(self.manual_hour, self.manual_minute, self.manual_second)
@@ -587,6 +658,12 @@ class TimerEngine:
                     message=self.message,
                     mode=self.mode, style=self.style, dial=dial, seconds=self.show_seconds,
                     show_shape=self.show_shape, text_scale=self.text_scale,
+                    speaker=self.speaker, show_speaker=self.show_speaker,
+                    speaker_label=SPEAKER_LABEL,
+                    speaker_label_font=self.speaker_label_font or self.font_family,
+                    speaker_name_font=self.speaker_name_font or self.font_family,
+                    speaker_label_color=self.speaker_label_color,
+                    speaker_name_color=self.speaker_name_color,
                     template=self.template, font_family=self.font_family,
                     text_color=self.text_color, bg_color=self.bg_color,
                     remaining=int(round(self.remaining)) if self.mode == "countdown" else None)
