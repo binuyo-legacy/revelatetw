@@ -80,7 +80,7 @@ class ThemeLook(unittest.TestCase):
         right = w.prev_b.parentWidget()
         names = [b.text() for b in right.findChildren(QtWidgets.QPushButton)
                  if b in (w.prev_b, w.next_b, w.add_b, w.blank_b, w.project_b)]
-        self.assertEqual(set(names), {"< Previous", "Next >", "Add to service list", "Project Off (Esc)", "Project (F5)"})
+        self.assertEqual(set(names), {"< Previous", "Next >", "Add to service list", "Project Off (Esc)", "Project (F1)"})
         ys = [w.prev_b.mapTo(w, w.prev_b.rect().topLeft()).y(), w.add_b.mapTo(w, w.add_b.rect().topLeft()).y()]
         self.assertEqual(ys, sorted(ys))
         # Project / Project Off now live in the middle stack, not under the preview

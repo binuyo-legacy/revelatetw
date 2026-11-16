@@ -18,7 +18,7 @@ numbers from the checklist below.
 - Search by words ("loved world").
 - Service list: line up verses before the service, reorder, saved automatically.
 - Projection: borderless full-screen window on the extended (second) display, text auto-sized to fit, 3 colour
-  styles, text size, show/hide reference. Project (F5) sends the preview to the full-screen display; Project Off (Esc) closes it. Everything else (Enter, arrows, Next/Previous) only changes the preview.
+  styles, text size, show/hide reference. Project (F1) sends the preview to the full-screen display; Project Off (Esc) closes it. F5 and Ctrl+Enter also project (aliases). Everything else (Enter, arrows, Next/Previous) only changes the preview.
 - **Text outline** (Settings, next to the colours): tick "Outline around text", pick a colour (or press Auto: dark outline on light text, light on dark), and set Thickness 1 to 10. It is drawn on verse, reference and credit, and looks the same on the preview and the screen (thickness scales with screen size). Works on solid, gradient and picture backgrounds. A hint appears if the outline colour is too close to the text colour. Like other look changes, it reaches the screen only when you press Project. Saved in settings.
 - **Settings tab** (was "Look and screen"): projector screen, colours, text size, font, bold, show reference, plus the background.
   Background choices: Solid colour (as before), Gradient (Colour 1, Colour 2, Swap, direction: top to bottom, left to right,

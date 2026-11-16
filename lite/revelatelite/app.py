@@ -150,8 +150,8 @@ class Main(QtWidgets.QWidget):
         self.up_b, self.down_b, self.rm_b = (QtWidgets.QPushButton(x) for x in ("Move up", "Move down", "Remove"))
         self.blank_b = QtWidgets.QPushButton("Project Off (Esc)")
         self.blank_b.setEnabled(False)
-        self.project_b = QtWidgets.QPushButton("Project (F5)")
-        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this. Project: F5 or Ctrl+Enter. Project Off: Esc.")
+        self.project_b = QtWidgets.QPushButton("Project (F1)")
+        self.project_b.setToolTip("Sends what you see in the preview to the full-screen display. Nothing goes out until you click this. Project: F1 (also F5 or Ctrl+Enter). Project Off: Esc.")
         self.project_b.setObjectName("primary")
         self.project_b.setEnabled(False)
         for b in (self.project_b, self.blank_b, self.up_b, self.down_b, self.rm_b):
@@ -636,11 +636,17 @@ class Main(QtWidgets.QWidget):
             sig.connect(self._transition_changed)
         self._sync_transition_controls()
         self._sync_outline()
-        for key, fn in ((QtCore.Qt.Key_F5, self.project), (QtCore.Qt.Key_Escape, self.project_off)):
+        for key, fn in ((QtCore.Qt.Key_F1, self.project), (QtCore.Qt.Key_F5, self.project),
+                        (QtCore.Qt.Key_Escape, self.project_off)):
             QtWidgets.QShortcut(QtGui.QKeySequence(key), self, activated=fn)
+        # F1 is the primary Project key (top row, next to Esc, no Fn needed on
+        # Windows 10+ laptops). F5 stays as an alias. Qt has no F1 conflict
+        # here: Main is a QWidget (no QMainWindow help action), no WhatsThis
+        # or help shortcut is registered, and Qt's What's This is Shift+F1.
         # Alternate Project shortcut: laptops whose function row sends media keys
-        # (volume/speaker) for bare F5 never deliver F5 to the app, so Ctrl+Enter
-        # (main keyboard, no Fn layer) projects instead. Plain Enter stays lookup.
+        # (volume/speaker) for bare F1/F5 never deliver F1/F5 to the app, so
+        # Ctrl+Enter (main keyboard, no Fn layer) projects instead. Plain Enter
+        # stays lookup.
         for seq in ("Ctrl+Return", "Ctrl+Enter"):
             QtWidgets.QShortcut(QtGui.QKeySequence(seq), self, activated=self.project)
         QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_PageDown), self, activated=lambda: self.step(1))
@@ -2114,7 +2120,7 @@ class Main(QtWidgets.QWidget):
         # A timer live on the projector is never "the same picture" as a
         # verse/song, even though set_timer() left self.proj.ref/body
         # untouched (they still describe the last verse/song). Without
-        # this check, coming back from the Timer tab and pressing F5 on
+        # this check, coming back from the Timer tab and pressing F1 on
         # the already-selected verse cut instantly through a stale
         # same-picture shortcut.
         live_timer = bool(getattr(self.proj, "timer_snap", None) is not None)

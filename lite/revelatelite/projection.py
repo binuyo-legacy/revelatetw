@@ -911,7 +911,7 @@ class PreviewView(SlideView):
 
 class ProjectionWindow(SlideView):
     offRequested = QtCore.pyqtSignal()       # Esc pressed while this window has the keyboard
-    projectRequested = QtCore.pyqtSignal()   # F5 pressed while this window has the keyboard
+    projectRequested = QtCore.pyqtSignal()   # F1 (or F5 / Ctrl+Enter) pressed while this window has the keyboard
     closedByUser = QtCore.pyqtSignal()       # window closed some other way (Alt+F4, taskbar)
     frameChanged = QtCore.pyqtSignal()       # anything the window would repaint (content, style, transition frame, show/hide)
 
@@ -1182,15 +1182,15 @@ class ProjectionWindow(SlideView):
             p.setClipRegion(reg)
             p.drawPixmap(r, new)
 
-    # ---- keys: the full-screen window takes the keyboard, so Esc/F5 must work here too ----
+    # ---- keys: the full-screen window takes the keyboard, so Esc/F1 must work here too ----
     def keyPressEvent(self, e):
         mods = e.modifiers() & ~QtCore.Qt.KeypadModifier
         if e.key() == QtCore.Qt.Key_Escape:
             self.offRequested.emit()
-        elif e.key() == QtCore.Qt.Key_F5:
+        elif e.key() in (QtCore.Qt.Key_F1, QtCore.Qt.Key_F5):
             self.projectRequested.emit()
         elif mods & QtCore.Qt.ControlModifier and e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
-            # Alternate Project shortcut for laptops whose bare F5 is a media key
+            # Alternate Project shortcut for laptops whose bare F1/F5 is a media key
             # (volume/speaker) intercepted before the app ever sees it.
             self.projectRequested.emit()
         else:

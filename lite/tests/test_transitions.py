@@ -263,11 +263,11 @@ class WithQt(unittest.TestCase):
         self.assertIn("John 3:16", w.preview.ref)
         self.assertEqual(w.preview.body, w.proj.body)
         self.assertEqual(w.preview.ref, w.proj.ref)
-        # timer is still ticking live off-tab before F5
+        # timer is still ticking live off-tab before F1
         self.assertIsNotNone(w.proj.timer_snap)
-        # F5 must animate Timer -> verse, not cut via stale same-picture
+        # F1 must animate Timer -> verse, not cut via stale same-picture
         w.project()
-        self.assertTrue(w.proj.transitioning, "Timer->verse F5 cut instantly, no transition ran")
+        self.assertTrue(w.proj.transitioning, "Timer->verse F1 cut instantly, no transition ran")
         self.assertIsNotNone(w.proj._tx)
         self.assertFalse(w.proj._tx.get("effect") == "cut")
         w.proj.finish_transition()

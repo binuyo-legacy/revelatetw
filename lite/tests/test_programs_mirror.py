@@ -75,7 +75,7 @@ class ProgramsMirror(unittest.TestCase):
         self.assertIs(w.rm_b.parentWidget(), side)
         names = [b.text() for b in side.findChildren(QtWidgets.QPushButton)
                  if b in (w.project_b, w.blank_b, w.up_b, w.down_b, w.rm_b)]
-        self.assertEqual(set(names), {"Project (F5)", "Project Off (Esc)", "Move up", "Move down", "Remove"})
+        self.assertEqual(set(names), {"Project (F1)", "Project Off (Esc)", "Move up", "Move down", "Remove"})
         # not under the preview any more
         self.assertLess(w.project_b.x() + w.project_b.width(), w.tv_frame.mapTo(w, QtCore.QPoint(0, 0)).x())
         self.assertEqual(w.project_b.objectName(), "primary")

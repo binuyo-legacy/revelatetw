@@ -127,6 +127,19 @@ class PreviewQt(unittest.TestCase):
         self.assertFalse(w.blank_b.isEnabled())
         w.close()
 
+    def test_f1_works_from_the_projector_window(self):
+        from PyQt5 import QtCore, QtGui, QtTest
+        w = self.make()
+        w.lookup("Rom 8:28")
+        w.project()
+        self.assertTrue(w.proj.isVisible())
+        w.lookup("John 3:16")
+        QtTest.QTest.keyClick(w.proj, QtCore.Qt.Key_F1)
+        self.assertIn("John 3:16", w.proj.ref)
+        QtTest.QTest.keyClick(w.proj, QtCore.Qt.Key_Escape)
+        self.assertFalse(w.proj.isVisible())
+        w.close()
+
     def test_closing_projector_window_resets_live_state(self):
         w = self.make()
         w.lookup("Rom 8:28")

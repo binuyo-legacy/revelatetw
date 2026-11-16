@@ -92,7 +92,7 @@ class ButtonFocus(unittest.TestCase):
         self.assertEqual(w.blank_b.text(), "Project Off (Esc)")
         self.assertNotEqual(w.blank_b.focusPolicy(), QtCore.Qt.NoFocus)
         named = {b.text(): b for b in w.findChildren(QtWidgets.QPushButton)}
-        for label in ("Look up", "Add Bible...", "Move up", "Search", "Project Off (Esc)", "Project (F5)"):
+        for label in ("Look up", "Add Bible...", "Move up", "Search", "Project Off (Esc)", "Project (F1)"):
             self.assertIn(label, named, label)
             self.assertIs(type(named[label]), QtWidgets.QPushButton)
         from revelatelite import bibleimport
