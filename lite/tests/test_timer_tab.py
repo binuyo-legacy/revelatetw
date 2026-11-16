@@ -824,14 +824,15 @@ class AnalogLayoutSafety(unittest.TestCase):
                                                      speaker=name, show_speaker=False).snapshot())
                         self.assertFalse(v2.snapshot(QtCore.QSize(w, h)).isNull(), (w, h, mode, style))
 
-    def test_speaker_pill_hugs_text_with_padding_no_sheen(self):
+    def test_speaker_pill_hugs_text_with_gradient_sheen_not_bar(self):
         # Glass pill regression (user screenshot of commit 764df96): the
         # pill was as wide as the whole remaining band (far past the name),
         # the name text touched/overhung the pill's left edge, and the
         # frosted highlight rendered as a thick bar covering the text.
         # Geometry rule now: pill width follows the measured name text plus
         # symmetric padding, text is drawn inside the pill with padding on
-        # both sides, and no highlight sheen is painted at all.
+        # both sides, and the sheen is a subtle low-alpha QLinearGradient
+        # behind the text, never a solid bar over it.
         import re as _re
         from PyQt5 import QtCore
         from revelatelite import projection as proj
