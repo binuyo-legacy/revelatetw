@@ -549,14 +549,38 @@ class SlideView(QtWidgets.QWidget):
                 total_w = sum(advances) or plate_inner_w
                 cx0 = w / 2.0 - total_w / 2.0
                 y_mid = h * 0.30 + h * 0.19
+                slot_top = y_mid - digit_h / 2.0
+                slot_bottom = y_mid + digit_h / 2.0
                 x = cx0
-                for i, (nw, old, off) in enumerate(frames):
+                for i, frame in enumerate(frames):
                     if i >= len(text):
                         break
+                    nw, old = frame[0], frame[1]
+                    new_off = frame[2] if len(frame) > 2 else 0.0
+                    old_off = frame[3] if len(frame) > 3 else 0.0
                     aw = advances[i] if i < len(advances) else 0
-                    cell = QtCore.QRectF(x - off * 0.0, y_mid - digit_h / 2.0 + off * digit_h,
-                                         max(aw, 1), digit_h)
-                    p.drawText(cell, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, str(nw))
+                    # per-digit slot: horizontal span is this column only, and
+                    # the clip band runs the full slide height so a glyph can
+                    # fall in/out vertically but never bleed into a neighbour
+                    # column or past the top/bottom of the frame
+                    slot = QtCore.QRectF(x, 0.0, max(aw, 1), h)
+                    if old == nw:
+                        glyphs = ((nw, new_off, slot),)
+                    else:
+                        # new glyph falls onto its slot (centre offset <= 0,
+                        # so it can never paint below the slot bottom); the
+                        # old glyph drops out and is clipped at the slot
+                        # bottom, so it never overlaps the row below
+                        exit_clip = QtCore.QRectF(x, 0.0, max(aw, 1),
+                                                  min(slot_bottom, h))
+                        glyphs = ((old, old_off, exit_clip), (nw, new_off, slot))
+                    for glyph, off, clip in glyphs:
+                        cell = QtCore.QRectF(x, slot_top + off * digit_h,
+                                             max(aw, 1), digit_h)
+                        p.save()
+                        p.setClipRect(clip)
+                        p.drawText(cell, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, str(glyph))
+                        p.restore()
                     x += aw
             except Exception:
                 p.drawText(time_rect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignVCenter, text)
