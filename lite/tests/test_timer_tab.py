@@ -608,3 +608,45 @@ class AnalogLayoutSafety(unittest.TestCase):
         v.set_timer(snap)
         self.assertFalse(v.snapshot(QtCore.QSize(1280, 720)).isNull())
 
+
+# ---- falling-digit geometry regression (clipping fix) ----
+def test_falling_new_glyph_never_below_slot():
+    from revelatelite.timer import falling_centers, FALL_NEW_MIN
+    for old, new in [("43:36", "43:35"), ("00:00", "00:01"),
+                     ("59:59", "00:00"), ("99:59", "00:00")]:
+        for t in range(0, 354, 7):
+            for nw, o, new_off, old_off in falling_centers(old, new, t):
+                assert new_off <= 0.0, (old, new, t, new_off)
+                assert new_off >= FALL_NEW_MIN
+
+def test_falling_old_glyph_bounded_and_settled():
+    from revelatelite.timer import falling_centers, FALL_OLD_MAX, FALL_DURATION_MS
+    for old, new in [("43:36", "43:35"), ("59:59", "00:00")]:
+        for t in range(0, 354, 7):
+            for nw, o, new_off, old_off in falling_centers(old, new, t):
+                assert 0.0 <= old_off <= FALL_OLD_MAX
+        end = falling_centers(old, new, FALL_DURATION_MS)
+        assert all(no == 0.0 and oo == 0.0 for _nw, _o, no, oo in end)
+
+def test_falling_each_digit_position_animated():
+    from revelatelite.timer import falling_centers
+    # seconds: only last column moves; minute: tens-of-minutes column moves
+    frames = falling_centers("43:39", "43:40", 175)
+    moved = [i for i, (nw, o, no, oo) in enumerate(frames) if no != 0.0 or oo != 0.0]
+    assert moved, "expected at least one changed column mid-fall"
+    frames = falling_centers("59:59", "00:00", 175)
+    moved = [i for i, (nw, o, no, oo) in enumerate(frames) if no != 0.0 or oo != 0.0]
+    assert len(moved) >= 2
+
+def test_falling_bottom_extent_is_slot_for_new_glyph():
+    # the new glyph's cell bottom never exceeds the row bottom slot line
+    from revelatelite.timer import falling_centers, FALL_NEW_MIN
+    digit_h = 100.0
+    slot_top = 0.0
+    slot_bottom = digit_h
+    for t in range(0, 354, 7):
+        for nw, o, new_off, old_off in falling_centers("43:36", "43:35", t):
+            assert slot_top + (1.0 + new_off) * digit_h <= slot_bottom + 1e-9
+            assert slot_top + (1.0 + old_off) * digit_h <= slot_bottom + FALL_NEW_MIN * -1 * digit_h + 1e-9
+
+
