@@ -27,6 +27,9 @@ QFrame#card {{ background:{alt}; border:1px solid {bcard}; border-radius:{rad}px
 QFrame#card QLabel, QFrame#card QCheckBox {{ background:transparent; }}
 QGroupBox {{ background:{alt}; border:1px solid {bcard}; border-radius:{rad}px; margin-top:14px; padding:10px 8px 8px 8px; }}
 QGroupBox::title {{ subcontrol-origin:margin; subcontrol-position:top left; left:12px; padding:0 6px; color:{muted}; background:{bg}; }}
+/* Settings group headers (BIBLE / SONGS / GENERAL): dark charcoal band, bold caps, gold underline. */
+QGroupBox#settingsGroup {{ background:{alt}; border:1px solid {bcard}; border-radius:{rad}px; margin-top:16px; padding:14px 8px 8px 8px; }}
+QGroupBox#settingsGroup::title {{ subcontrol-origin:margin; subcontrol-position:top left; left:10px; padding:2px 10px 2px 10px; color:{accent}; background:{bg}; font-weight:800; font-size:{emph}px; border:1px solid {border}; border-bottom:2px solid {accent}; border-radius:4px; }}
 
 QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {{ background:{inp}; border:1px solid {bc}; padding:6px 8px; border-radius:{rc}px;
     selection-background-color:{accent}; selection-color:{on}; }}

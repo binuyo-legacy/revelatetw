@@ -86,6 +86,42 @@ class SettingsNoHScroll(unittest.TestCase):
         self.assertTrue(w.tsw_cb.toolTip())
         w.close()
 
+
+    def test_settings_grouped_bible_songs_general(self):
+        w = self.make()
+        page = w.settings_scroll.widget()
+        groups = {g.title(): g for g in page.findChildren(QtWidgets.QGroupBox) if g.title() in ("BIBLE", "SONGS", "GENERAL")}
+        self.assertEqual(set(groups), {"BIBLE", "SONGS", "GENERAL"})
+        # Order in the scroll column: BIBLE first, then SONGS, then GENERAL.
+        titles_in_layout = []
+        for i in range(page.layout().count()):
+            item = page.layout().itemAt(i)
+            if item is not None and item.widget() is not None:
+                titles_in_layout.append(item.widget().title() if hasattr(item.widget(), "title") else "")
+        self.assertLess(titles_in_layout.index("BIBLE"), titles_in_layout.index("SONGS"))
+        self.assertLess(titles_in_layout.index("SONGS"), titles_in_layout.index("GENERAL"))
+        # Scope checks: verse style + show-ref only in BIBLE; song style/custom only in SONGS.
+        def labels_of(title):
+            form = groups[title].layout()
+            out = []
+            for r in range(form.rowCount()):
+                item = form.itemAt(r, 0)
+                if item is not None and item.widget() is not None:
+                    out.append(item.widget().text())
+            return out
+        self.assertIn("Bible verse style", labels_of("BIBLE"))
+        self.assertIn("Song slide style", labels_of("SONGS"))
+        general_labels = " ".join(labels_of("GENERAL"))
+        self.assertIn("Colours", general_labels)
+        self.assertIn("Text outline", general_labels)
+        self.assertIn("Screen effect", general_labels)
+        # Every named control still exists exactly once.
+        names = ["verse_theme_lw", "song_theme_lw", "theme_cb", "outline_cb", "show_ref_cb",
+                 "bgkind_cb", "tfx_cb", "pon_cb", "poff_cb", "display_cb", "font_cb", "size_sp"]
+        for name in names:
+            self.assertTrue(hasattr(w, name), name)
+        w.close()
+
     def test_preview_tv_unchanged_size(self):
         w = self.make()
         before = (w.tv_frame.width(), w.tv_frame.height())
@@ -98,9 +134,15 @@ class SettingsNoHScroll(unittest.TestCase):
 
     def test_screen_effect_label_is_plain(self):
         w = self.make()
-        form = w.settings_scroll.widget().layout()
-        labels = [form.itemAt(r, 0).widget().text() for r in range(form.rowCount())
-                  if form.itemAt(r, 0) is not None and form.itemAt(r, 0).widget() is not None]
+        # Settings is now three grouped forms (BIBLE, SONGS, GENERAL); Screen effect lives in GENERAL.
+        page = w.settings_scroll.widget()
+        forms = [g.layout() for g in page.findChildren(QtWidgets.QGroupBox) if isinstance(g.layout(), QtWidgets.QFormLayout)]
+        self.assertEqual({g.title() for g in page.findChildren(QtWidgets.QGroupBox) if g.title() in ("BIBLE", "SONGS", "GENERAL")},
+                         {"BIBLE", "SONGS", "GENERAL"})
+        labels = []
+        for form in forms:
+            labels += [form.itemAt(r, 0).widget().text() for r in range(form.rowCount())
+                       if form.itemAt(r, 0) is not None and form.itemAt(r, 0).widget() is not None]
         self.assertIn("Screen effect", labels)
         self.assertFalse(any("Next / Previous" in t or "(Next" in t for t in labels))
         # The Next/Previous hint still lives on the switch checkbox tooltip, not the label.
@@ -111,19 +153,26 @@ class SettingsNoHScroll(unittest.TestCase):
         w = self.make()
         sc = w.settings_scroll
         page = sc.widget()
-        form = page.layout()
+        # Grouped Settings: check every group's form for the small label->field gap.
+        forms = [g.layout() for g in page.findChildren(QtWidgets.QGroupBox) if isinstance(g.layout(), QtWidgets.QFormLayout)]
+        self.assertTrue(forms)
+        form = forms[0]
         gap = form.horizontalSpacing()
         self.assertGreaterEqual(gap, 8)
         self.assertLessEqual(gap, 16)
         pairs = 0
-        for r in range(form.rowCount()):
-            lab, fld = form.itemAt(r, 0), form.itemAt(r, 1)
-            if lab is None or fld is None or lab.widget() is None or fld.widget() is None:
-                continue
-            label, field = lab.widget(), fld.widget()
-            self.assertEqual(label.width(), field.x() - label.x() - gap, label.text())
-            self.assertLessEqual(field.x() + field.width(), sc.viewport().width())
-            pairs += 1
+        for form in forms:
+            gap = form.horizontalSpacing()
+            self.assertGreaterEqual(gap, 8)
+            self.assertLessEqual(gap, 16)
+            for r in range(form.rowCount()):
+                lab, fld = form.itemAt(r, 0), form.itemAt(r, 1)
+                if lab is None or fld is None or lab.widget() is None or fld.widget() is None:
+                    continue
+                label, field = lab.widget(), fld.widget()
+                self.assertEqual(label.width(), field.x() - label.x() - gap, label.text())
+                self.assertLessEqual(field.x() + field.width(), sc.viewport().width())
+                pairs += 1
         self.assertGreaterEqual(pairs, 10)
         w.close()
 

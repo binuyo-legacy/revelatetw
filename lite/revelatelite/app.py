@@ -375,7 +375,32 @@ class Main(QtWidgets.QWidget):
         self._sync_timer_mode_controls()
 
         ow = QtWidgets.QWidget()
-        og = QtWidgets.QFormLayout(ow)
+        _settings_layout = QtWidgets.QVBoxLayout(ow)
+        _settings_layout.setSpacing(0)
+        _settings_layout.setContentsMargins(0, 0, 0, 0)
+        # Three labeled groups in one scrollable column (BIBLE, SONGS, GENERAL).
+        # Controls are only regrouped by scope; behaviour is unchanged.
+        self.settings_groups = {}
+        _group_specs = (
+            ("BIBLE", "Bible verse configuration only."),
+            ("SONGS", "Song slide configuration only."),
+            ("GENERAL", "Applies to both verses and songs (and the app)."),
+        )
+        for _title, _tip in _group_specs:
+            _gb = QtWidgets.QGroupBox(_title)
+            _gb.setObjectName("settingsGroup")
+            _gb.setToolTip(_tip)
+            _gf = QtWidgets.QFormLayout(_gb)
+            _gf.setSpacing(4)
+            _settings_layout.addWidget(_gb)
+            self.settings_groups[_title] = _gf
+        og = self.settings_groups["GENERAL"]   # default until grouped below
+        bible_og = self.settings_groups["BIBLE"]
+        songs_og = self.settings_groups["SONGS"]
+        general_og = self.settings_groups["GENERAL"]
+        # Order: BIBLE first, then SONGS, then GENERAL (operator workflow).
+        # Re-adding in this order would misplace Projector screen; the
+        # widgets are added to their group forms below in that order.
         self.display_cb = QtWidgets.QComboBox()
         self.theme_cb = QtWidgets.QComboBox()
         self.theme_cb.addItems(["navy", "black", "gold"])
@@ -439,11 +464,11 @@ class Main(QtWidgets.QWidget):
         self.verse_theme_lbl = QtWidgets.QLabel(versethemes.blurb(self.st["verse_theme"]))
         self.verse_theme_lbl.setObjectName("hint")
         self.verse_theme_lbl.setWordWrap(True)
-        og.addRow("Bible verse style", self.verse_theme_lw)
-        og.addRow("", self.verse_theme_lbl)
-        og.addRow("Song slide style", self.song_theme_lw)
-        og.addRow("", self.song_theme_lbl)
-        og.addRow("", self._build_song_custom())
+        bible_og.addRow("Bible verse style", self.verse_theme_lw)
+        bible_og.addRow("", self.verse_theme_lbl)
+        songs_og.addRow("Song slide style", self.song_theme_lw)
+        songs_og.addRow("", self.song_theme_lbl)
+        songs_og.addRow("", self._build_song_custom())
         og.addRow("Colours", self.theme_cb)
         self.theme_cb.setToolTip("Fallback colours for blank-style verse slides that set no colour of their own. "
                                  "Custom colours and the verse and song styles above override it per slide: "
@@ -455,7 +480,7 @@ class Main(QtWidgets.QWidget):
         og.addRow("Text outline", self.outline_cb)
         og.addRow("", ob)
         og.addRow("", self.outline_lbl)
-        og.addRow("", self.show_ref_cb)
+        bible_og.addRow("", self.show_ref_cb)
         # --- background: solid colour, gradient, or a picture ---
         self.bgkind_cb = QtWidgets.QComboBox()
         for k, label in bgm.KINDS:
@@ -934,7 +959,10 @@ class Main(QtWidgets.QWidget):
             for cb in root.findChildren(QtWidgets.QComboBox):
                 cb.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
                 cb.setMinimumContentsLength(8)
-            for lay in [root.layout()] + [g.layout() for g in root.findChildren(QtWidgets.QGroupBox)]:
+            _lays = [root.layout()] if root.layout() is not None else []
+            _lays += [g.layout() for g in root.findChildren(QtWidgets.QGroupBox) if g.layout() is not None]
+            # Nested forms (song custom card) plus group forms already counted once.
+            for lay in _lays:
                 if isinstance(lay, QtWidgets.QFormLayout):
                     lay.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
                     lay.setLabelAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
