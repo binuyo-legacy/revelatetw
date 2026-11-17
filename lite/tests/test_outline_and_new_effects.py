@@ -114,6 +114,81 @@ class Outline(unittest.TestCase):
         v.set_content("John 3:16", "For God so loved the world")
         return v.snapshot(QtCore.QSize(320, 180)).toImage()
 
+    def test_outline_cache_hit_on_repeated_verse_paint(self):
+        """A verse paint draws its reference line and its body: both rings must survive one
+        paint instead of evicting each other, so a second identical paint renders no ring."""
+        qapp()
+        v = SlideView()
+        v.resize(960, 540)
+        v.set_style("navy", 100, True, "Georgia", False, "", "", None,
+                    outline_on=True, outline_color="", outline_px=6)
+        v.set_content("John 3:16",
+                      "For God so loved the world that he gave his one and only Son, that whoever "
+                      "believes in him shall not perish but have eternal life. Amen.")
+        pm = QtGui.QPixmap(960, 540)
+        p = QtGui.QPainter(pm)
+        v._draw(p, v.rect())
+        p.end()
+        first = v._oc_renders
+        self.assertGreater(first, 0)                          # first paint renders the rings
+        self.assertGreaterEqual(len(v._oc), 2)                # body and reference coexist
+        v._oc_renders = 0
+        for _ in range(3):
+            painting = QtGui.QPainter(pm)
+            v._draw(painting, v.rect())
+            painting.end()
+        self.assertEqual(v._oc_renders, 0)                    # then every repaint blits
+        self.assertEqual(first <= 8, True)
+
+    def test_outline_cache_hit_on_repeated_song_paint(self):
+        """Song slides call _text per title/line block: the cache must hold them all at once."""
+        qapp()
+        v = SlideView()
+        v.resize(960, 540)
+        v.set_style("navy", 100, True, "Georgia", False, "", "", None,
+                    outline_on=True, outline_color="", outline_px=6)
+        v.set_content("Song",
+                      "Amazing grace how sweet the sound that saved a wretch like me",
+                      "", meta=("Amazing Grace", "John Newton", "Verse", 1, 3))
+        pm = QtGui.QPixmap(960, 540)
+        p = QtGui.QPainter(pm)
+        v._draw(p, v.rect())
+        p.end()
+        first = v._oc_renders
+        self.assertGreater(first, 0)
+        self.assertGreaterEqual(len(v._oc), 1)
+        v._oc_renders = 0
+        for _ in range(3):
+            painting = QtGui.QPainter(pm)
+            v._draw(painting, v.rect())
+            painting.end()
+        self.assertEqual(v._oc_renders, 0)
+
+    def test_translated_paint_uses_cache_and_is_identical(self):
+        """The real projector and the Programs mirror paint with translate(r.x, r.y). Two
+        identical translated paints must be byte-identical and the second must blit (no ring
+        render), so the mirror no longer stamps the ring every repaint."""
+        qapp()
+        v = SlideView()
+        v.resize(400, 300)
+        v.set_style("navy", 100, False, "Georgia", False, "", "", None,
+                    outline_on=True, outline_color="", outline_px=5)
+        v.set_content("John 3:16", "Test outline text here")
+        def render_translated():
+            img = QtGui.QImage(400, 300, QtGui.QImage.Format_RGB32)
+            img.fill(QtGui.QColor("#000000"))
+            q = QtGui.QPainter(img)
+            q.translate(50, 30)
+            q.setClipRect(QtCore.QRect(0, 0, 400, 300))
+            v._draw(q, QtCore.QRect(0, 0, 400, 300))
+            q.end()
+            return img
+        a = render_translated()
+        v._oc_renders = 0
+        b = render_translated()
+        self.assertEqual(v._oc_renders, 0)
+        self.assertEqual(a, b)
+
     def test_outline_changes_pixels_only_when_on(self):
         off1 = self._render()
         off2 = self._render(outline_on=False, outline_color="#ff0000", outline_px=9)

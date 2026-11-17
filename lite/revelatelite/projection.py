@@ -12,12 +12,20 @@ def _font_key(font):
 
 
 def _transform_key(painter):
-    """None unless the painter has the plain identity transform (the cached path needs it)."""
+    """None unless the painter transform keeps glyph shapes intact (identity or pure-translation).
+
+    A pure translation (the projector paints its frame with translate(r.x, r.y) and clips) used to
+    fall back to the per-stamp ring, so the one cache entry was rebuilt on every repaint. With
+    translation allowed the ring pixmap is blitted at the translated position, four stamps saved
+    per text. Scale, shear and rotation still stamp, because the ring would stretch otherwise.
+    """
     try:
         tr = painter.transform()
     except Exception:
         return None
-    if not (tr.isIdentity() or tr.isTranslate() or tr.isScale()):
+    # pure translation only (identity is the zero-translation case of the same check)
+    if not (abs(tr.m11() - 1.0) < 1e-9 and abs(tr.m22() - 1.0) < 1e-9
+            and abs(tr.m12()) < 1e-9 and abs(tr.m21()) < 1e-9):
         return None
     return (round(float(tr.m11()), 4), round(float(tr.m12()), 4), round(float(tr.m21()), 4),
             round(float(tr.m22()), 4), round(float(tr.m31()), 4), round(float(tr.m32()), 4))
@@ -31,9 +39,9 @@ def _outline_pixmap(rect, flags, text, font, pen_color, offsets, hints, dpr):
     once onto a pixmap the size of the text box plus a margin of max-offset+2, and the caller
     blits that one pixmap per paint. The central glyph pixels are NOT in this layer: the
     caller draws the real text on top, exactly like the old ring stamp then the real text.
-    The transform is NOT applied to the pixmap; one drawPixmap blits it from the device into
-    the paint rect (the pixmap is sized in device pixels, so the final image pixel size is
-    unchanged).
+    The caller blits it at rect plus the painter translation (pure-translation transforms only);
+    glyph shape never changes under translation, so this stays pixel-identical (sized in device
+    pixels). Scale/shear/rotation never reach this helper: they stamp instead.
     """
     pad = int(max(abs(dx) for dx, _ in offsets) + 2) if offsets else 2
     w, h = int(rect.width()) + 2 * pad, int(rect.height()) + 2 * pad
@@ -229,11 +237,9 @@ class SlideView(QtWidgets.QWidget):
         self.timer_snap = None                    # timer.py snapshot dict, or None (verses/songs unchanged)
         self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
-        self._outline_cache_key = None
-        self._outline_cache_pixmap = None
-        self._outline_cache_pad = 0
-        self._outline_cache_size = None
-        self._outline_cache_off_count = 0
+        self._oc = {}                      # outline ring cache: key -> (pixmap, pad)
+        self._oc_order = []                # fifo order; each slide holds only a handful of texts
+        self._oc_renders = 0               # live count of ring pixmaps built (test hook)
         self._fall_prev_text = ""
         self._fall_old_text = ""
         self._fall_frames = None
@@ -313,11 +319,9 @@ class SlideView(QtWidgets.QWidget):
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
         self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
         self.bg_spec = bg_spec or background.spec_from({})
-        self._outline_cache_key = None
-        self._outline_cache_pixmap = None
-        self._outline_cache_pad = 0
-        self._outline_cache_size = None
-        self._outline_cache_off_count = 0
+        self._oc = {}                      # outline ring cache: key -> (pixmap, pad)
+        self._oc_order = []                # fifo order; each slide holds only a handful of texts
+        self._oc_renders = 0               # live count of ring pixmaps built (test hook)
         self.update()
 
     # ---- drawing ----
@@ -342,14 +346,19 @@ class SlideView(QtWidgets.QWidget):
         code ran 8 to 16 full text layouts on every paint, which is why the output stuttered on a
         slow PC. The cached ring contains only the ring offsets, never the centre, so the real text
         is still drawn last on top exactly as before.
-        Non-identity painter transforms and oversized boxes fall back to the old stamping.
+        The cache holds every distinct text of the slide (body, reference, song title and
+        lines) so a verse/song paint never rebuilds a ring that the next text would evict.
+        Pure-translation painter transforms (the projector and the Programs mirror both paint
+        with translate(r.x, r.y)) blit at the translated position; scale/shear/rotation and
+        oversized boxes fall back to the old stamping. The cache identity is per-slide, never
+        shared across slides: a new slide always renders its own rings once, then blits.
         """
         if self.outline_on:
             oc = QtGui.QColor(settings.resolve_outline(fg, self.outline_color))
-            key = _transform_key(p)
             size = (int(rect.width()), int(rect.height()))
             radius = settings.outline_pixels(h, self.outline_px)
             offsets = settings.outline_offsets(radius)
+            key = _transform_key(p)
             if key is not None:
                 hsp = int(round(float(p.device().devicePixelRatioF() if hasattr(p.device(), "devicePixelRatioF") else 1.0)))
                 if hsp <= 0:
@@ -362,23 +371,25 @@ class SlideView(QtWidgets.QWidget):
                 if not (0.5 <= dpr <= 4.0):
                     dpr = 1.0
                 font = p.font()
+                # translation only: scale/shear/rotation change glyph shape, so they stamp
+                txr, tyr = key[4], key[5]
                 cache_key = (text, int(flags), size, _font_key(font), oc.name(),
-                             int(radius), int(p.renderHints()), dpr, key)
-                if (self._outline_cache_key != cache_key or self._outline_cache_pixmap is None
-                        or self._outline_cache_size != size):
-                    got = _outline_pixmap(rect, flags, text, font, oc.name(), offsets,
-                                          int(p.renderHints()), dpr)
-                    if got is not None:
-                        self._outline_cache_pixmap, self._outline_cache_pad = got
-                        self._outline_cache_key = cache_key
-                        self._outline_cache_size = size
-                        self._outline_cache_off_count = len(offsets)
-                if self._outline_cache_key == cache_key and self._outline_cache_pixmap is not None:
-                    # blit the cached ring, do NOT load offsets/pixmap from cache for the old path if needed
-                    p.drawPixmap(int(rect.x()) - self._outline_cache_pad, int(rect.y()) - self._outline_cache_pad,
-                                 self._outline_cache_pixmap)
+                             int(radius), int(p.renderHints()), dpr, txr, tyr)
+                ce = self._oc.get(cache_key)
+                if ce is None:
+                    self._oc_renders += 1
+                    ce = _outline_pixmap(rect, flags, text, font, oc.name(), offsets,
+                                         int(p.renderHints()), dpr)
+                    if ce is not None:
+                        self._oc[cache_key] = ce
+                        self._oc_order.append(cache_key)
+                        if len(self._oc_order) > 16:
+                            oldk = self._oc_order.pop(0)
+                            self._oc.pop(oldk, None)
+                if ce is not None:
+                    pm, pad = ce
+                    p.drawPixmap(int(rect.x() + txr) - pad, int(rect.y() + tyr) - pad, pm)
                 else:
-                    # fallback: the old stamping (identity transform, or pixmap refused)
                     keep = p.pen()
                     p.setPen(oc)
                     for dx, dy in offsets:
