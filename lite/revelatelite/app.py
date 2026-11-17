@@ -445,6 +445,9 @@ class Main(QtWidgets.QWidget):
         og.addRow("", self.song_theme_lbl)
         og.addRow("", self._build_song_custom())
         og.addRow("Colours", self.theme_cb)
+        self.theme_cb.setToolTip("Fallback colours for blank-style verse slides that set no colour of their own. "
+                                 "Custom colours and the verse and song styles above override it per slide: "
+                                 "on a slide that already sets colours it will look like it does nothing.")
         og.addRow("Text size", self.size_sp)
         og.addRow("Font", self.font_cb)
         og.addRow("", self.bold_cb)

@@ -6,6 +6,56 @@ from revelatetw.ui_tokens import COLORS as C
 from . import background, layout, settings, songthemes, timer as timermod, transitions, versethemes
 
 
+def _font_key(font):
+    return (font.family(), int(font.pixelSize()), int(font.pointSize()), bool(font.bold()),
+            bool(font.italic()), float(font.letterSpacing()), int(font.weight()), int(font.style()))
+
+
+def _transform_key(painter):
+    """None unless the painter has the plain identity transform (the cached path needs it)."""
+    try:
+        tr = painter.transform()
+    except Exception:
+        return None
+    if not (tr.isIdentity() or tr.isTranslate() or tr.isScale()):
+        return None
+    return (round(float(tr.m11()), 4), round(float(tr.m12()), 4), round(float(tr.m21()), 4),
+            round(float(tr.m22()), 4), round(float(tr.m31()), 4), round(float(tr.m32()), 4))
+
+
+def _outline_pixmap(rect, flags, text, font, pen_color, offsets, hints, dpr):
+    """(pixmap, pad) for one _text outline layer, or None.
+
+    The old paint stamped the wrapped text once per ring point (up to 16 layouts per paint),
+    so every repaint and every transition frame paid for all of them. This paints the ring
+    once onto a pixmap the size of the text box plus a margin of max-offset+2, and the caller
+    blits that one pixmap per paint. The central glyph pixels are NOT in this layer: the
+    caller draws the real text on top, exactly like the old ring stamp then the real text.
+    The transform is NOT applied to the pixmap; one drawPixmap blits it from the device into
+    the paint rect (the pixmap is sized in device pixels, so the final image pixel size is
+    unchanged).
+    """
+    pad = int(max(abs(dx) for dx, _ in offsets) + 2) if offsets else 2
+    w, h = int(rect.width()) + 2 * pad, int(rect.height()) + 2 * pad
+    if w <= 0 or h <= 0 or w > 8192 or h > 8192:
+        return None
+    pm = QtGui.QPixmap(int(w * dpr), int(h * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(QtGui.QColor(0, 0, 0, 0))
+    q = QtGui.QPainter(pm)
+    try:
+        q.setRenderHints(QtGui.QPainter.RenderHints(hints))
+    except Exception:
+        pass
+    q.setFont(font)
+    q.setPen(QtGui.QPen(QtGui.QColor(pen_color), 1))
+    inner = QtCore.QRect(pad, pad, int(rect.width()), int(rect.height()))
+    for dx, dy in offsets:
+        q.drawText(inner.translated(dx, dy), flags, text)
+    q.end()
+    return pm, pad
+
+
 def _wrapped_lines(font, text, width):
     """(longest line width, total height, number of lines) word-wrapped into width."""
     if width <= 0:
@@ -179,6 +229,11 @@ class SlideView(QtWidgets.QWidget):
         self.timer_snap = None                    # timer.py snapshot dict, or None (verses/songs unchanged)
         self.meta = None                         # (title, artist, section, number, total) for song slides, else None
         self._bgp = background.Painter()
+        self._outline_cache_key = None
+        self._outline_cache_pixmap = None
+        self._outline_cache_pad = 0
+        self._outline_cache_size = None
+        self._outline_cache_off_count = 0
         self._fall_prev_text = ""
         self._fall_old_text = ""
         self._fall_frames = None
@@ -258,6 +313,11 @@ class SlideView(QtWidgets.QWidget):
         self.theme, self.scale, self.show_ref = theme, scale, show_ref
         self.font_family, self.bold, self.bg_color, self.text_color = font_family, bold, bg_color, text_color
         self.bg_spec = bg_spec or background.spec_from({})
+        self._outline_cache_key = None
+        self._outline_cache_pixmap = None
+        self._outline_cache_pad = 0
+        self._outline_cache_size = None
+        self._outline_cache_off_count = 0
         self.update()
 
     # ---- drawing ----
@@ -275,15 +335,61 @@ class SlideView(QtWidgets.QWidget):
 
     def _text(self, p, rect, flags, text, fg, h):
         """Draw text in the current font/pen colour, with an outline when switched on.
+
         The outline is the same text stamped in a ring around the real one (plain painting, works for
-        wrapped text and on any background), then the text itself on top."""
+        wrapped text and on any background), then the text itself on top. The ring is rendered ONCE
+        onto a small pixmap and blitted per paint (see _outline_pixmap in the module head): the old
+        code ran 8 to 16 full text layouts on every paint, which is why the output stuttered on a
+        slow PC. The cached ring contains only the ring offsets, never the centre, so the real text
+        is still drawn last on top exactly as before.
+        Non-identity painter transforms and oversized boxes fall back to the old stamping.
+        """
         if self.outline_on:
             oc = QtGui.QColor(settings.resolve_outline(fg, self.outline_color))
-            keep = p.pen()
-            p.setPen(oc)
-            for dx, dy in settings.outline_offsets(settings.outline_pixels(h, self.outline_px)):
-                p.drawText(rect.translated(dx, dy), flags, text)
-            p.setPen(keep)
+            key = _transform_key(p)
+            size = (int(rect.width()), int(rect.height()))
+            radius = settings.outline_pixels(h, self.outline_px)
+            offsets = settings.outline_offsets(radius)
+            if key is not None:
+                hsp = int(round(float(p.device().devicePixelRatioF() if hasattr(p.device(), "devicePixelRatioF") else 1.0)))
+                if hsp <= 0:
+                    hsp = 1
+                dpr = p.device().devicePixelRatioF() if hasattr(p.device(), "devicePixelRatioF") else 1.0
+                try:
+                    dpr = float(dpr)
+                except Exception:
+                    dpr = 1.0
+                if not (0.5 <= dpr <= 4.0):
+                    dpr = 1.0
+                font = p.font()
+                cache_key = (text, int(flags), size, _font_key(font), oc.name(),
+                             int(radius), int(p.renderHints()), dpr, key)
+                if (self._outline_cache_key != cache_key or self._outline_cache_pixmap is None
+                        or self._outline_cache_size != size):
+                    got = _outline_pixmap(rect, flags, text, font, oc.name(), offsets,
+                                          int(p.renderHints()), dpr)
+                    if got is not None:
+                        self._outline_cache_pixmap, self._outline_cache_pad = got
+                        self._outline_cache_key = cache_key
+                        self._outline_cache_size = size
+                        self._outline_cache_off_count = len(offsets)
+                if self._outline_cache_key == cache_key and self._outline_cache_pixmap is not None:
+                    # blit the cached ring, do NOT load offsets/pixmap from cache for the old path if needed
+                    p.drawPixmap(int(rect.x()) - self._outline_cache_pad, int(rect.y()) - self._outline_cache_pad,
+                                 self._outline_cache_pixmap)
+                else:
+                    # fallback: the old stamping (identity transform, or pixmap refused)
+                    keep = p.pen()
+                    p.setPen(oc)
+                    for dx, dy in offsets:
+                        p.drawText(rect.translated(dx, dy), flags, text)
+                    p.setPen(keep)
+            else:
+                keep = p.pen()
+                p.setPen(oc)
+                for dx, dy in offsets:
+                    p.drawText(rect.translated(dx, dy), flags, text)
+                p.setPen(keep)
         p.drawText(rect, flags, text)
 
     def _draw(self, p, rect):
