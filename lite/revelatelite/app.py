@@ -14,6 +14,7 @@ from .refedit import RefEdit
 from .projection import PreviewView, ProgramsView, ProjectionWindow, SlideView
 from .servicelist import ServiceList
 from .songs import Song, SongLibrary, split_lyrics, lyrics_text, import_rtsong, import_song_json, export_songs, safe_filename
+from . import splash as splashmod
 
 QSS = theme.build_qss()
 
@@ -2406,10 +2407,13 @@ def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("RevelateTW Lite")
+    # Startup splash (logo on light blue, busy bar below) while the app builds.
+    splash = splashmod.show_splash() if splashmod.wants_splash(argv) else None
     theme.install_button_focus_style(app)
     app.setStyleSheet(QSS)
     w = Main()
     w.show()
+    splashmod.finish_splash(splash)  # handoff: main window is up, close the splash
     if "--smoke" in argv:
         w.project()
         QtCore.QTimer.singleShot(1500, lambda: (print(report_memory()), app.quit()))
