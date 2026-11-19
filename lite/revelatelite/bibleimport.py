@@ -1,6 +1,6 @@
 """Add Bible dialog: pick a file, see exactly what was found, give name/code/licence, save.
 Saving only adds a translation to the list. It never changes the preview or the projected screen."""
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from revelatetw.ui_tokens import COLORS as _C
 
@@ -25,6 +25,8 @@ def _frame(name, title_text, title_id="ImportBibleSectionTitle"):
 def style_dialog(dlg):
     dlg.setObjectName("ImportBibleDialog")
     dlg.setWindowTitle("Add a Bible")
+    # Drop the "?" context-help button Windows adds: leave only the close X.
+    dlg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
     try:
         from .theme import build_qss
         dlg.setStyleSheet(build_qss())

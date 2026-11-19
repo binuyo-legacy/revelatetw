@@ -2362,6 +2362,8 @@ class SongDialog(QtWidgets.QDialog):
     def __init__(self, parent, song=None):
         super().__init__(parent)
         self.setWindowTitle("Edit song" if song else "New song")
+        # Drop the "?" context-help button Windows adds: leave only the close X.
+        self.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
         self._song = song
         lay = QtWidgets.QVBoxLayout(self)
         self.title_e = QtWidgets.QLineEdit(song.title if song else "")
