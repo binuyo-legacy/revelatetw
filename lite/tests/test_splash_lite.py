@@ -72,5 +72,47 @@ class Splash(unittest.TestCase):
         label.hide()
 
 
+    def test_bar_is_visibly_painted_inside_splash_geometry(self):
+        # Regression: the bar's stylesheet used double braces with
+        # %-formatting, so Qt rejected it and the bar silently fell back to
+        # the native blue busy bar, which reads as gone on Windows. Offscreen
+        # this test fails on the old stylesheet (native blue, no gold/dark
+        # track) and passes once the stylesheet actually applies.
+        sp = splash.show_splash()
+        self.assertIsNotNone(sp)
+        self.assertTrue(sp.bar.isVisible())
+        self.assertTrue(sp.bar.isEnabled())
+        self.assertIn("{ background:", sp.bar.styleSheet())
+        self.assertNotIn("{{", sp.bar.styleSheet())
+        bx = sp.bar.x()
+        by = sp.bar.y()
+        self.assertGreaterEqual(by - sp.logo_label.y() - sp.logo_label.height(), 0,
+                                "bar must sit below the logo, not overlap it")
+        self.assertLessEqual(by + sp.bar.height(), sp.height(),
+                             "bar bottom must be inside the splash window")
+        self.assertGreaterEqual(bx, 0)
+        self.assertLessEqual(bx + sp.bar.width(), sp.width())
+        # Painted pixels: the bar region must contain both the dark track
+        # and the gold accent, not the native blue fallback and not the
+        # surrounding desktop (white in this render).
+        pm = QtGui.QPixmap(sp.width(), sp.height())
+        pm.fill(QtGui.QColor(255, 255, 255))
+        painter = QtGui.QPainter(pm)
+        sp.render(painter, QtCore.QPoint(0, 0))
+        painter.end()
+        img = pm.toImage()
+        gold = dark = 0
+        for y in range(by, by + sp.bar.height()):
+            for x in range(bx, bx + sp.bar.width()):
+                c = img.pixelColor(x, y)
+                if c.red() > 200 and 150 < c.green() < 230 and c.blue() < 80:
+                    gold += 1
+                if abs(c.red() - 0x3a) < 30 and abs(c.green() - 0x3a) < 30 and abs(c.blue() - 0x40) < 30:
+                    dark += 1
+        self.assertGreater(gold, 50, "gold chunk must actually paint in the bar region")
+        self.assertGreater(dark, 100, "dark track must actually paint in the bar region")
+        splash.finish_splash(sp)
+
+
 if __name__ == "__main__":
     unittest.main()

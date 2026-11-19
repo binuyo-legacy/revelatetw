@@ -117,9 +117,14 @@ class Splash(QtWidgets.QWidget):
         self.bar.setRange(0, 0)                      # indeterminate / busy mode
         self.bar.setFixedSize(BAR_WIDTH, 10)
         self.bar.setTextVisible(False)
+        # Single braces (this is %-formatting, not str.format): the old
+        # double-brace stylesheet was rejected by Qt's style engine, so the
+        # bar fell back to the native blue on Windows (where the native busy
+        # chunk barely reads on a translucent window) and looked gone.
+        self.bar.setAttribute(QtCore.Qt.WA_OpaquePaintEvent, True)
         self.bar.setStyleSheet(
-            "QProgressBar {{ background:%s; border:1px solid %s; border-radius:5px; }}"
-            "QProgressBar::chunk {{ background:%s; width:60px; border-radius:3px; }}"
+            "QProgressBar { background:%s; border:1px solid %s; border-radius:5px; }"
+            "QProgressBar::chunk { background:%s; width:60px; border-radius:3px; }"
             % (BAR_TRACK, BAR_TRACK, C.accent))
         # Centre the bar below the logo (it must not overlap it).
         row = QtWidgets.QHBoxLayout()
