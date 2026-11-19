@@ -3,7 +3,9 @@
 A frameless, translucent, always-on-top widget with NO painted background:
 the Qt.WA_TranslucentBackground attribute means no rectangle of colour is
 drawn behind the logo. The original logo image (splash.jpg) is shown
-as-is with no masking, no flood fill and no pixel modification; the gold
+as-is with no masking, no flood fill and no pixel modification; only the
+corners are clipped at display time (a rounded-rect QPainterPath clip, like
+Canva's preview) so the square jpg corners are simply not drawn. The gold
 busy QProgressBar sits centred below it. Shown while the main window is
 being built and closed once the main window is on screen.
 
@@ -20,6 +22,26 @@ LOGO_MAX_WIDTH = 480           # the logo is 1568x940, shown smaller for a light
 BAR_WIDTH = 220
 BAR_TRACK = "#3a3a40"          # dark track so the gold chunk shows on any desktop
 
+# Display-time-only corner rounding, like Canva's preview. This is a painter
+# clip, never a file edit: the jpg stays byte-identical and is drawn whole,
+# only its square corners fall outside the clip and are not drawn. The
+# radius is a share of the displayed logo height so it scales with the
+# logo; at the 480px display width the logo is ~480x288 and the radius is
+# ~48px (roughly 1/6 of the height, in the Canva ballpark).
+CORNER_RADIUS_FRACTION = 1.0 / 6.0
+
+
+def corner_radius_for(pixmap):
+    """Corner radius (px) for a pixmap of this size, as a float."""
+    return pixmap.height() * CORNER_RADIUS_FRACTION
+
+
+def rounded_clip_path(rect, radius):
+    """A QPainterPath of rect rounded by radius on every corner."""
+    path = QtGui.QPainterPath()
+    path.addRoundedRect(QtCore.QRectF(rect), radius, radius)
+    return path
+
 
 def splash_logo_path():
     return paths.splash_logo_path()
@@ -33,6 +55,41 @@ def _load_scaled_pixmap():
     if pm.width() > LOGO_MAX_WIDTH:
         pm = pm.scaledToWidth(LOGO_MAX_WIDTH, QtCore.Qt.SmoothTransformation)
     return pm
+
+
+class LogoLabel(QtWidgets.QLabel):
+    """Label that paints its pixmap through a rounded-rect clip.
+
+    Same size and position as the plain QLabel it replaces; the pixmap is
+    drawn whole and unchanged, only the corner pixels outside the rounded
+    clip are skipped. Nothing is painted behind it.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Transparent background: only the clipped pixmap may paint. The
+        # default label chrome would otherwise fill the corners the clip
+        # leaves open, showing as a solid card edge on the desktop.
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def paintEvent(self, event):
+        pm = self.pixmap()
+        if pm is None or pm.isNull():
+            super().paintEvent(event)
+            return
+        rect = QtCore.QRectF(
+            (self.width() - pm.width()) / 2.0,
+            (self.height() - pm.height()) / 2.0,
+            pm.width(), pm.height())
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        painter.setClipPath(
+            rounded_clip_path(rect, corner_radius_for(pm)))
+        painter.drawPixmap(QtCore.QPointF(rect.x(), rect.y()), pm)
+        painter.end()
+        # deliberately not calling super().paintEvent() here: the base
+        # class would draw the same pixmap again, square corners and all
 
 
 class Splash(QtWidgets.QWidget):
@@ -49,7 +106,7 @@ class Splash(QtWidgets.QWidget):
         layout.setContentsMargins(40, 36, 40, 28)
         layout.setSpacing(20)
 
-        self.logo_label = QtWidgets.QLabel()
+        self.logo_label = LogoLabel()
         self.logo_label.setAlignment(QtCore.Qt.AlignCenter)
         pm = _load_scaled_pixmap()
         if pm is not None:
