@@ -2407,7 +2407,7 @@ def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("RevelateTW Lite")
-    # Startup splash (logo on light blue, busy bar below) while the app builds.
+    # Startup splash (transparent logo, gold busy bar below) while the app builds.
     splash = splashmod.show_splash() if splashmod.wants_splash(argv) else None
     theme.install_button_focus_style(app)
     app.setStyleSheet(QSS)

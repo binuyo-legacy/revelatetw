@@ -1,10 +1,11 @@
 """Startup splash for RevelateTW Lite (PyQt5).
 
-A frameless, always-on-top widget that shows the Lite logo centred on a
-light blue background (the palette in the logo image itself), with a
-QProgressBar in busy/indeterminate mode centred below the logo. It is
-shown while the main window is being built and closed once the main
-window is on screen.
+A frameless, translucent, always-on-top widget with NO painted background:
+the Qt.WA_TranslucentBackground attribute means no rectangle of colour is
+drawn behind the logo. The logo (a transparent PNG) floats on the desktop
+with its own curved-edge design, and a gold busy QProgressBar sits centred
+below it. Shown while the main window is being built and closed once the
+main window is on screen.
 
 Nothing here touches the main layout, tabs or preview sizes. If the logo
 file is missing or unreadable, the splash is skipped silently (no crash).
@@ -15,11 +16,9 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 from . import paths
 
-# Light blue sampled from the logo image (its dominant fill colour).
-SPLASH_BG = "#e0f0ff"          # rgb(224, 240, 255)
-SPLASH_TRACK = "#c8ddf2"       # slightly darker blue behind the busy bar
 LOGO_MAX_WIDTH = 480           # the logo is 1568x940, shown smaller for a light splash
 BAR_WIDTH = 220
+BAR_TRACK = "#3a3a40"          # dark track so the gold chunk shows on any desktop
 
 
 def splash_logo_path():
@@ -37,12 +36,14 @@ def _load_scaled_pixmap():
 
 
 class Splash(QtWidgets.QWidget):
-    """Frameless splash: logo centred, busy bar centred below it, no overlap."""
+    """Frameless, translucent splash: logo centred, busy bar centred below it."""
 
     def __init__(self, parent=None):
         super().__init__(parent, QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)
+        # No painted background at all: the window itself is translucent.
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
         from revelatetw.ui_tokens import COLORS as C
-        self.setStyleSheet("background:%s; border:1px solid %s;" % (SPLASH_BG, C.accent))
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(40, 36, 40, 28)
@@ -62,7 +63,7 @@ class Splash(QtWidgets.QWidget):
         self.bar.setStyleSheet(
             "QProgressBar {{ background:%s; border:1px solid %s; border-radius:5px; }}"
             "QProgressBar::chunk {{ background:%s; width:60px; border-radius:3px; }}"
-            % (SPLASH_TRACK, SPLASH_TRACK, C.accent))
+            % (BAR_TRACK, BAR_TRACK, C.accent))
         # Centre the bar below the logo (it must not overlap it).
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)

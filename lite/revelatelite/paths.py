@@ -19,7 +19,7 @@ def logo_path():
 
 
 def splash_logo_path():
-    return os.path.join(resource_root(), "lite", "assets", "logo", "splash.jpg")
+    return os.path.join(resource_root(), "lite", "assets", "logo", "splash.png")
 
 
 def user_dir():
