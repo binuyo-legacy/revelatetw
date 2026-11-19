@@ -2409,6 +2409,14 @@ def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("RevelateTW Lite")
+    # Window icon (title bar + taskbar): the RevelateTW Lite logo, unchanged.
+    try:
+        from .paths import app_icon_path as _icon_path
+        _ip = _icon_path()
+        if os.path.isfile(_ip):
+            app.setWindowIcon(QtGui.QIcon(_ip))
+    except Exception:
+        pass
     # Startup splash (original logo, gold busy bar below) while the app builds.
     splash = splashmod.show_splash() if splashmod.wants_splash(argv) else None
     theme.install_button_focus_style(app)

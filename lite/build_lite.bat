@@ -10,9 +10,12 @@ python lite\tests\test_lite.py
 if errorlevel 1 goto fail
 
 python -m PyInstaller lite\run_lite.py --name RevelateTWLite --windowed --noconfirm ^
+  --icon "lite\revelatelite\resources\logo_icon.ico" ^
   --paths lite --paths . ^
   --add-data "revelatetw\assets\logo.png;revelatetw\assets" ^
   --add-data "lite\assets\logo\splash.jpg;lite\assets\logo" ^
+  --add-data "lite\revelatelite\resources\logo_icon.png;lite\revelatelite\resources" ^
+  --add-data "lite\revelatelite\resources\logo_icon.ico;lite\revelatelite\resources" ^
   --add-data "data\bible;data\bible" ^
   --exclude-module tkinter --exclude-module unittest --exclude-module numpy ^
   --exclude-module PyQt5.QtWebEngineWidgets --exclude-module PyQt5.QtMultimedia ^

@@ -22,6 +22,10 @@ def splash_logo_path():
     return os.path.join(resource_root(), "lite", "assets", "logo", "splash.jpg")
 
 
+def app_icon_path():
+    return os.path.join(resource_root(), "lite", "revelatelite", "resources", "logo_icon.png")
+
+
 def user_dir():
     """Settings and service lists go here (%APPDATA%\\RevelateTWLite on Windows)."""
     base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
