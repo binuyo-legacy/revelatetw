@@ -2,10 +2,10 @@
 
 A frameless, translucent, always-on-top widget with NO painted background:
 the Qt.WA_TranslucentBackground attribute means no rectangle of colour is
-drawn behind the logo. The logo (a transparent PNG) floats on the desktop
-with its own curved-edge design, and a gold busy QProgressBar sits centred
-below it. Shown while the main window is being built and closed once the
-main window is on screen.
+drawn behind the logo. The original logo image (splash.jpg) is shown
+as-is with no masking, no flood fill and no pixel modification; the gold
+busy QProgressBar sits centred below it. Shown while the main window is
+being built and closed once the main window is on screen.
 
 Nothing here touches the main layout, tabs or preview sizes. If the logo
 file is missing or unreadable, the splash is skipped silently (no crash).
